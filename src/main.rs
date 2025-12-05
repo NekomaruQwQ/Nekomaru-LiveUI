@@ -1,10 +1,7 @@
-mod prelude {
-    pub use ::tap::prelude::*;
-
-    pub use ::anyhow::Context as _;
-    pub use ::euclid::default as euclid;
-}
+mod app;
+mod capture;
 
 fn main() {
-    println!("Hello, world!");
+    pretty_env_logger::init();
+    app::run();
 }

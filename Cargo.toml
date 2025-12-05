@@ -3,33 +3,46 @@ name = "LiveUI"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-anyhow = "1.0.100"
-euclid = "0.22.11"
-tap = "1.0.1"
+[dependencies.nkprelude]
+git = "git://nekomaru-yoga/Nekomaru-Graphics-2025.git"
+branch = "main"
+package = "ngcore"
 
-approx = "0.5.1"
-bitflags = "2.10.0"
+[dependencies.ngd3dcompile]
+git = "git://nekomaru-yoga/Nekomaru-Graphics-2025.git"
+branch = "main"
+package = "ngd3dcompile_macro"
+
+[dependencies]
 bytemuck = { version = "1.24.0", features = ["derive", "const_zeroed"] }
 glam = { version = "0.30.9", features = ["approx", "bytemuck", "glam-assert"] }
 cfg-if = "1.0.4"
 log = "0.4.29"
-ordered-float = "5.1.0"
-pollster = "0.4.0"
 pretty_env_logger = "0.5.0"
-rand = "0.9.2"
-winit = { version = "0.30.9", default-features = false, features = ["rwh_06"] }
 
-egui = "0.33.2"
-egui-directx11 = "0.12.1"
+# egui = "0.33.2"
+# egui-winit = "0.33.2"
+# egui-directx11 = "0.12.1"
+
+winit = { version = "0.30.9", default-features = false, features = ["rwh_06"] }
+wry = { version = "0.53.5", default-features = false, features = ["devtools"] }
 
 windows = { version = "0.62.2", features = [
+    "Graphics_Capture",
+    "Graphics_DirectX",
+    "Graphics_DirectX_Direct3D11",
+    "UI",
     "Win32_Foundation",
-    "Win32_Graphics_Dxgi_Common",
-    "Win32_Graphics_Dxgi",
     "Win32_Graphics_Direct3D",
     "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Threading",
+    "Win32_System_WinRT_Direct3D11",
+    "Win32_UI_WindowsAndMessaging",
 ]}
+widestring = "1.2.1"
 
 [lints.clippy]
 cargo       = { level = "warn", priority = -1 }
