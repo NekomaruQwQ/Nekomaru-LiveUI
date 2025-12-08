@@ -8,6 +8,8 @@ import {
     webDarkTheme,
 } from '@fluentui/react-components';
 
+import { VideoRenderer } from './renderer';
+
 export function App() {
     return <FluentProvider theme={webDarkTheme} className={css({
         padding: '8px',
@@ -30,7 +32,11 @@ export function App() {
                 borderStyle: 'solid !important',
                 borderRadius: '8px !important',
                 backgroundColor: 'black !important',
-            })} />
+                padding: '0 !important',  // Remove padding for video
+                overflow: 'hidden',        // Prevent overflow
+            })}>
+                <VideoRenderer />
+            </Card>
             <div className={css({
                 flex: 1,
             })}>

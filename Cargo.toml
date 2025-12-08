@@ -3,29 +3,35 @@ name = "LiveUI"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies.nkprelude]
-git = "git://nekomaru-yoga/Nekomaru-Graphics-2025.git"
+[dependencies.nkcore]
+git = "git://nekomaru-ubuntu/Nekomaru-Graphics-2025.git"
 branch = "main"
-package = "ngcore"
 
-[dependencies.ngd3dcompile]
-git = "git://nekomaru-yoga/Nekomaru-Graphics-2025.git"
-branch = "main"
-package = "ngd3dcompile_macro"
+# [dependencies.ngd3dcompile]
+# git = "git://nekomaru-ubuntu/Nekomaru-Graphics-2025.git"
+# branch = "main"
+# package = "ngd3dcompile_macro"
 
 [dependencies]
-bytemuck = { version = "1.24.0", features = ["derive", "const_zeroed"] }
-glam = { version = "0.30.9", features = ["approx", "bytemuck", "glam-assert"] }
-cfg-if = "1.0.4"
+# bytemuck = { version = "1.24.0", features = ["derive", "const_zeroed"] }
+# glam = { version = "0.30.9", features = ["approx", "bytemuck", "glam-assert"] }
+# cfg-if = "1.0.4"
+base64 = "0.22"    # Base64 encoding for SPS/PPS in protocol handler
+crossbeam = "0.8"  # Lock-free queue for stream manager
 log = "0.4.29"
+pretty-name = "0.4.5"
 pretty_env_logger = "0.5.0"
+serde_json = "1"   # JSON serialization for protocol responses
+widestring = "1.2.1"
+
+#ffmpeg-next = "8.0.0"
 
 # egui = "0.33.2"
 # egui-winit = "0.33.2"
 # egui-directx11 = "0.12.1"
 
 winit = { version = "0.30.9", default-features = false, features = ["rwh_06"] }
-wry = { version = "0.53.5", default-features = false, features = ["devtools"] }
+wry = { version = "0.53.5", default-features = false, features = ["devtools", "protocol"] }
 
 windows = { version = "0.62.2", features = [
     "Graphics_Capture",
@@ -38,11 +44,14 @@ windows = { version = "0.62.2", features = [
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Ole",
     "Win32_System_Threading",
+    "Win32_System_Variant",
     "Win32_System_WinRT_Direct3D11",
     "Win32_UI_WindowsAndMessaging",
 ]}
-widestring = "1.2.1"
 
 [lints.clippy]
 cargo       = { level = "warn", priority = -1 }

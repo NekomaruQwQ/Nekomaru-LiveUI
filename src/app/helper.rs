@@ -1,0 +1,100 @@
+use nkcore::*;
+
+use winit::{
+    application::ApplicationHandler,
+    event::WindowEvent,
+    event_loop::EventLoop,
+    event_loop::ActiveEventLoop,
+    raw_window_handle::HasWindowHandle as _,
+    raw_window_handle::RawWindowHandle,
+    window::Window,
+    window::WindowId,
+    window::WindowButtons,
+};
+
+use windows::{
+    Win32::Foundation::*,
+    Win32::Graphics::{
+        Dxgi::*,
+        Direct3D::*,
+        Direct3D11::*,
+    },
+};
+
+pub fn create_device() -> anyhow::Result<(IDXGIFactory6, ID3D11Device, ID3D11DeviceContext)> {
+    let dxgi_factory =
+        api_call!(unsafe { CreateDXGIFactory::<IDXGIFactory6>() })?;
+    let dxgi_adapter =
+        api_call!(unsafe {
+            dxgi_factory.EnumAdapterByGpuPreference::<IDXGIAdapter>(
+                0,
+                DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE)
+        })?;
+
+    let DXGI_ADAPTER_DESC { Description: adapter_name, .. } =
+        api_call!(unsafe { dxgi_adapter.GetDesc() })?;
+    let adapter_name =
+        unsafe { widestring::U16CString::from_ptr_str(adapter_name.as_ptr()) }
+            .to_string_lossy();
+    log::info!("device: {adapter_name}");
+
+    let mut device = None;
+    let mut device_context = None;
+    api_call!(unsafe {
+        D3D11CreateDevice(
+            &dxgi_adapter,
+            D3D_DRIVER_TYPE_UNKNOWN,
+            HMODULE::default(),
+            cfg!(debug_assertions)
+                .then_some(D3D11_CREATE_DEVICE_DEBUG)
+                .unwrap_or_default(),
+            Some(&[D3D_FEATURE_LEVEL_11_0]),
+            D3D11_SDK_VERSION,
+            Some(&raw mut device),
+            None,
+            Some(&raw mut device_context))
+    })?;
+
+    let device =
+        device
+            .ok_or_else(|| anyhow::anyhow!("failed to create D3D11 device"))?;
+    let device_context =
+        device_context
+            .ok_or_else(|| anyhow::anyhow!("failed to create D3D11 device context"))?;
+    Ok((dxgi_factory, device, device_context))
+}
+
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "running on an unexpected platform is always an unrecoverable error")]
+pub fn get_hwnd_from_window(window: &Window) -> anyhow::Result<HWND> {
+    if let RawWindowHandle::Win32(hwnd) = window.window_handle()?.as_raw() {
+        Ok(HWND(hwnd.hwnd.get() as _))
+    } else {
+        panic!("unexpected platform");
+    }
+}
+
+pub struct AppWrapper<T>(pub Option<T>);
+
+// noinspection RsSortImplTraitMembers
+impl ApplicationHandler for AppWrapper<super::LiveApp> {
+    fn suspended(&mut self, _: &ActiveEventLoop) {
+        let _ = self.0.take();
+    }
+
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        let app = super::LiveApp::new(event_loop).expect("fatal error creating app");
+        let _ = self.0.replace(app);
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
+        if event == WindowEvent::CloseRequested {
+            event_loop.exit();
+        }
+
+        if let Some(app) = self.0.as_mut() {
+            app.on_window_event(window_id, event);
+        }
+    }
+}

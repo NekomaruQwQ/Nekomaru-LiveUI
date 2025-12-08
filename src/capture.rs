@@ -1,7 +1,7 @@
 #![expect(clippy::multiple_unsafe_ops_per_block)]
 
-use nkprelude::tap::*;
-use nkprelude::*;
+use nkcore::euclid::*;
+use nkcore::*;
 
 use windows::core::Interface as _;
 use windows::{
@@ -81,13 +81,15 @@ impl CaptureSession {
         &self.frame_texture
     }
 
-    pub const fn frame_buffer_size(&self) -> (u32, u32) {
-        (self.frame_pool_size.Width as u32, self.frame_pool_size.Height as u32)
+    pub const fn frame_buffer_size(&self) -> Size2D<u32> {
+        Size2D::new(
+            self.frame_pool_size.Width as _,
+            self.frame_pool_size.Height as _)
     }
 
     pub fn update(&mut self) {
         if let Err(err) = self.update_internal() {
-            log::error!("CaptureComponent::update failed: {err:?}");
+            log::error!("{} failed: {err:?}", pretty_name::of_method!(Self::update));
         }
     }
 
@@ -114,7 +116,11 @@ impl CaptureSession {
                     &self.device,
                     DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
                     new_size)?;
-            log::info!("CaptureComponent::frame_buffer resized to {}x{}", new_size.Width, new_size.Height);
+            log::info!(
+                "{} resized to {}x{}",
+                pretty_name::of_field!(Self::frame_texture),
+                new_size.Width,
+                new_size.Height);
             return Ok(());
         }
 
