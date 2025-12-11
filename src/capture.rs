@@ -114,7 +114,7 @@ impl CaptureSession {
             self.frame_texture =
                 Self::create_texture(
                     &self.device,
-                    DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
+                    DXGI_FORMAT_B8G8R8A8_UNORM,
                     new_size)?;
             log::info!(
                 "{} resized to {}x{}",

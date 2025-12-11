@@ -299,7 +299,7 @@ impl H264Encoder {
         self.frame_count += 1;
         self.time_elapsed += elapsed;
         self.time_of_last_frame = now;
-        log::info!("encoding frame #{} at {}s {}ms",
+        log::debug!("encoding frame #{} at {}s {}ms",
             self.frame_count,
             self.time_elapsed.as_secs(),
             self.time_elapsed.subsec_millis());
@@ -359,9 +359,9 @@ impl H264Encoder {
 
                     // Debug: Log NAL unit info to verify encoding is working
                     if !nal_units.is_empty() {
-                        log::info!("Encoded {} NAL unit(s):", nal_units.len());
+                        log::debug!("encoded {} NAL unit(s):", nal_units.len());
                         for (i, unit) in nal_units.iter().enumerate() {
-                            log::info!("  NAL #{}: type={:?}, size={} bytes",
+                            log::debug!("  NAL #{}: type={:?}, size={} bytes",
                                 i, unit.unit_type, unit.data.len());
                         }
                     }

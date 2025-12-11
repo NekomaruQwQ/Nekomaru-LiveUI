@@ -10,14 +10,20 @@ export function VideoRenderer() {
     const decoderRef = useRef<H264Decoder | null>(null);
 
     useEffect(() => {
+        console.log('[VideoRenderer] Component mounted');
         const canvas = canvasRef.current;
-        if (!canvas) return;
+        if (!canvas) {
+            console.error('[VideoRenderer] Canvas ref is null!');
+            return;
+        }
 
         const ctx = canvas.getContext('2d');
         if (!ctx) {
-            console.error('Failed to get 2D context');
+            console.error('[VideoRenderer] Failed to get 2D context');
             return;
         }
+
+        console.log('[VideoRenderer] Canvas ready: %dx%d', canvas.width, canvas.height);
 
         // Create decoder
         const decoder = new H264Decoder((frame: VideoFrame) => {
@@ -27,16 +33,18 @@ export function VideoRenderer() {
         decoderRef.current = decoder;
 
         // Initialize and start stream loop
+        console.log('[VideoRenderer] Initializing decoder...');
         decoder.init()
             .then(() => {
-                console.log('Decoder initialized, starting stream');
+                console.log('[VideoRenderer] ✅ Decoder initialized, starting stream loop');
                 startStreamLoop(decoder);
             })
             .catch((e) => {
-                console.error('Failed to initialize decoder:', e);
+                console.error('[VideoRenderer] ❌ Failed to initialize decoder:', e);
             });
 
         return () => {
+            console.log('[VideoRenderer] Component unmounting, closing decoder');
             decoder.close();
         };
     }, []);
@@ -62,34 +70,39 @@ function renderFrame(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, f
     if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
         canvas.width = frame.displayWidth;
         canvas.height = frame.displayHeight;
-        console.log(`Canvas resized to ${frame.displayWidth}x${frame.displayHeight}`);
+        console.log('[VideoRenderer] Canvas resized to %dx%d', frame.displayWidth, frame.displayHeight);
     }
 
     // Draw frame
+    console.log('[VideoRenderer] Rendering frame to canvas - timestamp: %d μs', frame.timestamp);
     ctx.drawImage(frame, 0, 0);
 
     // CRITICAL: Close frame to release GPU memory
     frame.close();
+    console.log('[VideoRenderer] Frame closed (GPU memory released)');
 }
 
 /**
  * Stream loop that fetches and decodes frames
  */
 async function startStreamLoop(decoder: H264Decoder) {
+    console.log('[StreamLoop] Starting stream loop');
     let lastSequence = 0;
     let consecutiveErrors = 0;
     const MAX_CONSECUTIVE_ERRORS = 10;
+    let frameCount = 0;
 
     while (true) {
         try {
-            const response = await fetch(`stream://stream?after=${lastSequence}`);
+            console.log('[StreamLoop] Fetching frame after sequence %d', lastSequence);
+            const response = await fetch(`http://stream.localhost/stream?after=${lastSequence}`);
 
             if (!response.ok) {
-                console.warn(`Stream request failed: ${response.status}`);
+                console.warn('[StreamLoop] Stream request failed: %d %s', response.status, response.statusText);
                 await sleep(100);
                 consecutiveErrors++;
                 if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                    console.error('Too many consecutive errors, stopping stream');
+                    console.error('[StreamLoop] Too many consecutive errors, stopping stream');
                     break;
                 }
                 continue;
@@ -99,25 +112,41 @@ async function startStreamLoop(decoder: H264Decoder) {
 
             // Parse headers
             const sequence = parseInt(response.headers.get('X-Sequence') || '0');
+            const timestamp = parseInt(response.headers.get('X-Timestamp') || '0');
+            const isKeyframe = response.headers.get('X-Keyframe') === 'true';
+
+            console.log('[StreamLoop] Received frame - sequence: %d, timestamp: %d μs, keyframe: %s',
+                sequence, timestamp, isKeyframe);
+
             lastSequence = sequence;
 
             // Parse binary frame data
             const arrayBuffer = await response.arrayBuffer();
+            console.log('[StreamLoop] Frame data size: %d bytes', arrayBuffer.byteLength);
+
             const frameData = parseStreamFrame(new Uint8Array(arrayBuffer));
+            console.log('[StreamLoop] Parsed frame data - %d NAL units', frameData.nalUnits.length);
 
             // Decode frame
             await decoder.decodeFrame(frameData);
 
+            frameCount++;
+            if (frameCount % 60 === 0) {
+                console.log('[StreamLoop] 📊 Decoded %d frames total', frameCount);
+            }
+
         } catch (e) {
-            console.error('Stream error:', e);
+            console.error('[StreamLoop] Stream error:', e);
             consecutiveErrors++;
             if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                console.error('Too many consecutive errors, stopping stream');
+                console.error('[StreamLoop] Too many consecutive errors, stopping stream');
                 break;
             }
             await sleep(1000);
         }
     }
+
+    console.log('[StreamLoop] Stream loop ended');
 }
 
 /**

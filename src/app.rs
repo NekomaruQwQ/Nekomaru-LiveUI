@@ -11,8 +11,10 @@ use crate::stream::StreamManager;
 use nkcore::euclid::*;
 use nkcore::*;
 
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
 use wry::WebView;
 use wry::WebViewBuilder;
@@ -56,7 +58,7 @@ struct LiveApp {
     main_capture_staging_bgra8_rtv: ID3D11RenderTargetView,
 
     // Stream manager for encoded frames
-    _stream_manager: Arc<StreamManager>,
+    stream_manager: Arc<StreamManager>,
 }
 
 impl LiveApp {
@@ -71,16 +73,6 @@ impl LiveApp {
                     .with_resizable(false)
                     .with_enabled_buttons(WindowButtons::CLOSE))
         }?;
-
-        let main_webview =
-            WebViewBuilder::new()
-                .with_url("http://localhost:9688/")
-                // .with_custom_protocol("stream".to_owned(), move |_, request| {
-                //     handle_stream_request(&stream_manager_for_protocol, request)
-                //         .expect("failed to handle stream request")
-                // })
-                .build(&main_window)
-                .context("failed to create webview for frontend window")?;
 
         // let control_window = api_call! {
         //     event_loop.create_window(
@@ -145,6 +137,30 @@ impl LiveApp {
         // Create stream manager (60 frame buffer = ~1 second at 60fps)
         let stream_manager = Arc::new(StreamManager::new(60));
         let stream_manager_for_encoder = Arc::clone(&stream_manager);
+        let stream_manager_for_protocol = Arc::clone(&stream_manager);
+
+        let mut main_webview_header_map = wry::http::HeaderMap::new();
+        main_webview_header_map.insert(
+            "Access-Control-Allow-Origin",
+            wry::http::HeaderValue::from_str("*")?);
+        main_webview_header_map.insert(
+            "Access-Control-Allow-Methods",
+            wry::http::HeaderValue::from_str("GET, POST, OPTIONS")?);
+        main_webview_header_map.insert(
+            "Access-Control-Allow-Headers",
+            wry::http::HeaderValue::from_str("*")?);
+
+        // Create webview with custom protocol handler
+        let main_webview =
+            WebViewBuilder::new()
+                .with_headers(main_webview_header_map)
+                .with_custom_protocol("stream".to_owned(), move |_, request| {
+                    handle_stream_request(&stream_manager_for_protocol, request)
+                        .inspect_err(|err| log::error!("{:?}", err))
+                        .unwrap_or_default()
+                })
+                .build(&main_window)
+                .context("failed to create webview for frontend window")?;
 
         thread::Builder::new()
             .name("Encoding Thread".to_owned())
@@ -188,6 +204,11 @@ impl LiveApp {
             })
             .context("failed to spawn encoding thread")?;
 
+        main_webview.open_devtools();
+        main_webview.load_url("about:blank")
+            .context("failed to load frontend")?;
+        main_webview.load_url("http://localhost:9688/")
+            .context("failed to load frontend")?;
         main_window.request_redraw();
 
         Ok(Self {
@@ -199,7 +220,7 @@ impl LiveApp {
             main_capture,
             main_capture_staging_bgra8,
             main_capture_staging_bgra8_rtv,
-            _stream_manager: stream_manager,
+            stream_manager,
         })
     }
 
@@ -223,9 +244,9 @@ impl LiveApp {
                     };
                     unsafe {
                         self.device_context
-                            .RSSetViewports(Some(&[viewport]));                        
+                            .RSSetViewports(Some(&[viewport]));
                     }
-                    
+
                     let source_view =
                         out_var_or_err(|out| api_call!(unsafe {
                             self.device.CreateShaderResourceView(
@@ -257,20 +278,45 @@ impl LiveApp {
 }
 
 /// Handle custom protocol requests for video streaming
-#[cfg(false)]
+/// Edge WebView maps http://stream.localhost/path to stream://localhost/path
 fn handle_stream_request(
     manager: &Arc<StreamManager>,
     request: wry::http::Request<Vec<u8>>)
     -> std::result::Result<wry::http::Response<Cow<'static, [u8]>>, Box<dyn std::error::Error>> {
     use wry::http::Response;
 
-    let path = request.uri().path();
+    log::debug!("{:?}", request);
+
+    // Strip "/localhost" prefix for Edge WebView routing
+    let path = request.uri().path().strip_prefix("/localhost").unwrap_or(request.uri().path());
+
+    // Handle OPTIONS preflight requests for CORS
+    if request.method() == "OPTIONS" {
+        return Response::builder()
+            .status(200)
+            .header("Access-Control-Allow-Origin", "*")
+            .header("Access-Control-Allow-Methods", "GET, OPTIONS")
+            .header("Access-Control-Allow-Headers", "*")
+            .header("Access-Control-Max-Age", "86400")
+            .body(Cow::Borrowed(b"" as &[u8]))
+            .map_err(Into::into);
+    }
 
     match path {
         "/init" => {
-            // Return SPS/PPS as JSON
-            let params = manager.get_codec_params()
-                .ok_or("encoder not initialized")?;
+            // Wait for encoder to initialize (produce first SPS/PPS)
+            // Retry for up to 5 seconds with 100ms intervals
+            let params = {
+                let mut params_opt = None;
+                for _ in 0..50 {
+                    if let Some(p) = manager.get_codec_params() {
+                        params_opt = Some(p);
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                params_opt.ok_or("encoder not initialized after 5 seconds")?
+            };
 
             let response = serde_json::json!({
                 "sps": base64_encode(&params.sps),
@@ -291,13 +337,15 @@ fn handle_stream_request(
             let query = request.uri().query().unwrap_or("");
             let after_seq = parse_query_param(query, "after").unwrap_or(0);
 
-            // Wait for next frame (timeout = 100ms)
-            let frame = manager.wait_for_frame(after_seq, Duration::from_millis(100))
+            // Wait for next frame (timeout = 5s)
+            let frame = manager.wait_for_frame(after_seq, Duration::from_millis(5000))
                 .ok_or("timeout waiting for frame")?;
 
             // Serialize frame as binary
             let mut buffer = Vec::new();
             serialize_stream_frame(&frame, &mut buffer)?;
+
+            log::debug!("serving frame seq={}, keyframe={}", frame.sequence, frame.is_keyframe);
 
             Response::builder()
                 .header("Content-Type", "application/octet-stream")
@@ -313,6 +361,7 @@ fn handle_stream_request(
         _ => {
             Response::builder()
                 .status(404)
+                .header("Access-Control-Allow-Origin", "*")
                 .body(Cow::Borrowed(b"" as &[u8]))
                 .map_err(Into::into)
         }

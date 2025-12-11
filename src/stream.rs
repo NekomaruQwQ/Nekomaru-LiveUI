@@ -40,6 +40,8 @@ pub struct StreamManager {
     codec_params: Arc<Mutex<Option<CodecParams>>>,
     /// Monotonically increasing sequence counter
     sequence_counter: AtomicU64,
+    /// Start time for wall-clock timestamps
+    start_time: Instant,
 }
 
 impl StreamManager {
@@ -52,6 +54,7 @@ impl StreamManager {
             frame_queue: Arc::new(crossbeam::queue::ArrayQueue::new(capacity)),
             codec_params: Arc::new(Mutex::new(None)),
             sequence_counter: AtomicU64::new(0),
+            start_time: Instant::now(),
         }
     }
 
@@ -103,8 +106,8 @@ impl StreamManager {
         // Get next sequence number
         let sequence = self.sequence_counter.fetch_add(1, Ordering::SeqCst);
 
-        // Get timestamp from first NAL unit
-        let timestamp_us = 0; // nal_units[0].timestamp_us;
+        // Calculate wall-clock timestamp in microseconds since stream start
+        let timestamp_us = self.start_time.elapsed().as_micros() as u64;
 
         let frame = StreamFrame {
             sequence,
@@ -134,32 +137,43 @@ impl StreamManager {
     ///
     /// # Arguments
     /// * `after_sequence` - Only return frames with sequence > this value
+    ///   - If `after_sequence == 0`, waits for the next keyframe (required for decoder initialization)
     /// * `timeout` - Maximum time to wait for a frame
+    ///
+    /// # Single-Client Design
+    /// This implementation assumes a single client. Old frames and non-keyframes (when required)
+    /// are discarded rather than preserved.
     pub fn wait_for_frame(&self, after_sequence: u64, timeout: Duration) -> Option<StreamFrame> {
         let start = Instant::now();
+        // First frame must be a keyframe for H.264 decoder initialization
+        let require_keyframe = after_sequence == 0;
 
         loop {
-            // Scan queue for frame with sequence > after_sequence
-            // Note: This is a linear scan but queue is small (60 frames max)
-            for _ in 0..self.frame_queue.capacity() {
-                if let Some(frame) = self.frame_queue.pop() {
-                    if frame.sequence > after_sequence {
-                        // Found a frame we haven't seen yet
-                        return Some(frame);
-                    }
-                    // This frame is too old, push it back and continue
-                    // (Note: This can fail if queue is full, which is ok - we'll drop old frames)
-                    let _ = self.frame_queue.push(frame);
+            // Drain old/invalid frames until we find a valid one
+            while let Some(frame) = self.frame_queue.pop() {
+                let is_valid = frame.sequence > after_sequence
+                    && (!require_keyframe || frame.is_keyframe);
+
+                if is_valid {
+                    // Found a valid frame
+                    log::debug!(
+                        "Returning frame seq={}, keyframe={}, after_seq={}",
+                        frame.sequence, frame.is_keyframe, after_sequence);
+                    return Some(frame);
                 }
+                // Single-client: discard old/invalid frames (no other client needs them)
+                log::trace!(
+                    "Discarding frame seq={}, keyframe={} (after_seq={}, require_keyframe={})",
+                    frame.sequence, frame.is_keyframe, after_sequence, require_keyframe);
             }
 
-            // Check timeout
+            // Queue empty, check timeout
             if start.elapsed() > timeout {
                 return None;
             }
 
             // Sleep briefly before retry
-            std::thread::sleep(Duration::from_millis(1));
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
 
