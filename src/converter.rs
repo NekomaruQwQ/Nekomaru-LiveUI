@@ -5,49 +5,42 @@ use windows::Win32::Graphics::Direct3D11::*;
 
 /// Stateless format converter helper for converting BGRA textures to NV12
 /// using GPU Video Processor.
-pub struct FormatConverter {
+pub struct NV12Converter {
     device: ID3D11VideoDevice,
     device_context: ID3D11VideoContext,
     processor: ID3D11VideoProcessor,
     enumerator: ID3D11VideoProcessorEnumerator,
 }
 
-impl FormatConverter {
+impl NV12Converter {
     /// Create a new format converter.
-    pub fn new(
-        device: &ID3D11Device,
-        device_context: &ID3D11DeviceContext)
+    pub fn new(device: &ID3D11Device, device_context: &ID3D11DeviceContext)
         -> anyhow::Result<Self> {
-        // Query video device from D3D11 device
-        let device = api_call!(device.cast::<ID3D11VideoDevice>())?;
-        // Get device context and cast to video context
-        let device_context = api_call!(device_context.cast::<ID3D11VideoContext>())?;
+        let device =
+            api_call!(device.cast::<ID3D11VideoDevice>())?;
+        let device_context =
+            api_call!(device_context.cast::<ID3D11VideoContext>())?;
 
-        // Create video processor enumerator descriptor
         let desc = D3D11_VIDEO_PROCESSOR_CONTENT_DESC {
             InputFrameFormat: D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE,
             InputFrameRate: Default::default(),
-            InputWidth: 3840,   // Max expected width
-            InputHeight: 2160,  // Max expected height
+            InputWidth: 1920,
+            InputHeight: 1200,
             OutputFrameRate: Default::default(),
-            OutputWidth: 3840,
-            OutputHeight: 2160,
+            OutputWidth: 1920,
+            OutputHeight: 1200,
             Usage: D3D11_VIDEO_USAGE_PLAYBACK_NORMAL,
         };
 
-        // Create video processor enumerator
         let enumerator = api_call!(unsafe {
             device.CreateVideoProcessorEnumerator(&raw const desc)
         })?;
 
-        // Create video processor
         let processor = api_call!(unsafe {
             device.CreateVideoProcessor(
                 &enumerator,
-                // RateConversionIndex (0 for no rate conversion)
-                0)
+                /* RateConversionIndex (0 for no rate conversion): */ 0)
         })?;
-
 
         Ok(Self {
             device,
@@ -115,16 +108,8 @@ impl FormatConverter {
         // Setup stream for video processor
         let stream = D3D11_VIDEO_PROCESSOR_STREAM {
             Enable: true.into(),
-            OutputIndex: 0,
-            InputFrameOrField: 0,
-            PastFrames: 0,
-            FutureFrames: 0,
-            ppPastSurfaces: std::ptr::null_mut(),
-            ppFutureSurfaces: std::ptr::null_mut(),
             pInputSurface: std::mem::ManuallyDrop::new(Some(input_view)),
-            ppPastSurfacesRight: std::ptr::null_mut(),
-            ppFutureSurfacesRight: std::ptr::null_mut(),
-            pInputSurfaceRight: std::mem::ManuallyDrop::new(None),
+            ..default()
         };
 
         // Perform video processing (BGRA → NV12 conversion)

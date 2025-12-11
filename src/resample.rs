@@ -5,13 +5,13 @@ use windows::Win32::Graphics::{
     Direct3D11::*,
 };
 
-pub struct ResamplePass {
+pub struct Resampler {
     vs: ID3D11VertexShader,
     ps: ID3D11PixelShader,
     sampler: ID3D11SamplerState,
 }
 
-impl ResamplePass {
+impl Resampler {
     const BYTECODE_VS: &'static [u8] =
         ngd3dcompile::include_bytecode!(
             path = "resample.hlsl",
@@ -34,7 +34,7 @@ impl ResamplePass {
         MinLOD: 0.0,
         MaxLOD: D3D11_FLOAT32_MAX,
     };
-    
+
     pub fn new(device: &ID3D11Device) -> anyhow::Result<Self> {
         let vs =
             out_var_or_err(|out| api_call!(unsafe {
@@ -43,7 +43,7 @@ impl ResamplePass {
                     None,
                     Some(out))
             }))?.ok_or_else(|| anyhow::anyhow!("ID3D11Device::CreateVertexShader failed"))?;
-        
+
         let ps =
             out_var_or_err(|out| api_call!(unsafe {
                 device.CreatePixelShader(
@@ -51,7 +51,7 @@ impl ResamplePass {
                     None,
                     Some(out))
             }))?.ok_or_else(|| anyhow::anyhow!("ID3D11Device::CreatePixelShader failed"))?;
-        
+
         let sampler_desc = Self::SAMPLER_DESC;
         let sampler =
             out_var_or_err(|out| api_call!(unsafe {
@@ -71,7 +71,7 @@ impl ResamplePass {
         target_rtv: &ID3D11RenderTargetView) {
         // use windows::core::Interface as _;
         // use windows::core::w;
-        // 
+        //
         // let _ = match api_call!(ctx.cast::<ID3DUserDefinedAnnotation>()) {
         //     Ok(annotation) => {
         //         unsafe { annotation.BeginEvent(w!("ResamplePass::resample")); }
@@ -82,7 +82,7 @@ impl ResamplePass {
         //         None
         //     },
         // };
-        
+
         unsafe {
             ctx.OMSetRenderTargets(Some(&[Some(target_rtv.clone())]), None);
             ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -91,7 +91,7 @@ impl ResamplePass {
             ctx.PSSetShaderResources(0, Some(&[Some(source_srv.clone())]));
             ctx.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
             ctx.Draw(6, 0);
-            
+
             ctx.OMSetRenderTargets(Some(&[]), None);
             ctx.VSSetShader(None, None);
             ctx.PSSetShader(None, None);

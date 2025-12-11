@@ -88,7 +88,7 @@ impl StreamManager {
                 sps: sps.data.clone(),
                 pps: pps.data.clone(),
                 width: 1920,
-                height: 1080,
+                height: 1200,
             };
 
             match self.codec_params.lock() {
@@ -104,7 +104,7 @@ impl StreamManager {
         let sequence = self.sequence_counter.fetch_add(1, Ordering::SeqCst);
 
         // Get timestamp from first NAL unit
-        let timestamp_us = nal_units[0].timestamp_us;
+        let timestamp_us = 0; // nal_units[0].timestamp_us;
 
         let frame = StreamFrame {
             sequence,

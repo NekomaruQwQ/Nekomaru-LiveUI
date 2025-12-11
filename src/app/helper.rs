@@ -1,5 +1,5 @@
 use nkcore::*;
-
+use nkcore::euclid::Size2D;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -19,6 +19,7 @@ use windows::{
         Direct3D11::*,
     },
 };
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC};
 
 pub fn create_device() -> anyhow::Result<(IDXGIFactory6, ID3D11Device, ID3D11DeviceContext)> {
     let dxgi_factory =
@@ -69,6 +70,37 @@ pub fn create_device() -> anyhow::Result<(IDXGIFactory6, ID3D11Device, ID3D11Dev
     Ok((dxgi_factory, device, device_context))
 }
 
+pub fn create_texture(
+    device: &ID3D11Device,
+    size: Size2D<u32>,
+    format: DXGI_FORMAT,
+    bind_flags: &[D3D11_BIND_FLAG])
+    -> anyhow::Result<ID3D11Texture2D> {
+    let desc = D3D11_TEXTURE2D_DESC {
+        Width: size.width,
+        Height: size.height,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: format,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_DEFAULT,
+        BindFlags:
+            bind_flags
+                .iter()
+                .map(|flag| flag.0 as u32)
+                .sum(),
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
+    };
+
+    out_var_or_err(|out| api_call!(unsafe {
+        device.CreateTexture2D(
+            &raw const desc,
+            None,
+            Some(out))
+    }))?.ok_or_else(|| anyhow::anyhow!("failed to create texture"))
+}
+
 #[expect(
     clippy::panic_in_result_fn,
     reason = "running on an unexpected platform is always an unrecoverable error")]
@@ -100,6 +132,13 @@ impl ApplicationHandler for AppWrapper<super::LiveApp> {
 
         if let Some(app) = self.0.as_mut() {
             app.on_window_event(window_id, event);
+        }
+    }
+
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        // Request continuous redraws for frontend window to trigger frame capture
+        if let Some(app) = self.0.as_ref() {
+            app.main_window.request_redraw();
         }
     }
 }

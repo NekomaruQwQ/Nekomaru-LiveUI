@@ -1,19 +1,18 @@
 mod helper;
-use helper::*;
+use helper::AppWrapper;
 
 use crate::capture::CaptureSession;
-use crate::encoding_thread::EncodingThread;
-use crate::encoding_thread::CaptureFrame;
+use crate::converter::NV12Converter;
+use crate::encoder::H264Encoder;
+use crate::encoder::H264EncoderConfig;
+use crate::resample::Resampler;
 use crate::stream::StreamManager;
 
 use nkcore::euclid::*;
 use nkcore::*;
 
-use std::borrow::Cow;
 use std::sync::Arc;
-use std::time::Duration;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
+use std::thread;
 
 use wry::WebView;
 use wry::WebViewBuilder;
@@ -31,8 +30,7 @@ use winit::{
 use windows::core::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Direct3D11::*;
-
-use crate::resample::ResamplePass;
+use windows::Win32::System::Com::*;
 
 pub fn run() {
     EventLoop::<()>::new()
@@ -43,66 +41,29 @@ pub fn run() {
 
 #[expect(dead_code, reason = "to keep various resources alive")]
 struct LiveApp {
-    main_capture: CaptureSession,
+    // LiveUI output
+    main_window: Window,
+    main_webview: WebView,
 
-    // Encoding pipeline
-    encoding_thread: EncodingThread,
-    stream_manager: Arc<StreamManager>,
-
-    // D3D11 device and context
+    // D3D11 device and resources
     device: ID3D11Device,
     device_context: ID3D11DeviceContext,
+    resampler: Resampler,
 
-    // Staging texture for copying captured frames
-    staging_texture: ID3D11Texture2D,
-    staging_texture_rtv: ID3D11RenderTargetView,
-    resample_pass: ResamplePass,
+    // LiveUI main capture session and staging textures
+    main_capture: CaptureSession,
+    main_capture_staging_bgra8: ID3D11Texture2D,
+    main_capture_staging_bgra8_rtv: ID3D11RenderTargetView,
 
-    frontend_window: Window,
-    frontend_webview: WebView,
-
-    // control_window: Window,
+    // Stream manager for encoded frames
+    _stream_manager: Arc<StreamManager>,
 }
 
 impl LiveApp {
-    const STREAM_SIZE: Size2D<u32> = Size2D::new(1920, 1200);
+    const STREAM_FRAME_SIZE: Size2D<u32> = Size2D::new(1920, 1200);
 
     fn new(event_loop: &ActiveEventLoop) -> anyhow::Result<Self> {
-        use windows::Win32::UI::WindowsAndMessaging::FindWindowA;
-
-        let (dxgi_factory, device, device_context) =
-            create_device()
-                .context("failed to create graphics context")?;
-        let resample_pass =
-            ResamplePass::new(&device)
-                .context("failed to create resample pass")?;
-        // Create staging texture for copying captured frames
-        let staging_texture =
-            create_staging_texture(&device, Self::STREAM_SIZE)
-                .context("failed to create staging texture")?;
-        let staging_texture_rtv =
-            out_var_or_err(|out| api_call!(unsafe {
-                device.CreateRenderTargetView(
-                    &staging_texture,
-                    None,
-                    Some(out))
-            }))?.ok_or_else(|| anyhow::anyhow!("failed to create RTV for staging texture"))?;
-
-        // Start main capture session (capture LiveUI window)
-        let main_capture_target = api_call!(unsafe {
-            FindWindowA(
-                PCSTR::default(),
-                PCSTR(c"Nekomaru LiveUI v1".as_ptr().cast()))
-        })?;
-        let main_capture =
-            CaptureSession::capture_window(&device, &device_context, main_capture_target)
-                .context("failed to start main capture session")?;
-
-        // Create stream manager (shared between encoding thread and protocol handler)
-        let stream_manager = Arc::new(StreamManager::new(60));  // 60 frame buffer (~1 second)
-        let stream_manager_for_protocol = Arc::clone(&stream_manager);
-
-        let frontend_window = api_call! {
+        let main_window = api_call! {
             event_loop.create_window(
                 Window::default_attributes()
                     .with_title("Nekomaru LiveUI Web Frontend")
@@ -111,26 +72,15 @@ impl LiveApp {
                     .with_enabled_buttons(WindowButtons::CLOSE))
         }?;
 
-        // Add custom protocol handler for video streaming
-        let frontend_webview =
+        let main_webview =
             WebViewBuilder::new()
                 .with_url("http://localhost:9688/")
-                .with_custom_protocol("stream".to_owned(), move |_, request| {
-                    handle_stream_request(&stream_manager_for_protocol, request)
-                        .expect("failed to handle stream request")
-                })
-                .build(&frontend_window)
+                // .with_custom_protocol("stream".to_owned(), move |_, request| {
+                //     handle_stream_request(&stream_manager_for_protocol, request)
+                //         .expect("failed to handle stream request")
+                // })
+                .build(&main_window)
                 .context("failed to create webview for frontend window")?;
-
-
-        // Start encoding thread
-        let encoding_thread =
-            EncodingThread::new(
-                device.clone(),
-                device_context.clone(),
-                Self::STREAM_SIZE,
-                Arc::clone(&stream_manager))
-            .context("failed to create encoding thread")?;
 
         // let control_window = api_call! {
         //     event_loop.create_window(
@@ -141,91 +91,162 @@ impl LiveApp {
         //             .with_enabled_buttons(WindowButtons::CLOSE))
         // }?;
 
+        let (_, device, device_context) =
+            helper::create_device()
+                .context("failed to create graphics context")?;
+        let resampler =
+            Resampler::new(&device)
+                .context("failed to create resample pass")?;
+        let nv12_converter =
+            NV12Converter::new(&device, &device_context)
+                .context("failed to create bgra-to-nv12 converter")?;
+
+        let main_capture_target = {
+            use windows::Win32::UI::WindowsAndMessaging::FindWindowA;
+            api_call!(unsafe {
+                FindWindowA(
+                    PCSTR::default(),
+                    PCSTR(c"Nekomaru LiveUI v1".as_ptr().cast()))
+            })?
+        };
+
+        let main_capture =
+            CaptureSession::capture_window(&device, &device_context, main_capture_target)
+                .context("failed to start main capture session")?;
+
+        let main_capture_staging_bgra8 =
+            helper::create_texture(
+                &device,
+                Self::STREAM_FRAME_SIZE,
+                DXGI_FORMAT_B8G8R8A8_UNORM,
+                &[
+                    D3D11_BIND_SHADER_RESOURCE,
+                    D3D11_BIND_RENDER_TARGET,
+                ])
+                .context("failed to create staging texture")?;
+
+        let main_capture_staging_bgra8_rtv =
+            out_var_or_err(|out| api_call!(unsafe {
+                device.CreateRenderTargetView(
+                    &main_capture_staging_bgra8,
+                    None,
+                    Some(out))
+            }))?
+                .context("failed to create staging texture rtv")?;
+
+        let main_capture_staging_nv12 =
+            helper::create_texture(
+                &device,
+                Self::STREAM_FRAME_SIZE,
+                DXGI_FORMAT_NV12,
+                &[D3D11_BIND_RENDER_TARGET])
+                .context("failed to create staging NV12 texture")?;
+
+        // Create stream manager (60 frame buffer = ~1 second at 60fps)
+        let stream_manager = Arc::new(StreamManager::new(60));
+        let stream_manager_for_encoder = Arc::clone(&stream_manager);
+
+        thread::Builder::new()
+            .name("Encoding Thread".to_owned())
+            .spawn({
+                let device = device.clone();
+                let device_context =
+                    device_context.clone();
+                let mut nv12_converter = nv12_converter;
+                let staging_bgra8 =
+                    main_capture_staging_bgra8.clone();
+                let staging_nv12 =
+                    main_capture_staging_nv12;
+                move || {
+                    log::info!("encoding thread started");
+
+                    unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
+                        .ok()
+                        .expect("CoInitializeEx failed");
+
+                    H264Encoder::new(&device, H264EncoderConfig {
+                        frame_size: (1920, 1200).into(),
+                        frame_rate: 60,
+                        bitrate: 8_000_000,  // 8 Mbps
+                        frame_source_callback: Box::new({
+                            move || {
+                                nv12_converter.convert(&staging_bgra8, &staging_nv12)
+                                    .expect("failed to convert BGRA8 to NV12");
+                                staging_nv12.clone()
+                            }
+                        }),
+                        frame_target_callback: Box::new(move |nal_units| {
+                            // Push encoded frame to stream manager
+                            if let Err(e) = stream_manager_for_encoder.push_frame(nal_units) {
+                                log::warn!("Failed to push frame to stream: {:?}", e);
+                            }
+                        }),
+                    })
+                        .expect("failed to create H.264 encoder")
+                        .run();
+                }
+            })
+            .context("failed to spawn encoding thread")?;
+
+        main_window.request_redraw();
+
         Ok(Self {
-            main_capture,
-            encoding_thread,
-            stream_manager,
+            main_window,
+            main_webview,
             device,
             device_context,
-            resample_pass,
-            staging_texture,
-            staging_texture_rtv,
-            frontend_window,
-            frontend_webview,
+            resampler,
+            main_capture,
+            main_capture_staging_bgra8,
+            main_capture_staging_bgra8_rtv,
+            _stream_manager: stream_manager,
         })
     }
 
     fn on_window_event(&mut self, window_id: WindowId, event: WindowEvent) {
-        match window_id {
-            id if id == self.frontend_window.id() => {
-                self.main_capture.update();
+        if window_id == self.main_window.id() {
+            match event {
+                WindowEvent::RedrawRequested => {
+                    // Update capture and resample to staging texture ("restock the shelf")
+                    self.main_capture.update();
 
-                // Copy frame and send to encoding thread
-                let source_texture = self.main_capture.frame_buffer();
-                let source_view =
-                    out_var_or_err(|out| api_call!(unsafe {
-                        self.device.CreateShaderResourceView(
-                            source_texture,
-                            None,
-                            Some(out))
-                    }))
-                        .expect("failed to create shader view")
-                        .expect("failed to create shader view");
-                self.resample_pass.resample(
-                    &self.device_context,
-                    &source_view,
-                    &self.staging_texture_rtv);
+                    let source_texture =
+                        self.main_capture.frame_buffer();
 
-                // Get timestamp
-                let timestamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
-                    Ok(duration) => duration.as_micros() as u64,
-                    Err(e) => {
-                        log::warn!("System time error: {e:?}");
-                        0  // Fallback to 0, encoder will still work
-                    }
-                };
+                    // Debug: Log texture pointer to verify it's changing
+                    log::trace!("Captured texture: {:p}", source_texture.as_raw());
+                    let source_view =
+                        out_var_or_err(|out| api_call!(unsafe {
+                            self.device.CreateShaderResourceView(
+                                source_texture,
+                                None,
+                                Some(out))
+                        }))
+                            .expect("failed to create shader view")
+                            .expect("failed to create shader view");
+                    self.resampler.resample(
+                        &self.device_context,
+                        &source_view,
+                        &self.main_capture_staging_bgra8_rtv);
 
-                // Send to encoding thread (non-blocking)
-                self.encoding_thread.send_frame(CaptureFrame {
-                    texture: self.staging_texture.clone(),
-                    timestamp_us: timestamp,
-                });
+                    // CRITICAL: Flush and wait for GPU to complete resampling
+                    // Flush() submits commands, sleep gives GPU time to execute them
+                    unsafe { self.device_context.Flush(); }
+                    thread::sleep(std::time::Duration::from_millis(5));
+
+                    // Request next frame immediately to keep "shelf" continuously updated
+                    // This creates a continuous loop: RedrawRequested → update → request_redraw → RedrawRequested...
+                    self.main_window.request_redraw();
+                }
+                WindowEvent::CloseRequested => {},
+                _ => {},
             }
-            _ => {}
         }
     }
 }
 
-/// Create a staging texture for copying captured frames
-fn create_staging_texture(device: &ID3D11Device, size: Size2D<u32>)
-    -> anyhow::Result<ID3D11Texture2D> {
-    let desc = D3D11_TEXTURE2D_DESC {
-        Width: size.width,
-        Height: size.height,
-        MipLevels: 1,
-        ArraySize: 1,
-        Format: DXGI_FORMAT_B8G8R8A8_UNORM,  // Match capture format
-        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-        Usage: D3D11_USAGE_DEFAULT,
-        BindFlags:
-            D3D11_BIND_RENDER_TARGET.0 as u32 |
-                D3D11_BIND_SHADER_RESOURCE.0 as u32,
-        CPUAccessFlags: 0,
-        MiscFlags: 0,
-    };
-
-    let mut texture = None;
-    api_call!(unsafe {
-        device.CreateTexture2D(
-            &raw const desc,
-            None,
-            Some(&raw mut texture))
-    }).with_context(|| context!("creating staging texture for encoding"))?;
-
-    texture.ok_or_else(|| anyhow::anyhow!("staging texture is null"))
-}
-
 /// Handle custom protocol requests for video streaming
+#[cfg(false)]
 fn handle_stream_request(
     manager: &Arc<StreamManager>,
     request: wry::http::Request<Vec<u8>>)

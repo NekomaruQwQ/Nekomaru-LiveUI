@@ -2,121 +2,21 @@
     non_upper_case_globals,
     reason = "false positive on windows-rs constants")]
 
+mod debug;
+mod helper;
+
 use nkcore::euclid::*;
 use nkcore::*;
 
+use std::time::*;
+
 use windows::core::*;
-use windows::{
-    Win32::Graphics::Direct3D11::*,
-    Win32::Media::MediaFoundation::*,
-    Win32::System::Com::*,
-    Win32::System::Variant::*,
-};
-use windows::Win32::Graphics::Dxgi::IDXGIDevice;
+use windows::Win32::Graphics::Direct3D11::*;
+use windows::Win32::Media::MediaFoundation::*;
+use windows::Win32::System::Variant::VARIANT;
 
-pub fn print_mft_supported_input_types(transform: &IMFTransform) -> anyhow::Result<()> {
-    log::info!("--- Supported Input Types ---");
-    for i in 0..100 {
-        match unsafe { transform.GetInputAvailableType(0, i) } {
-            Ok(media_type) => {
-                log::info!("Input type #{}:", i);
-                print_media_type(&media_type);
-            }
-            Err(e) if e.code() == MF_E_NO_MORE_TYPES => {
-                log::info!("Total input types: {}", i);
-                break;
-            }
-            Err(e) => {
-                log::warn!("Failed to get input type #{}: {:?}", i, e);
-                break;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Print all supported media types for the given MFT (encoder)
-pub fn print_mft_supported_output_types(transform: &IMFTransform) -> anyhow::Result<()> {
-    log::info!("--- Supported Output Types ---");
-    for i in 0..100 {
-        match unsafe { transform.GetOutputAvailableType(0, i) } {
-            Ok(media_type) => {
-                log::info!("Output type #{}:", i);
-                print_media_type(&media_type);
-            }
-            Err(e) if e.code() == MF_E_NO_MORE_TYPES => {
-                log::info!("Total output types: {}", i);
-                break;
-            }
-            Err(e) => {
-                log::warn!("Failed to get output type #{}: {:?}", i, e);
-                break;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Print details of a media type
-fn print_media_type(media_type: &IMFMediaType) {
-    // Get major type
-    if let Ok(major_type) = api_call!(unsafe { media_type.GetGUID(&MF_MT_MAJOR_TYPE) }) {
-        log::info!(
-            "  Major type: {}",
-            name_of_media_type(major_type)
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| format!("{major_type:?}")));
-    }
-
-    // Get subtype (format)
-    if let Ok(subtype) = api_call!(unsafe { media_type.GetGUID(&MF_MT_SUBTYPE) }) {
-        log::info!(
-            "  Subtype: {}",
-            name_of_video_format(subtype)
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| format!("{subtype:?}")));
-    }
-
-    // Get frame size if available
-    if let Ok(frame_size) = api_call!(unsafe { media_type.GetUINT64(&MF_MT_FRAME_SIZE) }) {
-        let width = (frame_size >> 32) as u32;
-        let height = (frame_size & 0xFFFFFFFF) as u32;
-        log::info!("  Frame size: {}x{}", width, height);
-    }
-
-    // Get frame rate if available
-    if let Ok(frame_rate) = api_call!(unsafe { media_type.GetUINT64(&MF_MT_FRAME_RATE) }) {
-        let numerator = (frame_rate >> 32) as u32;
-        let denominator = (frame_rate & 0xFFFFFFFF) as u32;
-        if denominator > 0 {
-            log::info!("  Frame rate: {}/{} ({:.2} fps)", numerator, denominator, numerator as f64 / denominator as f64);
-        }
-    }
-
-    // Get interlace mode if available
-    if let Ok(interlace) = api_call!(unsafe { media_type.GetUINT32(&MF_MT_INTERLACE_MODE) }) {
-        log::info!("  Interlace mode: {:?}", interlace);
-    }
-}
-
-fn name_of_media_type(guid: GUID) -> Option<&'static str> {
-    Some(match guid {
-        MFMediaType_Video => "Video",
-        MFMediaType_Audio => "Audio",
-        _ => None?,
-    })
-}
-
-fn name_of_video_format(guid: GUID) -> Option<&'static str> {
-    Some(match guid {
-        MFVideoFormat_NV12 => "NV12",
-        MFVideoFormat_H264 => "H.264",
-        MFVideoFormat_HEVC => "HEVC",
-        MFVideoFormat_RGB32 => "RGB32",
-        MFVideoFormat_ARGB32 => "ARGB32",
-        _ => None?,
-    })
-}
+const ENCODER_FRAME_RATE: u32 = 60;
+const ENCODER_BITRATE: u32 = 8_000_000; // 8 Mbps
 
 /// NAL unit types for H.264
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,82 +52,92 @@ pub struct NALUnit {
     pub unit_type: NALUnitType,
     /// Raw NAL unit data (including start code)
     pub data: Vec<u8>,
-    /// Timestamp in microseconds
-    pub timestamp_us: u64,
 }
 
-/// H.264 encoder using Windows Media Foundation
 pub struct H264Encoder {
+    config: H264EncoderConfig,
     mf_dxgi_manager: IMFDXGIDeviceManager,
     mf_transform: IMFTransform,
-    frame_size: Size2D<u32>,
+    mf_event_generator: IMFMediaEventGenerator,
     frame_count: u64,
+    time_elapsed: Duration,
+    time_of_last_frame: SystemTime,
+}
+
+pub struct H264EncoderConfig {
+    pub frame_size: Size2D<u32>,
+    pub frame_rate: u32,
+    pub bitrate: u32,
+    pub frame_source_callback: Box<dyn FnMut() -> ID3D11Texture2D + Send + Sync + 'static>,
+    pub frame_target_callback: Box<dyn FnMut(Vec<NALUnit>) + Send + Sync + 'static>,
 }
 
 impl H264Encoder {
-    /// Create a new H.264 encoder.
-    ///
-    /// # Arguments
-    /// * `device` - D3D11 device for DXGI integration
-    /// * `width` - Video width
-    /// * `height` - Video height
-    /// * `frame_rate` - Target frame rate (e.g., 60)
-    /// * `bitrate` - Target bitrate in bits per second (e.g., 8_000_000 for 8 Mbps)
     #[expect(clippy::panic_in_result_fn, reason = "asserts for valid input")]
-    pub fn new(
-        device: &ID3D11Device,
-        frame_size: Size2D<u32>,
-        frame_rate: u32,
-        bitrate: u32)
-        -> anyhow::Result<Self> {
-        assert!(frame_size.width.is_multiple_of(16), "width must be multiple of 16");
-        assert!(frame_size.height.is_multiple_of(16), "height must be multiple of 16");
+    pub fn new(device: &ID3D11Device, config: H264EncoderConfig) -> anyhow::Result<Self> {
+        assert!(
+            config.frame_size.width.is_multiple_of(16) &&
+            config.frame_size.height.is_multiple_of(16),
+            "frame size must be multiple of 16");
+        log::info!(
+            "creating H.264 encoder with config: {}x{} @ {}fps, {} bps",
+            config.frame_size.width,
+            config.frame_size.height,
+            config.frame_rate,
+            config.bitrate);
 
         // Initialize Media Foundation
         api_call!(unsafe { MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET) })?;
 
         // Find H.264 encoder transform
         let mf_transform =
-            Self::find_h264_encoder(&api_call!(device.cast())?)
+            helper::find_h264_encoder(&api_call!(device.cast())?)
                 .context("failed to find H264Encoder")?;
         let mf_attributes =
             api_call!(unsafe { mf_transform.GetAttributes() })?;
 
-        // Unlock async MFT so we can use it with polling
+        // Get event generator interface for async MFT event handling
+        let mf_event_generator =
+            api_call!(mf_transform.cast::<IMFMediaEventGenerator>())
+                .context("failed to get IMFMediaEventGenerator interface")?;
+
+        // Unlock async MFT
         api_call!(unsafe { mf_attributes.SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1) })
             .context("failed to unlock async MFT")?;
         log::info!("MFT async unlocked");
 
         // Print supported media types for debugging (after unlock)
-        if let Err(e) = print_mft_supported_output_types(&mf_transform) {
-            log::warn!("Failed to query MFT supported types: {e:?}");
-        }
+        debug::print_mft_supported_output_types(&mf_transform);
 
         // Configure output type (H.264) BEFORE setting D3D manager
         // Get enumerated type and set required parameters
         let output_type = unsafe { mf_transform.GetOutputAvailableType(0, 0)? };
 
         // Set required parameters
-        api_call!(unsafe { output_type.SetUINT32(&MF_MT_AVG_BITRATE, bitrate) })?;
+        api_call!(unsafe { output_type.SetUINT32(&MF_MT_AVG_BITRATE, config.bitrate) })?;
 
         let frame_size_val =
-            ((frame_size.width as u64) << 32) |
-            (frame_size.height as u64);
+            ((config.frame_size.width as u64) << 32) |
+            (config.frame_size.height as u64);
         api_call!(unsafe { output_type.SetUINT64(&MF_MT_FRAME_SIZE, frame_size_val) })?;
 
-        let frame_rate_ratio = ((frame_rate as u64) << 32) | 1u64;
+        let frame_rate_ratio = ((config.frame_rate as u64) << 32) | 1u64;
         api_call!(unsafe { output_type.SetUINT64(&MF_MT_FRAME_RATE, frame_rate_ratio) })?;
 
-        log::info!("Attempting to set output type ({}x{} @ {}fps, {} bps)...",
-            frame_size.width, frame_size.height, frame_rate, bitrate);
+        // Set Baseline profile for maximum compatibility with WebCodecs
+        // Baseline profile inherently disables B-frames
+        api_call!(unsafe {
+            output_type.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Base.0 as u32)
+        })?;
+        log::info!("H.264 profile set to Baseline (no B-frames)");
+
+        log::info!("Setting output type (H.264)...");
         api_call!(unsafe { mf_transform.SetOutputType(0, &output_type, 0) })
             .context("failed to set output type")?;
         log::info!("Output type set successfully!");
 
         // Print supported input types after output type is set
-        if let Err(e) = print_mft_supported_input_types(&mf_transform) {
-            log::warn!("Failed to query MFT supported types: {e:?}");
-        }
+        debug::print_mft_supported_input_types(&mf_transform);
 
         // Configure input type (NV12) - use enumerated type #1 (NV12)
         let input_type = unsafe { mf_transform.GetInputAvailableType(0, 1)? };
@@ -248,7 +158,8 @@ impl H264Encoder {
             api_call!(mf_dxgi_manager.cast::<IUnknown>())?;
 
         // Register D3D11 device with DXGI manager
-        api_call!(unsafe { mf_dxgi_manager.ResetDevice(device, reset_token) })?;
+        api_call!(unsafe { mf_dxgi_manager.ResetDevice(device, reset_token) })
+            .context("failed to register D3D11 device with DXGI manager")?;
 
         // NOW set D3D manager after both types are configured
         api_call!(unsafe {
@@ -257,6 +168,27 @@ impl H264Encoder {
                 mf_dxgi_manager_as_unknown.as_raw().addr())
         }).context("failed to set D3D manager")?;
         log::info!("DXGI device manager attached to encoder");
+
+        // Configure low-latency settings via ICodecAPI (after types and D3D manager are set)
+        log::info!("Configuring low-latency codec settings...");
+        let codec_api = api_call!(mf_transform.cast::<ICodecAPI>())?;
+
+        for (name, api, value) in [
+            // No B-frames for low latency (B-frames add 2+ frame latency)
+            ("B-frame count", &CODECAPI_AVEncMPVDefaultBPictureCount, VARIANT::from(0u32)),
+            // GOP size = 2 seconds (120 frames at 60fps for fast recovery)
+            ("GOP size", &CODECAPI_AVEncMPVGOPSize, VARIANT::from(config.frame_rate * 2)),
+            // Low latency mode
+            ("Low latency mode", &CODECAPI_AVLowLatencyMode, VARIANT::from(true)),
+            // CBR rate control (constant bitrate for predictable latency)
+            ("Rate control mode", &CODECAPI_AVEncCommonRateControlMode,
+                VARIANT::from(eAVEncCommonRateControlMode_CBR.0 as u32)),
+        ] {
+            match api_call!(unsafe { codec_api.SetValue(api, &value) }) {
+                Ok(_) => log::info!("  {} set successfully", name),
+                Err(e) => log::warn!("  Failed to set {}: {:?} (encoder may not support this setting)", name, e),
+            }
+        }
 
         // Start streaming
         api_call!(unsafe {
@@ -285,337 +217,172 @@ impl H264Encoder {
         log::info!("  MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES: {}",
             (output_stream_info.dwFlags & MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES.0 as u32) != 0);
 
-        log::info!(
-            "H.264 encoder initialized ({}x{} @ {}fps, {} bps)",
-            frame_size.width,
-            frame_size.height,
-            frame_rate,
-            bitrate);
+        log::info!("H.264 encoder ready");
 
         Ok(Self {
+            config,
             mf_dxgi_manager,
             mf_transform,
-            frame_size,
+            mf_event_generator,
             frame_count: 0,
+            time_elapsed: Duration::ZERO,
+            time_of_last_frame: SystemTime::now(),
         })
     }
 
-    /// Find a hardware H.264 encoder transform
-    fn find_h264_encoder(dxgi_device: &IDXGIDevice) -> anyhow::Result<IMFTransform> {
-        static INPUT_TYPE: MFT_REGISTER_TYPE_INFO = MFT_REGISTER_TYPE_INFO {
-            guidMajorType: MFMediaType_Video,
-            guidSubtype: MFVideoFormat_NV12,
-        };
-
-        static OUTPUT_TYPE: MFT_REGISTER_TYPE_INFO = MFT_REGISTER_TYPE_INFO {
-            guidMajorType: MFMediaType_Video,
-            guidSubtype: MFVideoFormat_H264,
-        };
-
-        // --- Get the LUID from the Device ---
-        let dxgi_adapter = api_call!(unsafe { dxgi_device.GetAdapter() })?;
-        let dxgi_adapter_desc = api_call!(unsafe { dxgi_adapter.GetDesc() })?;
-
-        // Search for hardware encoder (async)
-        let mut out_activate = std::ptr::null_mut();
-        let mut out_count = 0u32;
-        api_call!(unsafe {
-            MFTEnumEx(
-                MFT_CATEGORY_VIDEO_ENCODER,
-                MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_ASYNCMFT,
-                Some(&raw const INPUT_TYPE),
-                Some(&raw const OUTPUT_TYPE),
-                &raw mut out_activate,
-                &raw mut out_count)
-        })?;
-
-        if out_activate.is_null() || out_count == 0 {
-            anyhow::bail!("no hardware H.264 encoder found");
-        }
-
-        log::info!("found {} hardware H.264 encoder(s)", out_count);
-        defer(|| unsafe { CoTaskMemFree(Some(out_activate.cast())) });
-
-        // Convert the raw pointer to a slice so we can iterate safely
-        let activates = unsafe { std::slice::from_raw_parts(out_activate, out_count as usize) };
-
-        log::info!("scanning {} hardware H.264 encoder(s) for matching adapter...", out_count);
-        for (index, activate) in activates.iter().enumerate() {
-            // Check if the pointer is valid
-            let activate =
-                activate
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("null activate pointer at index {}", index))?;
-
-            // Hardware MFTs expose MFT_ENUM_ADAPTER_LUID (as UINT64).
-            // This tells us which physical GPU this encoder belongs to.
-            // let mft_luid_val = api_call!(unsafe { activate.GetUINT64(&MFT_ENUM_ADAPTER_LUID) })?;
-            //
-            // // Convert UINT64 back to LUID struct for comparison
-            // // LUID is essentially { LowPart: u32, HighPart: i32 }
-            // let mft_luid = LUID {
-            //     LowPart: mft_luid_val as u32,
-            //     HighPart: (mft_luid_val >> 32) as i32,
-            // };
-            //
-            // log::info!(
-            //     "encoder index {} has LUID {{ LowPart: {}, HighPart: {} }}",
-            //     index,
-            //     mft_luid.LowPart,
-            //     mft_luid.HighPart);
-            // log::info!(
-            //     "current adapter LUID {{ LowPart: {}, HighPart: {} }}",
-            //     dxgi_adapter_desc.AdapterLuid.LowPart,
-            //     dxgi_adapter_desc.AdapterLuid.HighPart);
-            //
-            // if mft_luid == dxgi_adapter_desc.AdapterLuid {
-            //     log::info!("Found matching encoder at index {}", index);
-            //     return Ok(api_call!(unsafe {
-            //         activate.ActivateObject::<IMFTransform>()
-            //     })?);
-            // }
-
-            let mut buf = [0u16; 256];
-            let mut len = 0u32;
-            api_call!(unsafe {
-                activate.GetString(
-                    &MFT_FRIENDLY_NAME_Attribute,
-                    &mut buf,
-                    Some(&raw mut len))
-            })?;
-
-            let name = unsafe {
-                widestring::U16Str::from_ptr(
-                    buf.as_ptr(),
-                    len as _)
+    pub fn run(mut self) {
+        const POLL_TIMEOUT: u32 = 5;
+        loop {
+            // **NOTE**: As we are on a separate thread, we perform a blocking wait for new events.
+            let event = match unsafe { self.mf_event_generator.GetEvent(default()) } {
+                Ok(event) => event,
+                Err(err) if err.code() == MF_E_NO_EVENTS_AVAILABLE =>
+                    continue,
+                Err(err) => {
+                    log::warn!("failed to poll encoder event: {err:?}");
+                    continue;
+                }
             };
 
-            let name = name.to_string_lossy();
-            log::info!("Encoder #{}: '{}'", index, name);
+            let event_type = match api_call!(unsafe { event.GetType() }) {
+                Ok(event_type) => MF_EVENT_TYPE(event_type as _),
+                Err(err) => {
+                    log::warn!("failed to poll encoder event: {err:?}");
+                    continue;
+                }
+            };
 
-            // Activate this encoder
-            if name.to_ascii_lowercase().contains("nvidia") {
-                log::info!("Selecting encoder #{} ('{}')", index, name);
-                return Ok(api_call!(unsafe {
-                    activate.ActivateObject::<IMFTransform>()
-                })?);
+            match event_type {
+                METransformDrainComplete => {
+                    log::trace!("METransformDrainComplete received");
+                },
+                METransformNeedInput => {
+                    log::trace!("METransformNeedInput received");
+                    self.process_input()
+                        .context(context!("{} failed", pretty_name::of_method!(Self::process_input)))
+                        .unwrap();
+                },
+                METransformHaveOutput => {
+                    log::trace!("METransformHaveOutput received");
+                    self.process_output()
+                        .context(context!("{} failed", pretty_name::of_method!(Self::process_output)))
+                        .unwrap();
+                }
+                _ => {
+                    log::trace!("Unhandled MFT event type: {:?}", event_type);
+                }
             }
         }
 
-        anyhow::bail!("no matching hardware H.264 encoder found for the current adapter");
+        // We don't care about any errors during shutdown.
+
+        let _ = api_call!(unsafe {
+            self.mf_transform
+                .ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0)
+        });
     }
 
-    /// Configure input media type (NV12)
-    #[cfg(false)]
-    fn configure_input_type(
-        transform: &IMFTransform,
-        frame_size: Size2D<u32>,
-        frame_rate: u32)
-        -> anyhow::Result<()> {
-        let input_type = api_call!(unsafe { MFCreateMediaType() })?;
-
-        api_call!(unsafe { input_type.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video) })
-            .with_context(|| context!("failed to set input major type to video"))?;
-        api_call!(unsafe { input_type.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12) })
-            .with_context(|| context!("failed to set input subtype to NV12"))?;
-
-        let frame_size =
-            ((frame_size.width as u64) << 32) |
-            (frame_size.height as u64);
-        api_call!(unsafe { input_type.SetUINT64(&MF_MT_FRAME_SIZE, frame_size) })
-            .with_context(|| context!("failed to set input frame size"))?;
-
-        let frame_rate_ratio = ((frame_rate as u64) << 32) | 1u64;
-        api_call!(unsafe { input_type.SetUINT64(&MF_MT_FRAME_RATE, frame_rate_ratio) })
-            .with_context(|| context!("failed to set input frame rate"))?;
-
-        api_call!(unsafe { transform.SetInputType(0, &input_type, 0) })
-            .with_context(|| context!("failed to set encoder input type"))?;
-        Ok(())
-    }
-
-    /// Configure output media type (H.264) with low-latency settings
-    #[cfg(false)]
-    fn configure_output_type(
-        transform: &IMFTransform,
-        frame_size: Size2D<u32>,
-        frame_rate: u32,
-        bitrate: u32)
-        -> anyhow::Result<()> {
-        let output_type = api_call!(unsafe { MFCreateMediaType() })?;
-
-        let frame_size_packed =
-            ((frame_size.width as u64) << 32) | (frame_size.height as u64);
-        let frame_rate_packed =
-            ((frame_rate as u64) << 32) | 1u64;
-
-        api_call!(unsafe { output_type.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video) })
-            .context("failed to set output major type")?;
-        api_call!(unsafe { output_type.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264) })
-            .context("failed to set output subtype to H.264")?;
-        api_call!(unsafe { output_type.SetUINT64(&MF_MT_FRAME_SIZE, frame_size_packed) })
-            .context("failed to set output frame size")?;
-        api_call!(unsafe { output_type.SetUINT64(&MF_MT_FRAME_RATE, frame_rate_packed) })
-            .context("failed to set output frame rate")?;
-        api_call!(unsafe { output_type.SetUINT32(&MF_MT_AVG_BITRATE, bitrate) })
-            .context("failed to set output bitrate")?;
-
-        // Baseline profile for maximum compatibility
-        api_call!(unsafe { output_type.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Base.0 as u32) })
-            .context("failed to set H.264 profile to baseline")?;
-
-        // Hardware encoders fail if you don't explicitly say "Progressive"
-        api_call!(unsafe {
-            output_type.SetUINT32(
-                &MF_MT_INTERLACE_MODE,
-                MFVideoInterlace_Progressive.0 as u32)
-        })
-            .context("failed to set interlace mode to progressive")?;
-
-        // --- [FIX] Explicitly Set Profile and Level ---
-        // eAVEncH264VProfile_High = {54041196-23BB-45F7-9684-8073A642E325}
-        // eAVEncH264VLevel5_1     = 51 (decimal)
-
-        // // Note: You might need to define these GUIDs/Constants if windows-rs
-        // // doesn't export them conveniently in the version you are using.
-        // // eAVEncH264VProfile_High
-        // api_call!(unsafe {
-        //     output_type.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High.0 as _)
-        // })?;
-        //
-        // // eAVEncH264VLevel5_1 (Enum value 51)
-        // // This unlocks 4K resolution and higher macroblock throughput.
-        // api_call!(unsafe {
-        //     output_type.SetUINT32(&MF_MT_MPEG2_LEVEL, eAVEncH264VLevel5_1.0 as _)
-        // })?;
-
-        api_call!(unsafe { transform.SetOutputType(0, &output_type, 0) })
-            .context("failed to set encoder output type")?;
-
-
-        api_call!(unsafe { transform.SetOutputType(0, &output_type, 0) })
-            .context("failed to set encoder output type")?;
-
-        // Configure low-latency settings via ICodecAPI
-        let codec_api = api_call!(transform.cast::<ICodecAPI>())?;
-
-        for (api, value) in [
-            // No B-frames for low latency
-            (CODECAPI_AVEncMPVDefaultBPictureCount, VARIANT::from(0)),
-            // GOP size = 2 seconds
-            (CODECAPI_AVEncMPVGOPSize, VARIANT::from(frame_rate * 2)),
-            // Low latency mode
-            (CODECAPI_AVLowLatencyMode, VARIANT::from(true)),
-            // CBR rate control
-            (CODECAPI_AVEncCommonRateControlMode,
-                VARIANT::from(eAVEncCommonRateControlMode_CBR.0 as u32)),
-        ] {
-            api_call!(unsafe { codec_api.SetValue(&api, &value) })
-                .context("failed to set codec API value")?;
+    fn process_input(&mut self) -> anyhow::Result<()> {
+        while SystemTime::now()
+            .duration_since(self.time_of_last_frame)
+            .context("unexpected time drift")?
+            .as_secs_f64() < (1.0 / self.config.frame_rate as f64) {
+            // Sleep a bit to avoid busy-waiting
+            std::thread::sleep(Duration::from_millis(1));
         }
 
-        Ok(())
-    }
+        let now = SystemTime::now();
+        let elapsed =
+            now
+                .duration_since(self.time_of_last_frame)
+                .context("unexpected time drift")?;
+        self.frame_count += 1;
+        self.time_elapsed += elapsed;
+        self.time_of_last_frame = now;
+        log::info!("encoding frame #{} at {}s {}ms",
+            self.frame_count,
+            self.time_elapsed.as_secs(),
+            self.time_elapsed.subsec_millis());
 
-    /// Encode a single NV12 frame to H.264 NAL units.
-    ///
-    /// # Arguments
-    /// * `nv12_texture` - Input NV12 texture
-    /// * `timestamp_us` - Timestamp in microseconds
-    ///
-    /// # Returns
-    /// Vector of encoded NAL units. May be empty if encoder is buffering.
-    pub fn encode_frame(
-        &mut self,
-        nv12_texture: &ID3D11Texture2D,
-        timestamp_us: u64)
-        -> anyhow::Result<Vec<NALUnit>> {
+        log::trace!("feeding frame to encoder...");
         // Create DXGI surface buffer from texture
+        let frame_texture = (self.config.frame_source_callback)();
         let buffer = api_call!(unsafe {
             MFCreateDXGISurfaceBuffer(
                 &ID3D11Texture2D::IID,
-                nv12_texture,
+                &frame_texture,
                 0,
                 false)
         })?;
 
-        // Create MF sample
         let sample = api_call!(unsafe { MFCreateSample() })?;
-
-        // Add buffer to sample
         api_call!(unsafe { sample.AddBuffer(&buffer) })?;
 
         // Set sample time (convert μs to 100ns units)
+        let timestamp_us = self.time_elapsed.as_micros() as u64;
         api_call!(unsafe { sample.SetSampleTime((timestamp_us * 10) as i64) })?;
 
         // Set sample duration (frame duration at target fps)
-        let duration_100ns = (1_000_000 * 10) / 60;  // ~16.666ms for 60fps
+        let duration_100ns = elapsed.as_micros() as i64 * 10;
         api_call!(unsafe { sample.SetSampleDuration(duration_100ns) })?;
 
         // Feed sample to encoder
-        api_call!(unsafe { self.mf_transform.ProcessInput(0, &sample, 0) })?;
-
-        // Drain encoded output
-        let nal_units = self.drain_encoder_output(timestamp_us)?;
-
-        self.frame_count += 1;
-
-        Ok(nal_units)
-    }
-
-    /// Drain encoded NAL units from encoder
-    fn drain_encoder_output(&self, timestamp_us: u64) -> anyhow::Result<Vec<NALUnit>> {
-        let mut nal_units = Vec::new();
-
-        loop {
-            let mut output_buffers = [MFT_OUTPUT_DATA_BUFFER::default()];
-            let mut status = 0u32;
-            let result = unsafe {
-                self.mf_transform.ProcessOutput(
-                    0,
-                    &mut output_buffers,
-                    &raw mut status)
-            };
-
-            match result {
-                Ok(_) => {
-                    if let Some(sample) = output_buffers[0].pSample.take() {
-                        // Convert to contiguous buffer and parse NAL units
-                        match api_call!(unsafe { sample.ConvertToContiguousBuffer() })
-                            .with_context(|| context!("converting to contiguous buffer"))
-                        {
-                            Ok(buffer) => {
-                                match Self::parse_nal_units_from_buffer(&buffer, timestamp_us) {
-                                    Ok(units) => nal_units.extend(units),
-                                    Err(e) => {
-                                        log::warn!("Failed to parse NAL units: {e:?}");
-                                        // Continue - skip this frame's NAL units
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                log::warn!("Failed to convert buffer: {e:?}");
-                                // Continue - skip this frame
-                            }
-                        }
-                    }
-                }
-                Err(err) if err.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => {
-                    // Normal condition - encoder needs more input
-                    break;
-                }
-                Err(err) => {
-                    log::error!("ProcessOutput failed: {:?}", err);
-                    break;
-                }
+        match unsafe { self.mf_transform.ProcessInput(0, &sample, 0) } {
+            Ok(_) => {
+                log::trace!("feeding succeeded");
+            },
+            Err(e) if e.code() == MF_E_NOTACCEPTING => {
+                Err(e).context("encoder not accepting input - should not happen after METransformNeedInput")?;
+            },
+            Err(e) => {
+                Err(e).context("failed to process input sample")?;
             }
         }
 
-        Ok(nal_units)
+        Ok(())
+    }
+
+    fn process_output(&mut self) -> anyhow::Result<()> {
+        let mut output_buffers = [MFT_OUTPUT_DATA_BUFFER::default()];
+        let mut status = 0u32;
+
+        match unsafe {
+            self.mf_transform.ProcessOutput(
+                0,
+                &mut output_buffers,
+                &raw mut status)
+        } {
+            Ok(()) => {
+                if let Some(sample) = output_buffers[0].pSample.take() {
+                    let buffer = api_call!(unsafe { sample.ConvertToContiguousBuffer() })?;
+                    let nal_units = Self::parse_nal_units_from_buffer(&buffer)?;
+
+                    // Debug: Log NAL unit info to verify encoding is working
+                    if !nal_units.is_empty() {
+                        log::info!("Encoded {} NAL unit(s):", nal_units.len());
+                        for (i, unit) in nal_units.iter().enumerate() {
+                            log::info!("  NAL #{}: type={:?}, size={} bytes",
+                                i, unit.unit_type, unit.data.len());
+                        }
+                    }
+
+                    (self.config.frame_target_callback)(nal_units);
+                }
+            }
+            Err(e) if e.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => {
+                anyhow::bail!("unexpected MF_E_TRANSFORM_NEED_MORE_INPUT during ProcessOutput - should not happen after METransformHaveOutput");
+            },
+            Err(e) => {
+                Err(e)?;
+            },
+            _ => {},
+        }
+
+        Ok(())
     }
 
     /// Parse NAL units from encoder output buffer
-    fn parse_nal_units_from_buffer(buffer: &IMFMediaBuffer, timestamp_us: u64)
+    fn parse_nal_units_from_buffer(buffer: &IMFMediaBuffer)
         -> anyhow::Result<Vec<NALUnit>> {
         // Lock buffer to access raw data
         let buffer_lock = BufferLock::lock(buffer)?;
@@ -677,7 +444,6 @@ impl H264Encoder {
                 nal_units.push(NALUnit {
                     unit_type,
                     data,
-                    timestamp_us,
                 });
             }
 
@@ -690,7 +456,7 @@ impl H264Encoder {
 
 /// RAII guard for IMFMediaBuffer::Lock/Unlock
 struct BufferLock<'a> {
-    buffer: &'a IMFMediaBuffer,
+    mf_buffer: &'a IMFMediaBuffer,
     ptr: *mut u8,
     len: usize,
 }
@@ -707,7 +473,7 @@ impl<'a> BufferLock<'a> {
                 Some(&raw mut len))
         })?;
 
-        Ok(Self { buffer, ptr, len: len as _ })
+        Ok(Self { mf_buffer: buffer, ptr, len: len as _ })
     }
 
     const fn as_slice(&self) -> &[u8] {
@@ -719,7 +485,7 @@ impl Drop for BufferLock<'_> {
     fn drop(&mut self) {
         unsafe {
             // Ignore error - we're in Drop, can't propagate
-            let _ = self.buffer.Unlock();
+            let _ = self.mf_buffer.Unlock();
         }
     }
 }
