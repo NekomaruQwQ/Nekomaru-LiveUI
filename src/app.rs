@@ -12,6 +12,7 @@ use crate::resample::Resampler;
 use crate::stream::StreamManager;
 
 use nkcore::euclid::*;
+use nkcore::tap::*;
 use nkcore::*;
 
 use std::borrow::Cow;
@@ -32,7 +33,6 @@ use winit::{
     window::WindowId,
 };
 
-use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Direct3D11::*;
@@ -113,6 +113,12 @@ impl LiveApp {
             helper::create_rtv_for_texture_2d(&device, &main_capture_staging_bgra8)
                 .context("failed to create staging texture rtv")?;
 
+        unsafe {
+            device_context.ClearRenderTargetView(
+                &main_capture_staging_bgra8_rtv,
+                &[0.16, 0.16, 0.16, 1.0]);
+        }
+
         // Create stream manager (60 frame buffer = ~1 second at 60fps)
         let stream_manager = Arc::new(StreamManager::new(60));
         let stream_manager_for_protocol = Arc::clone(&stream_manager);
@@ -191,9 +197,12 @@ impl LiveApp {
                                 .ok();
                     }
 
-                    self.resample_captured_frame()
-                        .inspect_err(|err| log::error!("failed to resample captured frame: {err}"))
-                        .ok();
+                    // It's safe to ignore resampling errors here, as they do not affect
+                    // the stream integrity. The encoding thread will simply reuse the
+                    // last successfully resampled frame.
+                    let _ =
+                        self.resample_captured_frame()
+                            .inspect_err(|err| log::error!("failed to resample captured frame: {err}"));
                 },
                 _ => {},
             }
@@ -204,7 +213,7 @@ impl LiveApp {
         // Ensure continuous WindowEvent::RedrawRequested events.
         defer(|| self.main_window.request_redraw());
 
-        let Some(capture_session) = &mut self.main_capture else {
+        let Some(ref mut capture_session) = self.main_capture else {
             // No capture session running, skip the resampling.
             return Ok(());
         };
@@ -217,6 +226,13 @@ impl LiveApp {
             // No new frame arrived, but it's ok. Just skip the resampling.
             return Ok(());
         };
+
+        unsafe {
+            self.device_context
+                .ClearRenderTargetView(
+                    &self.main_capture_staging_bgra8_rtv,
+                    &[0.16, 0.16, 0.16, 1.0]);
+        }
 
         let viewport =
             Self::calculate_resample_viewport(source_size, STREAM_FRAME_SIZE);
@@ -232,6 +248,9 @@ impl LiveApp {
             &source_view,
             &self.main_capture_staging_bgra8_rtv);
 
+        unsafe {
+            self.device_context.RSSetViewports(Some(&[]));
+        }
         Ok(())
     }
 
@@ -285,7 +304,7 @@ mod encoding_thread {
         log::info!("nv12 converter and staging texture created");
 
         H264Encoder::new(&device, H264EncoderConfig {
-            frame_size: STREAM_FRAME_SIZE.into(),
+            frame_size: STREAM_FRAME_SIZE,
             frame_rate: STREAM_FRAME_RATE,
             bitrate: STREAM_BITRATE,
             frame_source_callback: Box::new(move || {

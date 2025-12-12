@@ -1,3 +1,7 @@
+#![expect(
+    clippy::doc_paragraphs_missing_punctuation,
+    reason = "code by Claude Code")]
+
 use crate::encoder::{NALUnit, NALUnitType};
 
 use nkcore::*;
@@ -65,6 +69,7 @@ impl StreamManager {
     ///
     /// # Arguments
     /// * `nal_units` - Encoded NAL units for this frame
+    #[expect(clippy::similar_names, reason = "terminology")]
     pub fn push_frame(&self, nal_units: Vec<NALUnit>) -> anyhow::Result<()> {
         if nal_units.is_empty() {
             // Empty frame (encoder buffering) - skip
@@ -96,7 +101,7 @@ impl StreamManager {
 
             match self.codec_params.lock() {
                 Ok(mut guard) => *guard = Some(params),
-                Err(e) => log::warn!("Failed to cache codec params: {}", e),
+                Err(e) => log::warn!("Failed to cache codec params: {e}"),
             }
         }
 
@@ -125,7 +130,7 @@ impl StreamManager {
         // Push new frame
         self.frame_queue
             .push(frame)
-            .map_err(|_| anyhow::anyhow!("Failed to push frame to queue"))?;
+            .map_err(|_frame| anyhow::anyhow!("Failed to push frame to queue"))?;
 
         Ok(())
     }
@@ -184,7 +189,7 @@ impl StreamManager {
         match self.codec_params.lock() {
             Ok(guard) => guard.clone(),
             Err(e) => {
-                log::warn!("Failed to get codec params: {}", e);
+                log::error!("Failed to get codec params: {e}");
                 None
             }
         }

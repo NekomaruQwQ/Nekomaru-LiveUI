@@ -1069,7 +1069,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 [[package]]
 name = "ngd3dcompile"
 version = "0.1.0"
-source = "git+git://nekomaru-ubuntu/Nekomaru-Graphics-2025.git?branch=main#cc07103a569f33177ce733406cc14b010ca69aa3"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Graphics-2025.git?branch=main#2c4142846bb4769d783aca636e1fb4502d2d6d2d"
 dependencies = [
  "windows 0.62.2",
 ]
@@ -1077,7 +1077,7 @@ dependencies = [
 [[package]]
 name = "ngd3dcompile_macro"
 version = "0.1.0"
-source = "git+git://nekomaru-ubuntu/Nekomaru-Graphics-2025.git?branch=main#cc07103a569f33177ce733406cc14b010ca69aa3"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Graphics-2025.git?branch=main#2c4142846bb4769d783aca636e1fb4502d2d6d2d"
 dependencies = [
  "darling 0.21.3",
  "ngd3dcompile",
@@ -1090,7 +1090,7 @@ dependencies = [
 [[package]]
 name = "nkcore"
 version = "0.1.0"
-source = "git+git://nekomaru-ubuntu/Nekomaru-Graphics-2025.git?branch=main#cc07103a569f33177ce733406cc14b010ca69aa3"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Graphics-2025.git?branch=main#2c4142846bb4769d783aca636e1fb4502d2d6d2d"
 dependencies = [
  "anyhow",
  "euclid",
@@ -1102,7 +1102,7 @@ dependencies = [
 [[package]]
 name = "nkcore-macros"
 version = "0.1.0"
-source = "git+git://nekomaru-ubuntu/Nekomaru-Graphics-2025.git?branch=main#cc07103a569f33177ce733406cc14b010ca69aa3"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Graphics-2025.git?branch=main#2c4142846bb4769d783aca636e1fb4502d2d6d2d"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",

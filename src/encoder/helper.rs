@@ -1,16 +1,11 @@
-use nkcore::euclid::*;
 use nkcore::*;
 
-use windows::core::*;
 use windows::Win32::{
     Graphics::Dxgi::IDXGIDevice,
-    Graphics::Direct3D11::*,
     Media::MediaFoundation::*,
     System::Com::*,
-    System::Variant::*,
 };
 
-/// Find a hardware H.264 encoder transform
 pub fn find_h264_encoder(dxgi_device: &IDXGIDevice) -> anyhow::Result<IMFTransform> {
     static INPUT_TYPE: MFT_REGISTER_TYPE_INFO = MFT_REGISTER_TYPE_INFO {
         guidMajorType: MFMediaType_Video,

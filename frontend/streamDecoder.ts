@@ -1,3 +1,5 @@
+import { DEBUG } from './debug';
+
 export interface NALUnitData {
     type: number;
     data: Uint8Array;
@@ -25,19 +27,19 @@ export class H264Decoder {
      * Initialize the decoder by fetching codec parameters from the stream
      */
     async init() {
-        console.log('[H264Decoder] Starting initialization...');
+        console.log('H264Decoder: Starting initialization...');
 
+        console.log('H264Decoder: Fetching codec params from http://stream.localhost/init');
         // Windows WebView2 custom protocol: http://stream.localhost/ maps to stream:// handler
-        console.log('[H264Decoder] Fetching codec params from http://stream.localhost/init');
         const response = await fetch('http://stream.localhost/init');
 
-        console.log('[H264Decoder] Response status:', response.status, response.statusText);
+        console.log('H264Decoder: Response status:', response.status, response.statusText);
         if (!response.ok) {
             throw new Error(`Failed to fetch codec params: ${response.statusText}`);
         }
 
         const params = await response.json();
-        console.log('[H264Decoder] Received params:', {
+        console.log('H264Decoder: Received params:', {
             sps_base64_length: params.sps.length,
             pps_base64_length: params.pps.length,
             width: params.width,
@@ -46,9 +48,9 @@ export class H264Decoder {
 
         let sps = base64ToUint8Array(params.sps);
         let pps = base64ToUint8Array(params.pps);
-        console.log('[H264Decoder] Decoded base64 - SPS size:', sps.length, 'PPS size:', pps.length);
-        console.log('[H264Decoder] SPS bytes (first 10):', Array.from(sps.slice(0, 10)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
-        console.log('[H264Decoder] PPS bytes (first 10):', Array.from(pps.slice(0, 10)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
+        console.log('H264Decoder: Decoded base64 - SPS size:', sps.length, 'PPS size:', pps.length);
+        console.log('H264Decoder: SPS bytes (first 10):', Array.from(sps.slice(0, 10)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
+        console.log('H264Decoder: PPS bytes (first 10):', Array.from(pps.slice(0, 10)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
 
         const width = params.width;
         const height = params.height;
@@ -58,32 +60,32 @@ export class H264Decoder {
         const ppsOriginalLength = pps.length;
         sps = stripStartCode(sps);
         pps = stripStartCode(pps);
-        console.log('[H264Decoder] Stripped start codes - SPS: %d → %d bytes, PPS: %d → %d bytes',
+        console.log('H264Decoder: Stripped start codes - SPS: %d → %d bytes, PPS: %d → %d bytes',
             spsOriginalLength, sps.length, ppsOriginalLength, pps.length);
-        console.log('[H264Decoder] SPS bytes after strip (first 10):', Array.from(sps.slice(0, 10)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
+        console.log('H264Decoder: SPS bytes after strip (first 10):', Array.from(sps.slice(0, 10)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
 
         // Parse profile/level from SPS
         // SPS structure: [NAL header, profile_idc, constraint_flags, level_idc, ...]
-        const profile = sps[1];       // profile_idc (e.g., 0x42 for Baseline)
-        const constraints = sps[2];   // constraint flags
-        const level = sps[3];         // level_idc (e.g., 0x1f for level 3.1)
+        const profile = sps[1]!;       // profile_idc (e.g., 0x42 for Baseline)
+        const constraints = sps[2]!;   // constraint flags
+        const level = sps[3]!;         // level_idc (e.g., 0x1f for level 3.1)
 
-        console.log('[H264Decoder] Parsed SPS - Profile: 0x%s, Constraints: 0x%s, Level: 0x%s',
+        console.log('H264Decoder: Parsed SPS - Profile: 0x%s, Constraints: 0x%s, Level: 0x%s',
             toHex(profile), toHex(constraints), toHex(level));
 
         // Build codec string (format: avc1.PPCCLL where PP=profile, CC=constraints, LL=level)
         // Example: "avc1.42001f" for Baseline profile, level 3.1
         const codecString = `avc1.${toHex(profile)}${toHex(constraints)}${toHex(level)}`;
-        console.log('[H264Decoder] Codec string:', codecString);
+        console.log('H264Decoder: Codec string:', codecString);
 
         // Build avcC descriptor (ISO 14496-15 format)
         const avcC = buildAvcCDescriptor(sps, pps);
-        console.log('[H264Decoder] Built avcC descriptor, size:', avcC.length, 'bytes');
-        console.log('[H264Decoder] avcC bytes (first 20):', Array.from(avcC.slice(0, 20)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
+        console.log('H264Decoder: Built avcC descriptor, size:', avcC.length, 'bytes');
+        console.log('H264Decoder: avcC bytes (first 20):', Array.from(avcC.slice(0, 20)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
 
         this.decoder = new VideoDecoder({
             output: (frame) => this.handleFrame(frame),
-            error: (e) => console.error('[H264Decoder] Decoder error:', e),
+            error: (e) => console.error('H264Decoder: Decoder error:', e),
         });
 
         const config: VideoDecoderConfig = {
@@ -93,11 +95,11 @@ export class H264Decoder {
             description: avcC,
         };
 
-        console.log('[H264Decoder] Configuring VideoDecoder with:', config);
+        console.log('H264Decoder: Configuring VideoDecoder with:', config);
         this.decoder.configure(config);
         this.isConfigured = true;
 
-        console.log('[H264Decoder] ✅ Decoder initialized successfully: %s, %dx%d', codecString, width, height);
+        console.log('H264Decoder: Decoder initialized successfully: %s, %dx%d', codecString, width, height);
     }
 
     /**
@@ -108,8 +110,13 @@ export class H264Decoder {
             throw new Error('Decoder not initialized');
         }
 
-        console.log('[H264Decoder] Decoding frame - timestamp: %d μs, NAL units: %d, keyframe: %s',
-            frameData.timestamp, frameData.nalUnits.length, frameData.isKeyframe);
+        if (DEBUG.debugStreamDecoder) {
+            console.log(
+                'H264Decoder: Decoding frame - timestamp: %d μs, NAL units: %d, keyframe: %s',
+                frameData.timestamp,
+                frameData.nalUnits.length,
+                frameData.isKeyframe);
+        }
 
         // Strip Annex B start codes from each NAL unit and convert to AVCC format
         // AVCC format: [4-byte length][NAL data][4-byte length][NAL data]...
@@ -117,11 +124,19 @@ export class H264Decoder {
         const nalDataWithoutStartCodes: Uint8Array[] = [];
 
         for (const unit of frameData.nalUnits) {
-            console.log('[H264Decoder]   NAL unit type: %d, size: %d bytes (with start code)', unit.type, unit.data.length);
+            if (DEBUG.debugStreamDecoder) {
+                console.log(
+                    'H264Decoder:   NAL unit type: %d, size: %d bytes (with start code)',
+                    unit.type,
+                    unit.data.length);
+            }
 
             // Strip Annex B start code from this NAL unit
             const nalData = stripStartCode(unit.data);
-            console.log('[H264Decoder]     → %d bytes after stripping start code', nalData.length);
+            if (DEBUG.debugStreamDecoder) {
+                console.log(
+                    'H264Decoder:     → %d bytes after stripping start code', nalData.length);
+            }
 
             nalDataWithoutStartCodes.push(nalData);
             totalSize += 4 + nalData.length; // 4 bytes for length prefix + NAL data
@@ -144,7 +159,9 @@ export class H264Decoder {
             offset += nalData.length;
         }
 
-        console.log('[H264Decoder] Combined AVCC frame data: %d bytes total', totalSize);
+        if (DEBUG.debugStreamDecoder) {
+            console.log('H264Decoder: Combined AVCC frame data: %d bytes total', totalSize);
+        }
 
         const chunk = new EncodedVideoChunk({
             type: frameData.isKeyframe ? 'key' : 'delta',
@@ -152,13 +169,21 @@ export class H264Decoder {
             data: combined,
         });
 
-        console.log('[H264Decoder] Submitting EncodedVideoChunk to decoder');
+        if (DEBUG.debugStreamDecoder) {
+            console.log('H264Decoder: Submitting EncodedVideoChunk to decoder');
+        }
+
         this.decoder.decode(chunk);
     }
 
     private handleFrame(frame: VideoFrame) {
-        console.log('[H264Decoder] Frame decoded! %dx%d, timestamp: %d μs',
-            frame.displayWidth, frame.displayHeight, frame.timestamp);
+        if (DEBUG.debugStreamDecoder) {
+            console.log(
+                'H264Decoder: Frame decoded! %dx%d, timestamp: %d μs',
+                frame.displayWidth,
+                frame.displayHeight,
+                frame.timestamp);
+        }
         this.onFrame(frame);
     }
 
@@ -193,9 +218,9 @@ function buildAvcCDescriptor(sps: Uint8Array, pps: Uint8Array): Uint8Array {
     avcC[offset++] = 1;
 
     // Copy profile/level from SPS (bytes 1-3)
-    avcC[offset++] = sps[1];  // AVCProfileIndication
-    avcC[offset++] = sps[2];  // profile_compatibility
-    avcC[offset++] = sps[3];  // AVCLevelIndication
+    avcC[offset++] = sps[1]!;  // AVCProfileIndication
+    avcC[offset++] = sps[2]!;  // profile_compatibility
+    avcC[offset++] = sps[3]!;  // AVCLevelIndication
 
     // lengthSizeMinusOne = 0xFF (4 bytes)
     avcC[offset++] = 0xFF;
@@ -264,7 +289,9 @@ function stripStartCode(data: Uint8Array): Uint8Array {
  * Parse binary stream frame data
  */
 export function parseStreamFrame(buffer: Uint8Array): StreamFrameData {
-    console.log('[parseStreamFrame] Parsing frame from %d bytes', buffer.length);
+    if (DEBUG.debugStreamDecoder) {
+        console.log('H264Decoder(parseStreamFrame): Parsing frame from %d bytes', buffer.length);
+    }
     const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
 
     let offset = 0;
@@ -272,12 +299,16 @@ export function parseStreamFrame(buffer: Uint8Array): StreamFrameData {
     // Read timestamp (u64 little-endian)
     const timestamp = Number(view.getBigUint64(offset, true));
     offset += 8;
-    console.log('[parseStreamFrame] Timestamp: %d μs', timestamp);
+    if (DEBUG.debugStreamDecoder) {
+        console.log('H264Decoder(parseStreamFrame): Timestamp: %d μs', timestamp);
+    }
 
     // Read number of NAL units (u32 little-endian)
     const numNalUnits = view.getUint32(offset, true);
     offset += 4;
-    console.log('[parseStreamFrame] Number of NAL units: %d', numNalUnits);
+    if (DEBUG.debugStreamDecoder) {
+        console.log('H264Decoder(parseStreamFrame): Number of NAL units: %d', numNalUnits);
+    }
 
     const nalUnits: NALUnitData[] = [];
     let isKeyframe = false;
@@ -295,7 +326,13 @@ export function parseStreamFrame(buffer: Uint8Array): StreamFrameData {
         const data = buffer.slice(offset, offset + dataLength);
         offset += dataLength;
 
-        console.log('[parseStreamFrame]   NAL unit %d: type=%d, size=%d bytes', i, type, dataLength);
+        if (DEBUG.debugStreamDecoder) {
+            console.log(
+                'H264Decoder(parseStreamFrame):   NAL unit %d: type=%d, size=%d bytes',
+                i,
+                type,
+                dataLength);
+        }
 
         nalUnits.push({ type, data });
 
@@ -305,8 +342,13 @@ export function parseStreamFrame(buffer: Uint8Array): StreamFrameData {
         }
     }
 
-    console.log('[parseStreamFrame] Parsed frame: timestamp=%d μs, nalUnits=%d, isKeyframe=%s',
-        timestamp, nalUnits.length, isKeyframe);
+    if (DEBUG.debugStreamDecoder) {
+        console.log(
+            'H264Decoder(parseStreamFrame): Parsed frame: timestamp=%d μs, nalUnits=%d, isKeyframe=%s',
+            timestamp,
+            nalUnits.length,
+            isKeyframe);
+    }
 
     return { timestamp, nalUnits, isKeyframe };
 }

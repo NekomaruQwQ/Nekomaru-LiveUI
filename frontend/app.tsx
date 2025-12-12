@@ -8,7 +8,7 @@ import {
     webDarkTheme,
 } from '@fluentui/react-components';
 
-import { VideoRenderer } from './renderer';
+import { StreamRenderer } from './streamRenderer';
 
 export function App() {
     return <FluentProvider theme={webDarkTheme} className={css({
@@ -35,7 +35,7 @@ export function App() {
                 padding: '0 !important',  // Remove padding for video
                 overflow: 'hidden',        // Prevent overflow
             })}>
-                <VideoRenderer />
+                <StreamRenderer />
             </Card>
             <div className={css({
                 flex: 1,

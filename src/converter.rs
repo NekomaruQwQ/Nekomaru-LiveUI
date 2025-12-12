@@ -53,8 +53,8 @@ impl NV12Converter {
     /// Convert BGRA texture to NV12.
     ///
     /// # Arguments
-    /// * `bgra_texture` - Input BGRA texture (DXGI_FORMAT_B8G8R8A8_UNORM)
-    /// * `nv12_texture` - Output NV12 texture (DXGI_FORMAT_NV12), must be pre-allocated by caller
+    /// * `bgra_texture` - Input BGRA texture ([`DXGI_FORMAT_B8G8R8A8_UNORM`])
+    /// * `nv12_texture` - Output NV12 texture ([`DXGI_FORMAT_NV12`]), must be pre-allocated by caller
     ///
     /// # Errors
     /// Returns error if video processing fails
@@ -119,7 +119,7 @@ impl NV12Converter {
                 &output_view,
                 0,  // OutputFrame
                 &[stream])
-        }).context("failed to perform BGRA→NV12 conversion")?;
+        }).context("failed to perform BGRA -> NV12 conversion")?;
 
         Ok(())
     }

@@ -1,7 +1,6 @@
 use nkcore::euclid::*;
 use nkcore::tap::*;
 use nkcore::*;
-use nkcore::anyhow::anyhow;
 use windows::core::Interface as _;
 use windows::{
     Graphics::*,
@@ -10,14 +9,12 @@ use windows::{
     Graphics::DirectX::Direct3D11::*,
     UI::*,
     Win32::Foundation::*,
-    Win32::Graphics::Dxgi::Common::*,
     Win32::Graphics::Dxgi::*,
     Win32::Graphics::Direct3D11::*,
     Win32::System::WinRT::Direct3D11::*,
 };
 
 pub struct CaptureSession {
-    d3d11_device: ID3D11Device,
     winrt_device: IDirect3DDevice,
     frame_pool: Direct3D11CaptureFramePool,
     frame_pool_size: SizeInt32,
@@ -46,7 +43,6 @@ impl CaptureSession {
         api_call!(session.StartCapture())?;
 
         Ok(Self {
-            d3d11_device: device.clone(),
             winrt_device,
             frame_pool,
             frame_pool_size,
@@ -109,34 +105,10 @@ impl CaptureSession {
 
     fn create_winrt_device_from_d3d11_device(device: &ID3D11Device)
         -> anyhow::Result<IDirect3DDevice> {
+        #[expect(clippy::needless_question_mark)]
         Ok(device
             .pipe(|device| api_call!(device.cast::<IDXGIDevice>()))?
             .pipe(|device| api_call!(unsafe { CreateDirect3D11DeviceFromDXGIDevice(&device) }))?
             .pipe(|device| api_call!(device.cast::<IDirect3DDevice>()))?)
-    }
-
-    fn create_texture(device: &ID3D11Device, format: DXGI_FORMAT, size: SizeInt32)
-        -> anyhow::Result<ID3D11Texture2D> {
-        let desc = D3D11_TEXTURE2D_DESC {
-            Width: size.Width as _,
-            Height: size.Height as _,
-            MipLevels: 1,
-            ArraySize: 1,
-            Format: format,
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            Usage: D3D11_USAGE_DEFAULT,
-            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as _,
-            CPUAccessFlags: 0,
-            MiscFlags: 0,
-        };
-
-        Ok({
-            out_var_or_err(|out| api_call!(unsafe {
-                device.CreateTexture2D(
-                    &raw const desc,
-                    None,
-                    Some(out))
-            }))?.expect("unexpected null pointer")
-        })
     }
 }

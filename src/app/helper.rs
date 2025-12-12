@@ -14,12 +14,12 @@ use windows::core::Interface as _;
 use windows::{
     Win32::Foundation::*,
     Win32::Graphics::{
+        Dxgi::Common::*,
         Dxgi::*,
         Direct3D::*,
         Direct3D11::*,
     },
 };
-use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC};
 
 pub fn create_device() -> anyhow::Result<(IDXGIFactory6, ID3D11Device, ID3D11DeviceContext)> {
     let dxgi_factory =
@@ -125,6 +125,7 @@ pub fn create_rtv_for_texture_2d(device: &ID3D11Device, texture: &ID3D11Texture2
     })
 }
 
+#[expect(dead_code, reason = "may be useful in the future")]
 #[expect(
     clippy::panic_in_result_fn,
     reason = "running on an unexpected platform is always an unrecoverable error")]

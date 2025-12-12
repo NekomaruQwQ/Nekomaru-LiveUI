@@ -1,6 +1,9 @@
 #![expect(
     non_upper_case_globals,
     reason = "false positive on windows-rs constants")]
+#![expect(
+    clippy::uninlined_format_args,
+    reason = "code by Claude Code")]
 
 mod debug;
 mod helper;
@@ -14,9 +17,6 @@ use windows::core::*;
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Variant::VARIANT;
-
-const ENCODER_FRAME_RATE: u32 = 60;
-const ENCODER_BITRATE: u32 = 8_000_000; // 8 Mbps
 
 /// NAL unit types for H.264
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

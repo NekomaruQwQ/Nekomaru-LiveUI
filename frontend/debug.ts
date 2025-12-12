@@ -27,14 +27,10 @@
  */
 
 export const DEBUG = {
-    /** Enable debug output for H.264 decoder (decoder.ts) */
-    decoder: false,
-
-    /** Enable debug output for video renderer component (renderer.tsx) */
-    renderer: false,
-
-    /** Enable debug output for stream loop (renderer.tsx stream logic) */
-    stream: false,
+    /** Enable debug output for H.264 decoder (streamDecoder.ts) */
+    debugStreamDecoder: false,
+    /** Enable debug output for video renderer component (streamRenderer.tsx) */
+    debugStreamRenderer: false,
 };
 
 /**
