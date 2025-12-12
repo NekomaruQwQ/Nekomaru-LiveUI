@@ -5,11 +5,11 @@ edition = "2024"
 
 [dependencies.nkcore]
 git = "git://nekomaru-ubuntu/Nekomaru-Graphics-2025.git"
-branch = "main"
+rev = "bac5bb90"
 
  [dependencies.ngd3dcompile]
  git = "git://nekomaru-ubuntu/Nekomaru-Graphics-2025.git"
- branch = "main"
+ rev = "bac5bb90"
  package = "ngd3dcompile_macro"
 
 [dependencies]
