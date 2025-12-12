@@ -59,7 +59,7 @@ impl NV12Converter {
     /// # Errors
     /// Returns error if video processing fails
     pub fn convert(
-        &mut self,
+        &self,
         bgra_texture: &ID3D11Texture2D,
         nv12_texture: &ID3D11Texture2D)
         -> anyhow::Result<()> {

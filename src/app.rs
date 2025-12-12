@@ -45,6 +45,10 @@ pub fn run() {
         .expect("failed to run event loop");
 }
 
+const STREAM_FRAME_SIZE: Size2D<u32> = Size2D::new(1920, 1200);
+const STREAM_FRAME_RATE: u32 = 60;
+const STREAM_BITRATE: u32 = 8_000_000; // 8 Mbps
+
 #[expect(dead_code, reason = "to keep various resources alive")]
 struct LiveApp {
     // LiveUI output
@@ -68,8 +72,6 @@ struct LiveApp {
 }
 
 impl LiveApp {
-    const STREAM_FRAME_SIZE: Size2D<u32> = Size2D::new(1920, 1200);
-
     fn new(event_loop: &ActiveEventLoop) -> anyhow::Result<Self> {
         let main_window = api_call! {
             event_loop.create_window(
@@ -95,14 +97,11 @@ impl LiveApp {
         let resampler =
             Resampler::new(&device)
                 .context("failed to create resample pass")?;
-        let nv12_converter =
-            NV12Converter::new(&device, &device_context)
-                .context("failed to create bgra-to-nv12 converter")?;
 
         let main_capture_staging_bgra8 =
             helper::create_texture_2d(
                 &device,
-                Self::STREAM_FRAME_SIZE,
+                STREAM_FRAME_SIZE,
                 DXGI_FORMAT_B8G8R8A8_UNORM,
                 &[
                     D3D11_BIND_SHADER_RESOURCE,
@@ -114,17 +113,8 @@ impl LiveApp {
             helper::create_rtv_for_texture_2d(&device, &main_capture_staging_bgra8)
                 .context("failed to create staging texture rtv")?;
 
-        let main_capture_staging_nv12 =
-            helper::create_texture_2d(
-                &device,
-                Self::STREAM_FRAME_SIZE,
-                DXGI_FORMAT_NV12,
-                &[D3D11_BIND_RENDER_TARGET])
-                .context("failed to create staging NV12 texture")?;
-
         // Create stream manager (60 frame buffer = ~1 second at 60fps)
         let stream_manager = Arc::new(StreamManager::new(60));
-        let stream_manager_for_encoder = Arc::clone(&stream_manager);
         let stream_manager_for_protocol = Arc::clone(&stream_manager);
 
         let mut main_webview_header_map = wry::http::HeaderMap::new();
@@ -154,41 +144,14 @@ impl LiveApp {
             .name("Encoding Thread".to_owned())
             .spawn({
                 let device = device.clone();
-                let device_context =
-                    device_context.clone();
-                let mut nv12_converter = nv12_converter;
-                let staging_bgra8 =
-                    main_capture_staging_bgra8.clone();
-                let staging_nv12 =
-                    main_capture_staging_nv12;
-                move || {
-                    log::info!("encoding thread started");
-
-                    unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
-                        .ok()
-                        .expect("CoInitializeEx failed");
-
-                    H264Encoder::new(&device, H264EncoderConfig {
-                        frame_size: (1920, 1200).into(),
-                        frame_rate: 60,
-                        bitrate: 8_000_000,  // 8 Mbps
-                        frame_source_callback: Box::new({
-                            move || {
-                                nv12_converter.convert(&staging_bgra8, &staging_nv12)
-                                    .expect("failed to convert BGRA8 to NV12");
-                                staging_nv12.clone()
-                            }
-                        }),
-                        frame_target_callback: Box::new(move |nal_units| {
-                            // Push encoded frame to stream manager
-                            if let Err(e) = stream_manager_for_encoder.push_frame(nal_units) {
-                                log::warn!("Failed to push frame to stream: {:?}", e);
-                            }
-                        }),
-                    })
-                        .expect("failed to create H.264 encoder")
-                        .run();
-                }
+                let device_context = device_context.clone();
+                let frame_source = main_capture_staging_bgra8.clone();
+                let stream_manager = Arc::clone(&stream_manager);
+                move || encoding_thread::main(
+                    device,
+                    device_context,
+                    frame_source,
+                    stream_manager)
             })
             .context("failed to spawn encoding thread")?;
 
@@ -255,12 +218,10 @@ impl LiveApp {
             return Ok(());
         };
 
-        let target_size = Self::STREAM_FRAME_SIZE;
         let viewport =
-            Self::calculate_resample_viewport(source_size, target_size);
+            Self::calculate_resample_viewport(source_size, STREAM_FRAME_SIZE);
         unsafe {
-            self.device_context
-                .RSSetViewports(Some(&[viewport]));
+            self.device_context.RSSetViewports(Some(&[viewport]));
         }
 
         let source_view =
@@ -294,6 +255,59 @@ impl LiveApp {
             MinDepth: 0.0,
             MaxDepth: 1.0,
         }
+    }
+}
+
+mod encoding_thread {
+    use super::*;
+
+    pub fn main(
+        device: ID3D11Device,
+        device_context: ID3D11DeviceContext,
+        frame_source: ID3D11Texture2D,
+        stream_manager: Arc<StreamManager>) {
+        log::info!("encoding thread started");
+
+        unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
+            .ok()
+            .expect("CoInitializeEx failed");
+
+        let nv12_converter =
+            NV12Converter::new(&device, &device_context)
+                .expect("failed to create nv12 converter");
+        let nv12_staging_texture =
+            helper::create_texture_2d(
+                &device,
+                STREAM_FRAME_SIZE,
+                DXGI_FORMAT_NV12,
+                &[D3D11_BIND_RENDER_TARGET])
+                .expect("failed to create nv12 staging texture");
+        log::info!("nv12 converter and staging texture created");
+
+        H264Encoder::new(&device, H264EncoderConfig {
+            frame_size: STREAM_FRAME_SIZE.into(),
+            frame_rate: STREAM_FRAME_RATE,
+            bitrate: STREAM_BITRATE,
+            frame_source_callback: Box::new(move || {
+                // Here if an error occurs, there's not much we can do, and further reattempts are
+                // likely to fail as well. So we just panic the encoding thread.
+                nv12_converter
+                    .convert(&frame_source, &nv12_staging_texture)
+                    .expect("failed to convert BGRA8 to NV12");
+                nv12_staging_texture.clone()
+            }),
+            frame_target_callback: Box::new(move |nal_units| {
+                // Here `push_frame` only fails if encountering an invalid NAL unit. In this case,
+                // we have nothing to do but to drop the broken frame. This may cause decoding
+                // failures on the frontend, but it can possibly recover on receiving the next
+                // keyframe.
+                if let Err(e) = stream_manager.push_frame(nal_units) {
+                    log::error!("failed to push frame to stream: {:?}", e);
+                }
+            }),
+        })
+            .expect("failed to create H.264 encoder")
+            .run();
     }
 }
 
