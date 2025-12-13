@@ -39,7 +39,7 @@ impl CaptureSession {
         }?;
 
         let session = api_call!(frame_pool.CreateCaptureSession(capture_item))?;
-        api_call!(session.SetIsCursorCaptureEnabled(false))?;
+        // api_call!(session.SetIsCursorCaptureEnabled(false))?;
         api_call!(session.StartCapture())?;
 
         Ok(Self {

@@ -1,48 +1,64 @@
-import { createContext } from 'preact';
-import { useState } from 'preact/hooks';
+// import { createContext } from 'preact';
+// import { useState } from 'preact/hooks';
 import { css } from '@emotion/css';
-
-import {
-    FluentProvider,
-    Card,
-    webDarkTheme,
-} from '@fluentui/react-components';
 
 import { StreamRenderer } from './streamRenderer';
 
+const card = css({
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderRadius: 12,
+    boxShadow: [
+        'rgba(128,128,128,0.5) 2px 4px 16px',
+        'inset rgba(255, 255, 255, 0.1) 1px 2px 4px',
+    ].join(', '),
+    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+    backdropFilter: 'blur(24px) brightness(0.95)',
+});
+
 export function App() {
-    return <FluentProvider theme={webDarkTheme} className={css({
-        padding: '8px',
+    return <div className={css({
+        padding: '32px 32px',
         display: 'flex',
         flexDirection: 'column',
         flex: 1,
-        gap: '8px',
+        gap: 16,
     })}>
-        <div>header</div>
+        {/* <div>header</div> */}
         <div className={css({
             display: 'flex',
             flexDirection: 'row',
-            flex: 1,
-            gap: '8px',
+            gap: 24,
         })}>
-            <Card className={css({
-                flex: 5,
-                borderColor: 'rgba(255, 255, 255, 0.25) !important',
-                borderWidth: '1px !important',
-                borderStyle: 'solid !important',
-                borderRadius: '8px !important',
-                backgroundColor: 'black !important',
-                padding: '0 !important',  // Remove padding for video
-                overflow: 'hidden',        // Prevent overflow
-            })}>
+            <div className={[
+                card,
+                css({
+                    flex: 3,
+                    padding: 16,
+                    overflow: 'hidden',        // Prevent overflow
+                }),
+            ].join(' ')}>
                 <StreamRenderer />
-            </Card>
-            <div className={css({
-                flex: 1,
-            })}>
+            </div>
+            <div className={[
+                card,
+                css({
+                    flex: 1,
+                    padding: 24
+                }),
+            ].join(' ')}>
                Hi, I'm Nekomaru OwO
             </div>
         </div>
-        <div>footer</div>
-    </FluentProvider>
+        <div className={[
+            card,
+            css({
+                flex: 1,
+                padding: 8,
+            }),
+        ].join(' ')}>
+
+        </div>
+    </div>
 }

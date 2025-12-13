@@ -217,7 +217,7 @@ impl H264Encoder {
     }
 
     pub fn run(mut self) {
-        const POLL_TIMEOUT: u32 = 5;
+        #[expect(clippy::infinite_loop, reason = "encoder runs infinitely until program exit")]
         loop {
             // **NOTE**: As we are on a separate thread, we perform a blocking wait for new events.
             let event = match unsafe { self.mf_event_generator.GetEvent(default()) } {
@@ -269,10 +269,11 @@ impl H264Encoder {
     }
 
     fn process_input(&mut self) -> anyhow::Result<()> {
+        #[expect(clippy::while_float)]
         while SystemTime::now()
             .duration_since(self.time_of_last_frame)
             .context("unexpected time drift")?
-            .as_secs_f64() < (1.0 / self.config.frame_rate as f64) {
+            .as_secs_f64() < (1.0_f64 / self.config.frame_rate as f64) {
             // Sleep a bit to avoid busy-waiting
             std::thread::sleep(Duration::from_millis(1));
         }

@@ -58,8 +58,9 @@ export function StreamRenderer() {
             ref={canvasRef}
             className={css({
                 width: '100%',
-                height: '100%',
+                backgroundColor: '#292929',
                 objectFit: 'contain',
+                borderRadius: 12,
             })}
         />
     );
