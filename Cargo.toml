@@ -13,6 +13,10 @@ git = "git://nekomaru-ubuntu/Nekomaru-Graphics-2025.git"
 rev = "bac5bb90"
 package = "ngd3dcompile_macro"
 
+[dependencies.winrt-capture]
+git = "git://nekomaru-ubuntu/Nekomaru-Rust.git"
+rev = "843c31c1"
+
 [dependencies]
 # bytemuck = { version = "1.24.0", features = ["derive", "const_zeroed"] }
 # glam = { version = "0.30.9", features = ["approx", "bytemuck", "glam-assert"] }

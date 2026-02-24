@@ -4,7 +4,6 @@ use helper::AppWrapper;
 mod capture_selector;
 use capture_selector::LiveCaptureWindowSelector;
 
-use crate::capture::CaptureSession;
 use crate::converter::NV12Converter;
 use crate::encoder::H264Encoder;
 use crate::encoder::H264EncoderConfig;
@@ -14,6 +13,8 @@ use crate::stream::StreamManager;
 use nkcore::prelude::*;
 use nkcore::debug::*;
 use nkcore::*;
+
+use winrt_capture::CaptureSession;
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -195,7 +196,7 @@ impl LiveApp {
                         // If the first attempt fails, subsequent attempts will also fail for the
                         // same window.
                         self.main_capture =
-                            CaptureSession::from_window(&self.device, self.main_capture_hwnd)
+                            CaptureSession::from_hwnd(&self.device, self.main_capture_hwnd)
                                 .inspect_err(|err| log::error!("failed to start capture: {err}"))
                                 .ok();
                     }
@@ -223,12 +224,16 @@ impl LiveApp {
 
         let capture_result =
             capture_session
-                .get_next_frame()
+                .get_next_frame(&self.device_context)
                 .context("failed to get next frame from capture session")?;
-        let Some((source_texture, source_size)) = capture_result else {
+        let Some(source_texture) = capture_result else {
             // No new frame arrived, but it's ok. Just skip the resampling.
             return Ok(());
         };
+
+        let mut source_desc = D3D11_TEXTURE2D_DESC::default();
+        unsafe { source_texture.GetDesc(&raw mut source_desc); };
+        let source_size = Size2D::new(source_desc.Width, source_desc.Height);
 
         unsafe {
             self.device_context

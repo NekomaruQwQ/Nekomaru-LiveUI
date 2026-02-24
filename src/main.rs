@@ -1,5 +1,4 @@
 mod app;
-mod capture;
 mod converter;
 mod encoder;
 mod stream;
