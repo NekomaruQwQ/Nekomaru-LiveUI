@@ -51,7 +51,7 @@ impl LiveCaptureWindowSelector {
             Self::get_executable_path_by_hwnd(foreground)
                 .unwrap_or_default();
         let window_text = {
-            let mut buf = [0u8; 256];
+            let mut buf = [0u8; 1024];
             let len = unsafe { GetWindowTextA(foreground, &mut buf) };
             String::from_utf8_lossy(&buf[..len as usize]).into_owned()
         };

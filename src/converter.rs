@@ -1,4 +1,5 @@
-use nkcore::*;
+use nkcore::prelude::*;
+use nkcore::debug::*;
 
 use windows::core::Interface as _;
 use windows::Win32::Graphics::Direct3D11::*;

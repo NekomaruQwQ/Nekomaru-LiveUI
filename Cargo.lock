@@ -14,8 +14,9 @@ dependencies = [
  "pretty-name",
  "pretty_env_logger",
  "serde_json",
+ "tap",
  "widestring",
- "windows 0.61.3",
+ "windows 0.62.2",
  "winit",
  "wry",
 ]
@@ -580,9 +581,9 @@ dependencies = [
 
 [[package]]
 name = "euclid"
-version = "0.22.11"
+version = "0.22.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad9cdb4b747e485a12abb0e6566612956c7a1bafa3bdb8d682c5b6d403589e48"
+checksum = "df61bf483e837f88d5c2291dcf55c67be7e676b3a51acc48db3a7b163b91ed63"
 dependencies = [
  "num-traits",
 ]
@@ -1090,25 +1091,53 @@ dependencies = [
 [[package]]
 name = "nkcore"
 version = "0.1.0"
-source = "git+git://nekomaru-ubuntu/Nekomaru-Graphics-2025.git?rev=bac5bb90#bac5bb9036639117a41ee401fdf753c0dfc64ca2"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=843c31c1#843c31c1360de5b4a56dfe8f486871f71637193a"
 dependencies = [
- "anyhow",
- "euclid",
- "nkcore-macros",
- "pretty-name",
- "tap",
+ "nkcore-base",
+ "nkcore-debug",
+ "nkcore-windows",
 ]
 
 [[package]]
-name = "nkcore-macros"
+name = "nkcore-base"
 version = "0.1.0"
-source = "git+git://nekomaru-ubuntu/Nekomaru-Graphics-2025.git?rev=bac5bb90#bac5bb9036639117a41ee401fdf753c0dfc64ca2"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=843c31c1#843c31c1360de5b4a56dfe8f486871f71637193a"
+dependencies = [
+ "anyhow",
+ "euclid",
+ "log",
+]
+
+[[package]]
+name = "nkcore-debug"
+version = "0.1.0"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=843c31c1#843c31c1360de5b4a56dfe8f486871f71637193a"
+dependencies = [
+ "anyhow",
+ "nkcore-debug-macros",
+ "pretty-name",
+]
+
+[[package]]
+name = "nkcore-debug-macros"
+version = "0.1.0"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=843c31c1#843c31c1360de5b4a56dfe8f486871f71637193a"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
  "quote",
  "syn 2.0.111",
  "tap",
+]
+
+[[package]]
+name = "nkcore-windows"
+version = "0.1.0"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=843c31c1#843c31c1360de5b4a56dfe8f486871f71637193a"
+dependencies = [
+ "pretty_env_logger",
+ "raw-window-handle",
+ "windows 0.62.2",
 ]
 
 [[package]]

@@ -1,5 +1,9 @@
+use nkcore::prelude::*;
+use nkcore::debug::*;
 use nkcore::*;
-use nkcore::euclid::Size2D;
+
+use euclid::Size2D;
+
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,

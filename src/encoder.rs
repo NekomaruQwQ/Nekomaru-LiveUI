@@ -8,10 +8,12 @@
 mod debug;
 mod helper;
 
-use nkcore::euclid::*;
+use nkcore::prelude::*;
+use nkcore::debug::*;
 use nkcore::*;
 
 use std::time::*;
+use euclid::*;
 
 use windows::core::*;
 use windows::Win32::Graphics::Direct3D11::*;
@@ -154,7 +156,7 @@ impl H264Encoder {
                 MFCreateDXGIDeviceManager(&raw mut reset_token, out)
             }))?
                 .ok_or_else(|| anyhow::anyhow!("DXGI device manager is null"))?;
-        let mf_dxgi_manager_as_unknown =
+        let mf_dxgi_manager_as_unknown: IUnknown =
             api_call!(mf_dxgi_manager.cast::<IUnknown>())?;
 
         // Register D3D11 device with DXGI manager

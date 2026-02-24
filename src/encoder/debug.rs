@@ -1,4 +1,5 @@
-use nkcore::*;
+use nkcore::prelude::*;
+use nkcore::debug::*;
 
 use windows::core::*;
 use windows::Win32::Media::MediaFoundation::*;

@@ -1,6 +1,9 @@
-use nkcore::euclid::*;
-use nkcore::tap::*;
-use nkcore::*;
+use nkcore::prelude::*;
+use nkcore::debug::*;
+
+use ::tap::*;
+use euclid::*;
+
 use windows::core::Interface as _;
 use windows::{
     Graphics::*,

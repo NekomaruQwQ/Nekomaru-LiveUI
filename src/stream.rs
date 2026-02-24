@@ -4,7 +4,7 @@
 
 use crate::encoder::{NALUnit, NALUnitType};
 
-use nkcore::*;
+use nkcore::prelude::*;
 
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
