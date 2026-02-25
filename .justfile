@@ -2,21 +2,14 @@ set shell := ["nu", "-c"]
 
 list:
     just --list
+app:
+    cargo run -p live-app
+server:
+    cd server; bun --hot index.ts;
 
 install: install-frontend install-server
 
-[working-directory: "frontend"]
 install-frontend:
-    bun i
-[working-directory: "server"]
+    cd frontend; bun i;
 install-server:
-    bun i
-
-# Run the webview host (live-app.exe)
-app:
-    cargo run -p live-app
-
-# Run the dev server (LiveServer + Vite frontend proxy)
-[working-directory: "server"]
-server:
-    bun --hot index.ts
+    cd server; bun i;
