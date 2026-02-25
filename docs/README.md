@@ -2,7 +2,7 @@
 
 **Low-latency (<100ms) screen capture streaming from DirectX 11 to the browser**
 
-**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | Frontend Integrated | End-to-End Testing Next
+**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | Frontend Integrated | UI Redesigned (JetBrains Islands) | End-to-End Testing Next
 **Last Updated**: 2026-02-25
 **Hardware**: RTX 5090 | Windows 11
 
@@ -299,8 +299,8 @@ The base64 `data` field contains a pre-serialized binary payload (timestamp + NA
 |-----------|------|--------|-------|
 | **API Client** | `frontend/src/api.ts` | Done | Typed Hono RPC client via `hc<ApiType>("/streams")`. Imports server route type for end-to-end type safety. `fetchInit()` retries on 503 with exponential backoff. |
 | **Decoder** | `frontend/src/streamDecoder.ts` | Done | Uses `fetchInit()` from API client (handles 503 retry). WebCodecs H264Decoder with avcC descriptor. |
-| **Renderer** | `frontend/src/streamRenderer.tsx` | Done | Polls `/streams/:id/frames` via typed Hono RPC client at ~60fps. Canvas rendering with GPU memory management. |
-| **App** | `frontend/src/app.tsx` | Done | Stream management: lists existing streams on mount, window picker via `/streams/windows`, create/stop captures. Replaces hardcoded `streamId="default"`. |
+| **Renderer** | `frontend/src/streamRenderer.tsx` | Done | Polls `/streams/:id/frames` via typed Hono RPC client at ~60fps. Canvas rendering with GPU memory management. Styled with Tailwind. |
+| **App** | `frontend/src/app.tsx` | Done | Stream management UI. JetBrains Islands dark theme (Tailwind utility classes, no Emotion). Window picker, create/stop captures. |
 | **Entry Point** | `frontend/index.tsx` | Done | React 19 `createRoot()` (migrated from Preact). |
 | **Vite Config** | `frontend/vite.config.ts` | Done | `@vitejs/plugin-react-swc`, `root: "."`, `@` and `@shadcn` aliases. |
 
@@ -469,24 +469,18 @@ Nekomaru-LiveUI-v2/
 └── frontend/                        # Frontend (React + Vite + Tailwind)
     ├── package.json
     ├── tsconfig.json
-    ├── vite.config.ts               # Vite root = ., aliases: @→src, @shadcn→3rdparty/shadcn
+    ├── vite.config.ts               # Vite root = ., aliases: @→src
     ├── biome.json                   # Biome formatter/linter config
-    ├── components.json              # shadcn component registry config
     ├── index.html
     ├── index.tsx                    # Entry point (React 19 createRoot)
-    ├── index.css
-    ├── global.css
-    ├── global.tailwind.css          # Tailwind base config
+    ├── global.css                   # CSS vars, dark gradient background, layout
+    ├── global.tailwind.css          # Tailwind base config (shadcn theme vars)
     ├── debug.ts                     # Debug flags
     ├── src/                         # Application source (aliased as @/)
     │   ├── api.ts                   # Hono RPC client (imports ApiType from server)
-    │   ├── app.tsx                  # Main app: stream management + window picker
+    │   ├── app.tsx                  # Main app: JetBrains Islands UI, stream management
     │   ├── streamDecoder.ts         # H264Decoder (WebCodecs + avcC)
     │   └── streamRenderer.tsx       # StreamRenderer (Canvas + polling)
-    ├── 3rdparty/                    # Vendored third-party code (aliased as @shadcn/)
-    │   └── shadcn/
-    │       ├── components/ui/       # Button, Card, Dialog, DropdownMenu, Input, ...
-    │       └── lib/utils.ts
     └── public/
         └── img/
 ```
@@ -528,6 +522,7 @@ Nekomaru-LiveUI-v2/
 - [x] Frontend creates/selects/stops captures via API (no hardcoded stream ID)
 - [x] Decoder retries on 503 (stream starting up) with exponential backoff
 - [x] Migrated from Preact to React 19
+- [x] UI redesigned: JetBrains Islands dark theme, Emotion CSS replaced with Tailwind utilities, shadcn removed
 - [ ] Frontend works in both webview and regular browser
 
 ### End-to-End (Pending)
@@ -618,14 +613,14 @@ wry = "0.54"
     "dependencies": {
         "react": "^19.x",
         "react-dom": "^19.x",
-        "@emotion/css": "^11.x",
+        "@emotion/css": "^11.x (installed, no longer used in UI — migrated to Tailwind)",
         "tailwindcss": "^4.x",
         "hono": "^4.x (hono/client for RPC)",
         "zod": "^4.x",
         "immer": "^11.x",
         "lucide-react": "^0.563",
         "@fortawesome/react-fontawesome": "^3.x",
-        "@radix-ui/react-*": "shadcn UI primitives"
+        "@radix-ui/react-*": "installed (shadcn removed, primitives kept for future use)"
     }
 }
 ```

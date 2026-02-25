@@ -1,4 +1,3 @@
-import { css } from '@emotion/css';
 import { useEffect, useState } from 'react';
 
 import { api } from './api';
@@ -15,20 +14,13 @@ interface WindowInfo {
     title: string;
 }
 
-// ── Styles ──────────────────────────────────────────────────────────────
+// ── Styles (JetBrains Islands) ──────────────────────────────────────────
 
-const card = css({
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-    borderWidth: 1,
-    borderStyle: 'solid',
-    borderRadius: 12,
-    boxShadow: [
-        'rgba(128,128,128,0.5) 2px 4px 16px',
-        'inset rgba(255, 255, 255, 0.1) 1px 2px 4px',
-    ].join(', '),
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
-    backdropFilter: 'blur(24px) brightness(0.95)',
-});
+/// Shared island panel style — dark surface, subtle border, soft shadow.
+const island = "border border-[#393b40] rounded-2xl shadow-[0_1px_3px_rgba(0,0,0,0.3),0_4px_12px_rgba(0,0,0,0.15)] bg-[#2b2d30]";
+
+/// Shared button style — dark pill with hover highlight.
+const pillButton = "px-4 py-1.5 border border-[#4e5157] rounded-md bg-[#3c3f44] text-[#bcc0cc] text-[13px] cursor-pointer transition-colors duration-150 hover:bg-[#4a4d52]";
 
 // ── App ─────────────────────────────────────────────────────────────────
 
@@ -105,26 +97,9 @@ export function App() {
     // ── Render ───────────────────────────────────────────────────────────
 
     return (
-        <div className={css({
-            padding: '32px 32px',
-            display: 'flex',
-            flexDirection: 'column',
-            flex: 1,
-            gap: 16,
-        })}>
-            <div className={css({
-                display: 'flex',
-                flexDirection: 'row',
-                gap: 24,
-            })}>
-                <div className={[
-                    card,
-                    css({
-                        flex: 3,
-                        padding: 16,
-                        overflow: 'hidden',
-                    }),
-                ].join(' ')}>
+        <div className="flex flex-col flex-1 gap-2 p-2">
+            <div className="flex flex-row flex-5 gap-2">
+                <div className={`${island} flex-3 min-w-0 overflow-hidden`}>
                     {loading ? (
                         <Placeholder>Connecting...</Placeholder>
                     ) : streamId ? (
@@ -143,17 +118,8 @@ export function App() {
                         </Placeholder>
                     )}
                 </div>
-                <div className={[
-                    card,
-                    css({
-                        flex: 1,
-                        padding: 24,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 12,
-                    }),
-                ].join(' ')}>
-                    Hi, I'm Nekomaru OwO
+                <div className={`${island} flex-1 p-6 flex flex-col gap-3`}>
+                    <span className="text-[#bcc0cc]">Hi, I'm Nekomaru OwO</span>
                     {streamId && (
                         <button type="button" onClick={stopCapture} className={pillButton}>
                             Stop Capture
@@ -161,13 +127,7 @@ export function App() {
                     )}
                 </div>
             </div>
-            <div className={[
-                card,
-                css({
-                    flex: 1,
-                    padding: 8,
-                }),
-            ].join(' ')}>
+            <div className={`${island} flex-1 p-2`}>
             </div>
         </div>
     );
@@ -178,14 +138,7 @@ export function App() {
 /// Centered placeholder shown when no stream is active.
 function Placeholder({ children }: { children: React.ReactNode }) {
     return (
-        <div className={css({
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            minHeight: 200,
-            color: 'rgba(0, 0, 0, 0.5)',
-            fontSize: 14,
-        })}>
+        <div className="flex items-center justify-center min-h-50 text-[#6f737a] text-sm">
             {children}
         </div>
     );
@@ -198,20 +151,9 @@ function WindowPicker({ windows, onSelect, onCancel }: {
     onCancel: () => void;
 }) {
     return (
-        <div className={css({
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 2,
-            maxHeight: 400,
-            overflowY: 'auto',
-        })}>
-            <div className={css({
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '8px 12px',
-            })}>
-                <span className={css({ fontWeight: 600, fontSize: 14 })}>
+        <div className="flex flex-col gap-0.5 max-h-100 overflow-y-auto">
+            <div className="flex items-center justify-between px-3 py-2">
+                <span className="font-semibold text-sm text-[#bcc0cc]">
                     Select a window to capture
                 </span>
                 <button type="button" onClick={onCancel} className={pillButton}>
@@ -223,20 +165,7 @@ function WindowPicker({ windows, onSelect, onCancel }: {
                     type="button"
                     key={w.hwnd}
                     onClick={() => onSelect(w)}
-                    className={css({
-                        display: 'block',
-                        width: '100%',
-                        padding: '10px 12px',
-                        border: 'none',
-                        borderRadius: 8,
-                        backgroundColor: 'transparent',
-                        textAlign: 'left',
-                        fontSize: 13,
-                        cursor: 'pointer',
-                        ':hover': {
-                            backgroundColor: 'rgba(0, 0, 0, 0.06)',
-                        },
-                    })}
+                    className="block w-full px-3 py-2.5 border-none rounded-md bg-transparent text-left text-[13px] cursor-pointer text-[#bcc0cc] hover:bg-white/6"
                 >
                     {w.title || `Window ${w.hwnd}`}
                 </button>
@@ -244,17 +173,3 @@ function WindowPicker({ windows, onSelect, onCancel }: {
         </div>
     );
 }
-
-// ── Shared styles ───────────────────────────────────────────────────────
-
-const pillButton = css({
-    padding: '6px 16px',
-    border: '1px solid rgba(0, 0, 0, 0.15)',
-    borderRadius: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
-    fontSize: 13,
-    cursor: 'pointer',
-    ':hover': {
-        backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    },
-});

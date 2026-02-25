@@ -11,6 +11,7 @@ use nkcore::os::windows::winit::{
 };
 
 use winit::{
+    dpi::PhysicalPosition,
     dpi::PhysicalSize,
     event::WindowEvent,
     event_loop::ActiveEventLoop,
@@ -22,7 +23,7 @@ use winit::{
 use wry::WebView;
 use wry::WebViewBuilder;
 
-const WINDOW_SIZE: PhysicalSize<u32> = PhysicalSize::new(1920, 1200);
+const WINDOW_SIZE: PhysicalSize<u32> = PhysicalSize::new(1920, 1080);
 
 /// Reads `LIVE_PORT` from the environment, panics if not set or invalid,
 /// and constructs the server URL.
@@ -47,11 +48,19 @@ fn main() {
                 // will close the window and webview.
                 let _ = app;
 
-                if let AppEvent::WindowEvent(
-                    window_id,
-                    WindowEvent::CloseRequested) = event &&
+                if let AppEvent::WindowEvent(window_id, event) = event &&
                     window_id == app.window.id() {
-                    event_loop.exit();
+                    match event {
+                        WindowEvent::CloseRequested =>
+                            event_loop.exit(),
+                        WindowEvent::Resized(new_size) => {
+                            let _ = app.webview.set_bounds(wry::Rect {
+                                position: PhysicalPosition::new(0i32, 0i32).into(),
+                                size: new_size.into(),
+                            });
+                        }
+                        _ => {}
+                    }
                 }
             }
         })
@@ -70,7 +79,7 @@ impl LiveApp {
         let window =
             event_loop.create_window(
                 Window::default_attributes()
-                    .with_title("Nekomaru LiveUI")
+                    .with_title("Nekomaru LiveUI v2")
                     .with_inner_size(WINDOW_SIZE)
                     .with_resizable(false)
                     .with_enabled_buttons(WindowButtons::CLOSE))
@@ -83,11 +92,7 @@ impl LiveApp {
                 .build(&window)
                 .expect("failed to create webview");
 
-        #[cfg(debug_assertions)]
-            webview.open_devtools();
-
         log::info!("loading frontend at: {url}");
-
         Self { window, webview }
     }
 }

@@ -12,9 +12,24 @@
     --color-green: #98C379;
     --color-red: #E06C75;
 
+}
+
+:root {
     /* force dark theme */
     color-scheme: dark;
 
-    /* base font size */
-    font-size: 14px;
+    /* global styles */
+    background: linear-gradient(135deg, #1a1b1e, #222327);
+}
+
+div#app {
+    display: flex;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+}
+
+div.canvas-container {
+    width: 1920px;
+    height: 1080px;
 }

@@ -1,4 +1,3 @@
-import { css } from '@emotion/css';
 import { useEffect, useRef } from 'react';
 
 import { DEBUG } from '../debug';
@@ -57,12 +56,7 @@ export function StreamRenderer({ streamId }: { streamId: string }) {
     return (
         <canvas
             ref={canvasRef}
-            className={css({
-                width: '100%',
-                backgroundColor: '#292929',
-                objectFit: 'contain',
-                borderRadius: 12,
-            })}
+            className="w-full bg-[#1e1f22] object-contain rounded-2xl"
         />
     );
 }
