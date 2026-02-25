@@ -7,6 +7,9 @@
 //   GET  /:id/init      → codec params (SPS/PPS/resolution)
 //   GET  /:id/frames    → encoded frames (polling)
 //   GET  /windows       → enumerate capturable windows
+//   GET  /auto          → auto-selector status
+//   POST /auto          → start auto-selector
+//   DELETE /auto        → stop auto-selector
 //
 // Routes are method-chained so TypeScript infers the full route schema into
 // `typeof api`.  The frontend imports ApiType to create a typed Hono RPC client.
@@ -19,6 +22,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 
 import * as proc from "./process";
+import { selector } from "./selector";
 
 const api = new Hono()
 
@@ -56,6 +60,25 @@ const api = new Hono()
     .get("/windows", async (c) => {
         const windows = await proc.enumerateWindows();
         return c.json(windows);
+    })
+
+    // ── Auto-selector ─────────────────────────────────────────────────────
+
+    /// Get auto-selector status.
+    .get("/auto", (c) => {
+        return c.json(selector.status());
+    })
+
+    /// Start the automatic window selector (polls foreground every 2s).
+    .post("/auto", (c) => {
+        selector.start();
+        return c.json(selector.status(), 201);
+    })
+
+    /// Stop the automatic window selector (kills the managed stream).
+    .delete("/auto", (c) => {
+        selector.stop();
+        return c.json({ ok: true });
     })
 
     // ── Stream lifecycle ─────────────────────────────────────────────────

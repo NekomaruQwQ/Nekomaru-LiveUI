@@ -9,6 +9,7 @@
 //! ```text
 //! live-capture.exe --hwnd 0x1A2B3C --width 1920 --height 1200
 //! live-capture.exe --enumerate-windows   # JSON list of capturable windows
+//! live-capture.exe --foreground-window   # JSON info of the foreground window
 //! ```
 
 mod d3d11;
@@ -52,16 +53,21 @@ struct CliArgs {
     #[arg(long)]
     enumerate_windows: bool,
 
+    /// Print the current foreground window as JSON and exit.
+    #[arg(long)]
+    foreground_window: bool,
+
     /// Window handle (decimal or 0x hex). Required for capture mode.
-    #[arg(long, value_parser = parse_hwnd, required_unless_present = "enumerate_windows")]
+    #[arg(long, value_parser = parse_hwnd,
+        required_unless_present_any = ["enumerate_windows", "foreground_window"])]
     hwnd: Option<isize>,
 
     /// Output width (must be a multiple of 16). Required for capture mode.
-    #[arg(long, required_unless_present = "enumerate_windows")]
+    #[arg(long, required_unless_present_any = ["enumerate_windows", "foreground_window"])]
     width: Option<u32>,
 
     /// Output height (must be a multiple of 16). Required for capture mode.
-    #[arg(long, required_unless_present = "enumerate_windows")]
+    #[arg(long, required_unless_present_any = ["enumerate_windows", "foreground_window"])]
     height: Option<u32>,
 }
 
@@ -108,6 +114,12 @@ fn main() {
         let windows = enumerate_windows::enumerate_windows();
         // Stdout is JSON here (not binary IPC), so the server can parse it directly.
         println!("{}", serde_json::to_string(&windows).expect("JSON serialization failed"));
+        return;
+    }
+
+    if args.foreground_window {
+        let window = enumerate_windows::get_foreground_window();
+        println!("{}", serde_json::to_string(&window).expect("JSON serialization failed"));
         return;
     }
 

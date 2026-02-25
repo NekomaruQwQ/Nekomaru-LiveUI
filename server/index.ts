@@ -20,6 +20,7 @@ import * as hono from "@hono/node-server";
 
 import { serverPort, baseUrl } from "./common";
 import { destroyAll } from "./process";
+import { selector } from "./selector";
 import api from "./api";
 
 // ── Hono app ─────────────────────────────────────────────────────────────────
@@ -57,14 +58,16 @@ httpServer.listen(serverPort, () => {
 });
 
 // ── Cleanup ──────────────────────────────────────────────────────────────────
-// Kill all child processes when the server is shut down.
+// Stop the auto-selector and kill all child processes when the server shuts down.
 
 process.on("SIGINT", () => {
+    selector.stop();
     destroyAll();
     process.exit(0);
 });
 
 process.on("SIGTERM", () => {
+    selector.stop();
     destroyAll();
     process.exit(0);
 });

@@ -7,6 +7,9 @@ import { StreamRenderer } from './streamRenderer';
 const DEFAULT_WIDTH = 1920;
 const DEFAULT_HEIGHT = 1200;
 
+/// How often to poll the auto-selector for stream ID changes (ms).
+const AUTO_POLL_INTERVAL_MS = 1000;
+
 /// Expected shape of window info from the enumerate-windows crate.
 /// Adjust field names if the Rust crate uses a different schema.
 interface WindowInfo {
@@ -27,30 +30,72 @@ const pillButton = "px-4 py-1.5 border border-[#4e5157] rounded-md bg-[#3c3f44] 
 export function App() {
     /// Active stream ID, or null when no capture is running.
     const [streamId, setStreamId] = useState<string | null>(null);
+    /// Whether the auto-selector is managing the stream.
+    const [autoActive, setAutoActive] = useState(true);
     /// Capturable windows shown in the picker, or null when picker is closed.
     const [windows, setWindows] = useState<WindowInfo[] | null>(null);
-    /// True during the initial "do we already have a stream?" check.
+    /// True during the initial startup check.
     const [loading, setLoading] = useState(true);
 
-    // On mount, check for an existing running stream (e.g. after page reload).
+    // Auto-selector: activate on mount, poll for stream ID changes.
+    // When autoActive flips to false the effect cleans up (clears interval).
     useEffect(() => {
+        if (!autoActive) return;
+
+        let cancelled = false;
+        let intervalId: ReturnType<typeof setInterval> | null = null;
+
+        /// Poll the server for the auto-selector's current stream ID.
+        async function pollAutoStatus() {
+            if (cancelled) return;
+            try {
+                const res = await api.auto.$get();
+                if (!res.ok || cancelled) return;
+                const status = await res.json();
+                setStreamId(status.currentStreamId);
+            } catch (e) {
+                console.error("Failed to poll auto status:", e);
+            }
+        }
+
         (async () => {
             try {
-                const res = await api.index.$get();
-                if (res.ok) {
-                    const streams = await res.json();
-                    const running = streams.find((s) => s.status === "running");
-                    if (running) {
-                        setStreamId(running.id);
-                    }
-                }
+                // Activate the auto-selector on the server (idempotent).
+                await api.auto.$post();
+                // Immediate first poll so we don't wait a full interval.
+                await pollAutoStatus();
+                intervalId = setInterval(pollAutoStatus, AUTO_POLL_INTERVAL_MS);
             } catch (e) {
-                console.error("Failed to list streams:", e);
+                console.error("Failed to start auto-selector:", e);
             } finally {
-                setLoading(false);
+                if (!cancelled) setLoading(false);
             }
         })();
-    }, []);
+
+        return () => {
+            cancelled = true;
+            if (intervalId) clearInterval(intervalId);
+        };
+    }, [autoActive]);
+
+    /// Stop the auto-selector and fall back to manual mode.
+    async function stopAuto() {
+        try {
+            await api.auto.$delete();
+        } catch (e) {
+            console.error("Failed to stop auto-selector:", e);
+        }
+        setAutoActive(false);
+        setStreamId(null);
+    }
+
+    /// Re-enable the auto-selector.
+    function startAuto() {
+        setAutoActive(true);
+        setLoading(true);
+    }
+
+    // ── Manual mode handlers ─────────────────────────────────────────────
 
     /// Fetch the list of capturable windows and show the picker.
     async function loadWindows() {
@@ -83,8 +128,8 @@ export function App() {
         }
     }
 
-    /// Stop the active stream and return to idle.
-    async function stopCapture() {
+    /// Stop a manually-created stream and return to idle.
+    async function stopManualCapture() {
         if (!streamId) return;
         try {
             await api[":id"].$delete({ param: { id: streamId } });
@@ -104,6 +149,8 @@ export function App() {
                         <Placeholder>Connecting...</Placeholder>
                     ) : streamId ? (
                         <StreamRenderer streamId={streamId} />
+                    ) : autoActive ? (
+                        <Placeholder>Auto-selecting...</Placeholder>
                     ) : windows ? (
                         <WindowPicker
                             windows={windows}
@@ -112,16 +159,25 @@ export function App() {
                         />
                     ) : (
                         <Placeholder>
-                            <button type="button" onClick={loadWindows} className={pillButton}>
-                                Start Capture
-                            </button>
+                            <div className="flex gap-2">
+                                <button type="button" onClick={startAuto} className={pillButton}>
+                                    Auto
+                                </button>
+                                <button type="button" onClick={loadWindows} className={pillButton}>
+                                    Pick Window
+                                </button>
+                            </div>
                         </Placeholder>
                     )}
                 </div>
                 <div className={`${island} flex-1 p-6 flex flex-col gap-3`}>
                     <span className="text-[#bcc0cc]">Hi, I'm Nekomaru OwO</span>
-                    {streamId && (
-                        <button type="button" onClick={stopCapture} className={pillButton}>
+                    {autoActive ? (
+                        <button type="button" onClick={stopAuto} className={pillButton}>
+                            Stop Auto
+                        </button>
+                    ) : streamId && (
+                        <button type="button" onClick={stopManualCapture} className={pillButton}>
                             Stop Capture
                         </button>
                     )}

@@ -3,6 +3,9 @@
 //! Provides [`enumerate_windows`] which returns a list of visible, non-cloaked,
 //! top-level windows with non-empty titles — the set of windows suitable for
 //! screen capture.
+//!
+//! Also provides [`get_foreground_window`] which returns info about the current
+//! foreground window (used by the auto-capture selector).
 
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt as _;
@@ -32,6 +35,27 @@ pub struct WindowInfo {
     pub title: String,
     /// Full executable path, or empty if inaccessible.
     pub executable_path: PathBuf,
+}
+
+// ── Foreground window ───────────────────────────────────────────────────
+
+/// Returns info about the current foreground window, or `None` if the
+/// foreground handle is null/invalid.
+pub fn get_foreground_window() -> Option<WindowInfo> {
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.is_invalid() {
+        return None;
+    }
+
+    let title = get_window_title(hwnd);
+    let (pid, executable_path) = get_process_info(hwnd);
+
+    Some(WindowInfo {
+        hwnd: hwnd.0 as usize,
+        pid,
+        title,
+        executable_path,
+    })
 }
 
 // ── Window enumeration ───────────────────────────────────────────────────
