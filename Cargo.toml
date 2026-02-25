@@ -9,26 +9,35 @@ members = [
 version = "0.1.0"
 edition = "2024"
 
-[package]
-name = "LiveUI"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies.nkcore]
+[workspace.dependencies.nkcore]
 git = "git://nekomaru-ubuntu/Nekomaru-Rust.git"
-rev = "7e5d8946"
+rev = "1a593946"
 features = ["debug"]
 
-[dependencies.ngd3dcompile]
+[workspace.dependencies.ngd3dcompile]
 git = "git://nekomaru-ubuntu/Nekomaru-Graphics-2025.git"
 rev = "bac5bb90"
 package = "ngd3dcompile_macro"
 
-[dependencies.winrt-capture]
+[workspace.dependencies.winrt-capture]
 git = "git://nekomaru-ubuntu/Nekomaru-Rust.git"
-rev = "7e5d8946"
+rev = "1a593946"
 
-[dependencies]
+[workspace.dependencies.enumerate-windows]
+git = "git://nekomaru-ubuntu/Nekomaru-Rust.git"
+rev = "1a593946"
+
+[workspace.dependencies.winit]
+version = "0.30.9"
+default-features = false
+features = ["rwh_06"]
+
+[workspace.dependencies.wry]
+version = "0.54.2"
+default-features = false
+features = ["devtools", "protocol"]
+
+[workspace.dependencies]
 # bytemuck = { version = "1.24.0", features = ["derive", "const_zeroed"] }
 # glam = { version = "0.30.9", features = ["approx", "bytemuck", "glam-assert"] }
 # cfg-if = "1.0.4"
@@ -45,10 +54,7 @@ widestring = "1.2.1"
 # egui-winit = "0.33.2"
 # egui-directx11 = "0.12.1"
 
-winit = { version = "0.30.9", default-features = false, features = ["rwh_06"] }
-wry = { version = "0.53.5", default-features = false, features = ["devtools", "protocol"] }
-
-# LOCK: wry@0.53.5 depends on windows@0.61.3.
+# LOCK: wry@0.54.2 depends on windows@^0.61
 windows = { version = "0.62.2", features = [
     "Graphics_Capture",
     "Graphics_DirectX",
@@ -68,6 +74,28 @@ windows = { version = "0.62.2", features = [
     "Win32_System_WinRT_Direct3D11",
     "Win32_UI_WindowsAndMessaging",
 ]}
+
+[package]
+name = "LiveUI"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+nkcore = { workspace = true }
+ngd3dcompile = { workspace = true }
+winrt-capture = { workspace = true }
+
+base64 = { workspace = true }
+crossbeam = { workspace = true }
+log = { workspace = true }
+pretty-name = { workspace = true }
+pretty_env_logger = { workspace = true }
+serde_json = { workspace = true }
+tap = { workspace = true }
+widestring = { workspace = true }
+winit = { workspace = true }
+wry = { workspace = true }
+windows = { workspace = true }
 
 [workspace.lints.clippy]
 cargo       = { level = "warn", priority = -1 }

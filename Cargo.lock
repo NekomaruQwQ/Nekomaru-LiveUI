@@ -1005,7 +1005,6 @@ dependencies = [
  "ngd3dcompile_macro",
  "nkcore",
  "pretty-name",
- "pretty_env_logger",
  "widestring",
  "windows 0.62.2",
  "winrt-capture",
@@ -1129,7 +1128,7 @@ dependencies = [
 [[package]]
 name = "nkcore"
 version = "0.1.0"
-source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=7e5d8946#7e5d894616bde813953481b2c206585c7332dc21"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=1a593946#1a593946ff47b3f29d7d831719db1f46afeb92af"
 dependencies = [
  "nkcore-base",
  "nkcore-debug",
@@ -1139,7 +1138,7 @@ dependencies = [
 [[package]]
 name = "nkcore-base"
 version = "0.1.0"
-source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=7e5d8946#7e5d894616bde813953481b2c206585c7332dc21"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=1a593946#1a593946ff47b3f29d7d831719db1f46afeb92af"
 dependencies = [
  "anyhow",
  "euclid",
@@ -1149,7 +1148,7 @@ dependencies = [
 [[package]]
 name = "nkcore-debug"
 version = "0.1.0"
-source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=7e5d8946#7e5d894616bde813953481b2c206585c7332dc21"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=1a593946#1a593946ff47b3f29d7d831719db1f46afeb92af"
 dependencies = [
  "anyhow",
  "nkcore-debug-macros",
@@ -1159,7 +1158,7 @@ dependencies = [
 [[package]]
 name = "nkcore-debug-macros"
 version = "0.1.0"
-source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=7e5d8946#7e5d894616bde813953481b2c206585c7332dc21"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=1a593946#1a593946ff47b3f29d7d831719db1f46afeb92af"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -1171,7 +1170,7 @@ dependencies = [
 [[package]]
 name = "nkcore-windows"
 version = "0.1.0"
-source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=7e5d8946#7e5d894616bde813953481b2c206585c7332dc21"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=1a593946#1a593946ff47b3f29d7d831719db1f46afeb92af"
 dependencies = [
  "pretty_env_logger",
  "raw-window-handle",
@@ -3009,7 +3008,7 @@ dependencies = [
 [[package]]
 name = "winrt-capture"
 version = "0.1.0"
-source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=7e5d8946#7e5d894616bde813953481b2c206585c7332dc21"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=1a593946#1a593946ff47b3f29d7d831719db1f46afeb92af"
 dependencies = [
  "nkcore",
  "windows 0.62.2",
@@ -3029,9 +3028,9 @@ checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
 
 [[package]]
 name = "wry"
-version = "0.53.5"
+version = "0.54.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "728b7d4c8ec8d81cab295e0b5b8a4c263c0d41a785fb8f8c4df284e5411140a2"
+checksum = "bb26159b420aa77684589a744ae9a9461a95395b848764ad12290a14d960a11a"
 dependencies = [
  "base64",
  "block2 0.6.2",

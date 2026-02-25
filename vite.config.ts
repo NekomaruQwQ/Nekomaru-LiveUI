@@ -1,13 +1,20 @@
-import { defineConfig } from "vite";
-import preact from '@preact/preset-vite'
+import * as path from "node:path";
+import * as vite from "vite";
+import react from "@vitejs/plugin-react-swc";
+import tailwindcss from "@tailwindcss/vite";
 
-export default defineConfig({
-    root: "frontend",
+export default vite.defineConfig({
+    root: "src",
     plugins: [
-        preact(),
+        react(),
+        tailwindcss(),
     ],
-    server: {
-        port: 9688,
-        strictPort: true,
+    resolve: {
+        alias: {
+            "@":
+                path.resolve(__dirname, "src"),
+            "@shadcn":
+                path.resolve(__dirname, "3rdparty", "shadcn"),
+        },
     },
 });
