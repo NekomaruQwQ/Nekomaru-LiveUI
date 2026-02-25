@@ -4,7 +4,7 @@ import react from "@vitejs/plugin-react-swc";
 import tailwindcss from "@tailwindcss/vite";
 
 export default vite.defineConfig({
-    root: ".",
+    root: __dirname,
     plugins: [
         react(),
         tailwindcss(),

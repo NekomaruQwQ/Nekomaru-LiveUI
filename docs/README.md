@@ -2,7 +2,7 @@
 
 **Low-latency (<100ms) screen capture streaming from DirectX 11 to the browser**
 
-**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | End-to-End Testing Next
+**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | Frontend Integrated | End-to-End Testing Next
 **Last Updated**: 2026-02-25
 **Hardware**: RTX 5090 | Windows 11
 
@@ -102,9 +102,11 @@ The project is split into three independently running components. The hard work 
 │  Any browser works. live-app.exe is an optional thin wry         │
 │  webview host that locks the window aspect ratio for streaming.  │
 │                                                                  │
-│  Frontend (Preact + WebCodecs)                                   │
+│  Frontend (React + WebCodecs)                                    │
+│    - Typed API client via Hono RPC (hc)                          │
 │    - H264Decoder (avcC descriptor, Annex B → AVCC conversion)    │
 │    - StreamRenderer (Canvas rendering, ~60fps polling)           │
+│    - Stream management UI (window picker, create/stop captures)  │
 │    - Multiple viewers can connect to the same stream             │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -205,7 +207,7 @@ Served by LiveServer (Hono on Bun). Port is preconfigured via environment variab
 
 ```json
 [
-    { "id": "abc123", "windowTitle": "Visual Studio Code", "width": 1920, "height": 1200, "status": "running" }
+    { "id": "abc123", "hwnd": "0x1A2B3C", "width": 1920, "height": 1200, "status": "running" }
 ]
 ```
 
@@ -239,13 +241,15 @@ Served by LiveServer (Hono on Bun). Port is preconfigured via environment variab
 ```json
 {
     "frames": [
-        { "sequence": 123, "data": "<base64>", "keyframe": false },
-        { "sequence": 124, "data": "<base64>", "keyframe": false }
+        { "sequence": 123, "data": "<base64>" },
+        { "sequence": 124, "data": "<base64>" }
     ]
 }
 ```
 
-The base64 `data` field contains the same binary frame format as the IPC protocol's Frame message.
+The base64 `data` field contains a pre-serialized binary payload (timestamp + NAL units). Keyframe status is inferred from NAL unit types on the frontend.
+
+**`GET /streams/windows`** — List capturable windows (one-shot spawn of `live-capture.exe --enumerate-windows`).
 
 ---
 
@@ -289,14 +293,16 @@ The base64 `data` field contains the same binary frame format as the IPC protoco
 | **Frame Buffer** | `server/buffer.ts` | Done | Per-stream circular buffer (60 frames). Multi-viewer safe (no drain). Pre-serializes frames on push. Skips to first keyframe for new clients. |
 | **Constants** | `server/common.ts` | Done | Port (`LIVE_PORT` env or 3000), exe path, buffer capacity. |
 
-### Completed (Frontend Updates)
+### Completed (Frontend — React + Hono RPC)
 
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
-| **Decoder** | `frontend/src/streamDecoder.ts` | Done | Now accepts `streamId`, fetches `/streams/:id/init` instead of `http://stream.localhost/init`. |
-| **Renderer** | `frontend/src/streamRenderer.tsx` | Done | Accepts `streamId` prop, polls `/streams/:id/frames?after=N`. Effect re-runs on streamId change. |
-| **App** | `frontend/src/app.tsx` | Done | Passes hardcoded `streamId="default"` to StreamRenderer. |
-| **Vite Config** | `frontend/vite.config.ts` | Done | Changed `root: "src"` → `root: "."` to match index.html location. |
+| **API Client** | `frontend/src/api.ts` | Done | Typed Hono RPC client via `hc<ApiType>("/streams")`. Imports server route type for end-to-end type safety. `fetchInit()` retries on 503 with exponential backoff. |
+| **Decoder** | `frontend/src/streamDecoder.ts` | Done | Uses `fetchInit()` from API client (handles 503 retry). WebCodecs H264Decoder with avcC descriptor. |
+| **Renderer** | `frontend/src/streamRenderer.tsx` | Done | Polls `/streams/:id/frames` via typed Hono RPC client at ~60fps. Canvas rendering with GPU memory management. |
+| **App** | `frontend/src/app.tsx` | Done | Stream management: lists existing streams on mount, window picker via `/streams/windows`, create/stop captures. Replaces hardcoded `streamId="default"`. |
+| **Entry Point** | `frontend/index.tsx` | Done | React 19 `createRoot()` (migrated from Preact). |
+| **Vite Config** | `frontend/vite.config.ts` | Done | `@vitejs/plugin-react-swc`, `root: "."`, `@` and `@shadcn` aliases. |
 
 ---
 
@@ -455,25 +461,26 @@ Nekomaru-LiveUI-v2/
 │   ├── biome.json                   # Biome formatter/linter config
 │   ├── index.ts                     # Entry point: Hono + Vite on single node:http port
 │   ├── common.ts                    # Constants (port, exe path, buffer capacity)
-│   ├── api.ts                       # Hono routes for /streams/*
+│   ├── api.ts                       # Hono routes for /streams/* (exports ApiType for frontend RPC)
 │   ├── process.ts                   # Spawn/manage live-capture.exe child processes
 │   ├── buffer.ts                    # Per-stream circular frame buffer + SPS/PPS cache
 │   └── protocol.ts                  # Incremental binary wire protocol parser
 │
-└── frontend/                        # Frontend (Preact + Vite + Tailwind)
+└── frontend/                        # Frontend (React + Vite + Tailwind)
     ├── package.json
     ├── tsconfig.json
     ├── vite.config.ts               # Vite root = ., aliases: @→src, @shadcn→3rdparty/shadcn
     ├── biome.json                   # Biome formatter/linter config
     ├── components.json              # shadcn component registry config
     ├── index.html
-    ├── index.tsx                    # Entry point (Preact render)
+    ├── index.tsx                    # Entry point (React 19 createRoot)
     ├── index.css
     ├── global.css
     ├── global.tailwind.css          # Tailwind base config
     ├── debug.ts                     # Debug flags
     ├── src/                         # Application source (aliased as @/)
-    │   ├── app.tsx                  # Main app with StreamRenderer
+    │   ├── api.ts                   # Hono RPC client (imports ApiType from server)
+    │   ├── app.tsx                  # Main app: stream management + window picker
     │   ├── streamDecoder.ts         # H264Decoder (WebCodecs + avcC)
     │   └── streamRenderer.tsx       # StreamRenderer (Canvas + polling)
     ├── 3rdparty/                    # Vendored third-party code (aliased as @shadcn/)
@@ -513,9 +520,14 @@ Nekomaru-LiveUI-v2/
 - [x] Stdout wire protocol parses correctly in TypeScript (`server/protocol.ts`)
 - [x] LiveServer spawns and manages `live-capture.exe` instances (`server/process.ts`)
 - [x] HTTP API serves codec params and frame data (`server/api.ts`)
+- [x] Server API type-exported for Hono RPC (`ApiType`)
 - [x] Multiple browsers can connect to the same stream (circular buffer, no drain)
 - [x] `live-app.exe` opens webview to localhost with locked aspect ratio
+- [x] Frontend uses typed Hono RPC client (`hc<ApiType>`)
 - [x] Frontend points at real HTTP API (`/streams/:id/init`, `/streams/:id/frames`)
+- [x] Frontend creates/selects/stops captures via API (no hardcoded stream ID)
+- [x] Decoder retries on 503 (stream starting up) with exponential backoff
+- [x] Migrated from Preact to React 19
 - [ ] Frontend works in both webview and regular browser
 
 ### End-to-End (Pending)
@@ -604,10 +616,11 @@ wry = "0.54"
 ```json
 {
     "dependencies": {
-        "preact": "via @preact/compat override",
+        "react": "^19.x",
+        "react-dom": "^19.x",
         "@emotion/css": "^11.x",
         "tailwindcss": "^4.x",
-        "hono": "^4.x",
+        "hono": "^4.x (hono/client for RPC)",
         "zod": "^4.x",
         "immer": "^11.x",
         "lucide-react": "^0.563",
