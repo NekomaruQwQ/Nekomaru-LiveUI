@@ -1,0 +1,12 @@
+[package]
+name = "live-app"
+version = { workspace = true }
+edition = { workspace = true }
+
+[lints]
+workspace = true
+
+[dependencies]
+nkcore = { workspace = true, features = ["winit"] }
+winit = { workspace = true }
+wry = { workspace = true }
