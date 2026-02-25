@@ -1,42 +1,51 @@
-// Entry point of the TurboDoc server.
+// Entry point of the LiveServer.
 //
-// The TurboDoc server has three parts:
-// 1. The API server powered by Hono (workspace/cache CRUD);
-// 2. The HTTP proxy for documentation pages (with SQLite caching);
-// 3. The frontend asset server powered by Vite;
+// The LiveServer has two parts:
+// 1. The stream API powered by Hono (spawn/manage live-capture.exe, serve frames);
+// 2. The frontend asset server powered by Vite (hot-reload in development).
 //
-// To make the three parts work together in Bun, we create a node:http server
-// via the Bun NodeJS Compat Layer and route requests to either Hono or Vite
-// based on the URL path.
+// To make them coexist on a single port, we create a node:http server via the
+// Bun NodeJS Compat Layer and route requests to either Hono or Vite based on
+// the URL path.
 //
-// Running the server with `bun --hot` enables hot reload for the server.
-// The frontend assets are always hot-reloaded by Vite, regardless of the
-// bun flags.
+// Running the server with `bun --hot` enables hot reload for the server code.
+// The frontend assets are always hot-reloaded by Vite, regardless of bun flags.
 
 import { Hono } from "hono";
 
+import * as path from "node:path";
 import * as http from "node:http";
 import * as vite from "vite";
 import * as hono from "@hono/node-server";
 
-import { serverPort, baseUrl } from "@/server/common";
-import api from "@/server/api";
-import proxy from "@/server/proxy";
+import { serverPort, baseUrl } from "@/common";
+import { destroyAll } from "@/process";
+import api from "@/api";
+
+// ── Hono app ─────────────────────────────────────────────────────────────────
 
 const honoApp =
     new Hono()
-        .route("/proxy", proxy)
-        .route("/api/v1", api);
-export type HonoApp = typeof honoApp;
+        .route("/streams", api);
 
 const honoServer =
     hono.getRequestListener(honoApp.fetch);
+
+// ── Vite dev server ──────────────────────────────────────────────────────────
+// The frontend lives in a sibling directory (../frontend/).  We point Vite at
+// its config file so it resolves root, aliases, and plugins correctly.
+
 const viteServer =
-    await vite.createServer({ server: { middlewareMode: true } });
+    await vite.createServer({
+        configFile: path.resolve(import.meta.dirname, "../frontend/vite.config.ts"),
+        server: { middlewareMode: true },
+    });
+
+// ── HTTP server ──────────────────────────────────────────────────────────────
+
 const httpServer =
     http.createServer(async (req, res) => {
-        if (req.url?.startsWith("/api") ||
-            req.url?.startsWith("/proxy")) {
+        if (req.url?.startsWith("/streams")) {
             await honoServer(req, res);
         } else {
             viteServer.middlewares(req, res);
@@ -44,5 +53,18 @@ const httpServer =
     });
 
 httpServer.listen(serverPort, () => {
-    console.log(`Server running at ${baseUrl}`);
+    console.log(`LiveServer running at ${baseUrl}`);
+});
+
+// ── Cleanup ──────────────────────────────────────────────────────────────────
+// Kill all child processes when the server is shut down.
+
+process.on("SIGINT", () => {
+    destroyAll();
+    process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+    destroyAll();
+    process.exit(0);
 });

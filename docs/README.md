@@ -2,7 +2,7 @@
 
 **Low-latency (<100ms) screen capture streaming from DirectX 11 to the browser**
 
-**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | Architecture Refactoring In Progress
+**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | End-to-End Testing Next
 **Last Updated**: 2026-02-25
 **Hardware**: RTX 5090 | Windows 11
 
@@ -30,12 +30,18 @@
 cargo build --release
 
 # Start the server (serves frontend + manages captures)
-cd server && bun run dev
+cd server && bun run index.ts
+
+# Create a capture (replace HWND with your target window)
+curl -X POST http://localhost:3000/streams \
+    -H 'Content-Type: application/json' \
+    -d '{"hwnd":"0x1A2B3C", "width":1920, "height":1200}'
+
+# Open the frontend in any browser
+# http://localhost:3000
 
 # (Optional) Launch the webview host with locked aspect ratio
 cargo run -p live-app
-
-# Or just open http://localhost:3000 in any browser
 ```
 
 ---
@@ -263,16 +269,34 @@ The base64 `data` field contains the same binary frame format as the IPC protoco
 
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
-| **Frontend Decoder** | `frontend/streamDecoder.ts` | Done | H264Decoder with WebCodecs, avcC descriptor |
-| **Frontend Renderer** | `frontend/streamRenderer.tsx` | Done | StreamRenderer with Canvas, ~60fps polling |
+| **Frontend Decoder** | `frontend/src/streamDecoder.ts` | Done | H264Decoder with WebCodecs, avcC descriptor |
+| **Frontend Renderer** | `frontend/src/streamRenderer.tsx` | Done | StreamRenderer with Canvas, ~60fps polling |
 
-### Planned (Architecture Refactoring)
+### Completed (Webview Host)
 
-| Component | Location | Status | Notes |
-|-----------|----------|--------|-------|
-| **LiveServer** | `server/` | Planned | Hono on Bun, process manager + HTTP API + stream buffering |
-| **live-app** | `app/` | Planned | Minimal wry webview host, aspect ratio lock |
-| **Frontend updates** | `frontend/` | Planned | Point at real HTTP API instead of `stream.localhost` |
+| Component | File | Status | Notes |
+|-----------|------|--------|-------|
+| **live-app** | `app/src/main.rs` | Done | Non-resizable 1920x1200 wry webview via nkcore/winit event loop. Opens devtools in debug builds. Loads `http://localhost:3000`. |
+
+### Completed (LiveServer — `server/`)
+
+| Component | File | Status | Notes |
+|-----------|------|--------|-------|
+| **Entry Point** | `server/index.ts` | Done | Hono app + Vite dev server (middleware mode) on single `node:http` port. Routes `/streams` → API, everything else → Vite. SIGINT/SIGTERM cleanup. |
+| **Stream API** | `server/api.ts` | Done | Hono routes: `GET/POST/DELETE /streams`, `GET /streams/:id/init`, `GET /streams/:id/frames?after=N`, `GET /streams/windows`. Zod validation on POST. |
+| **Process Manager** | `server/process.ts` | Done | Spawns `live-capture.exe` via `Bun.spawn`. Wires stdout → ProtocolParser → StreamBuffer. Tracks lifecycle (starting → running → stopped). stderr forwarded with `[capture:id]` prefix. |
+| **Protocol Parser** | `server/protocol.ts` | Done | Push-based incremental binary parser. Handles partial reads, greedy parse loop. Mirrors Rust wire format exactly. |
+| **Frame Buffer** | `server/buffer.ts` | Done | Per-stream circular buffer (60 frames). Multi-viewer safe (no drain). Pre-serializes frames on push. Skips to first keyframe for new clients. |
+| **Constants** | `server/common.ts` | Done | Port (`LIVE_UI_PORT` env or 3000), exe path, buffer capacity. |
+
+### Completed (Frontend Updates)
+
+| Component | File | Status | Notes |
+|-----------|------|--------|-------|
+| **Decoder** | `frontend/src/streamDecoder.ts` | Done | Now accepts `streamId`, fetches `/streams/:id/init` instead of `http://stream.localhost/init`. |
+| **Renderer** | `frontend/src/streamRenderer.tsx` | Done | Accepts `streamId` prop, polls `/streams/:id/frames?after=N`. Effect re-runs on streamId change. |
+| **App** | `frontend/src/app.tsx` | Done | Passes hardcoded `streamId="default"` to StreamRenderer. |
+| **Vite Config** | `frontend/vite.config.ts` | Done | Changed `root: "src"` → `root: "."` to match index.html location. |
 
 ---
 
@@ -387,12 +411,27 @@ Within `live-capture.exe`, the capture thread (main) and encoding thread share a
 
 ```
 Nekomaru-LiveUI-v2/
-├── Cargo.toml                       # Workspace root
+├── Cargo.toml                       # Workspace root (members: ".", "app", "service/capture")
+├── src/                             # LiveUI monolith binary (legacy, workspace member ".")
+│   ├── main.rs
+│   ├── app.rs
+│   ├── app/
+│   │   ├── capture_selector.rs
+│   │   └── helper.rs
+│   ├── stream.rs
+│   ├── constant.rs
+│   ├── converter.rs
+│   ├── encoder.rs
+│   ├── encoder/
+│   │   ├── helper.rs
+│   │   └── debug.rs
+│   ├── resample.rs
+│   └── resample.hlsl
 │
-├── app/                             # live-app.exe — webview host (Rust, wry)
+├── app/                             # live-app.exe — webview host (Rust, wry + nkcore/winit)
 │   ├── Cargo.toml
 │   └── src/
-│       └── main.rs                  # Opens webview to localhost, locks aspect ratio
+│       └── main.rs                  # Non-resizable 1920x1200 window, loads localhost:3000
 │
 ├── service/
 │   └── capture/                     # live-capture.exe + live_capture lib (Rust)
@@ -413,21 +452,36 @@ Nekomaru-LiveUI-v2/
 ├── server/                          # LiveServer — HTTP server (TypeScript, Hono on Bun)
 │   ├── package.json
 │   ├── tsconfig.json
-│   └── src/
-│       ├── index.ts                 # Entry point, Hono app setup
-│       ├── streams.ts               # Stream management routes
-│       ├── process.ts               # Spawn/manage live-capture.exe child processes
-│       ├── buffer.ts                # Per-stream circular frame buffer + SPS/PPS cache
-│       └── protocol.ts             # Parse binary wire format from stdout
+│   ├── biome.json                   # Biome formatter/linter config
+│   ├── index.ts                     # Entry point: Hono + Vite on single node:http port
+│   ├── common.ts                    # Constants (port, exe path, buffer capacity)
+│   ├── api.ts                       # Hono routes for /streams/*
+│   ├── process.ts                   # Spawn/manage live-capture.exe child processes
+│   ├── buffer.ts                    # Per-stream circular frame buffer + SPS/PPS cache
+│   └── protocol.ts                  # Incremental binary wire protocol parser
 │
-└── frontend/                        # Frontend (Preact + Vite)
+└── frontend/                        # Frontend (Preact + Vite + Tailwind)
     ├── package.json
-    ├── vite.config.ts
-    ├── index.tsx                     # Entry point
-    ├── app.tsx                       # Main app with StreamRenderer
-    ├── streamDecoder.ts              # H264Decoder (WebCodecs + avcC)
-    ├── streamRenderer.tsx            # StreamRenderer (Canvas + polling)
-    └── debug.ts                      # Debug flags
+    ├── tsconfig.json
+    ├── vite.config.ts               # Vite root = ., aliases: @→src, @shadcn→3rdparty/shadcn
+    ├── biome.json                   # Biome formatter/linter config
+    ├── components.json              # shadcn component registry config
+    ├── index.html
+    ├── index.tsx                    # Entry point (Preact render)
+    ├── index.css
+    ├── global.css
+    ├── global.tailwind.css          # Tailwind base config
+    ├── debug.ts                     # Debug flags
+    ├── src/                         # Application source (aliased as @/)
+    │   ├── app.tsx                  # Main app with StreamRenderer
+    │   ├── streamDecoder.ts         # H264Decoder (WebCodecs + avcC)
+    │   └── streamRenderer.tsx       # StreamRenderer (Canvas + polling)
+    ├── 3rdparty/                    # Vendored third-party code (aliased as @shadcn/)
+    │   └── shadcn/
+    │       ├── components/ui/       # Button, Card, Dialog, DropdownMenu, Input, ...
+    │       └── lib/utils.ts
+    └── public/
+        └── img/
 ```
 
 ---
@@ -452,15 +506,16 @@ Nekomaru-LiveUI-v2/
 - [x] Decodes IDR and P-frames successfully
 - [x] No memory leaks (`frame.close()` called after render)
 
-### Architecture Refactoring (In Progress)
+### Architecture Refactoring (Implementation Complete — Needs E2E Testing)
 
 - [x] `live-capture.exe` runs standalone and writes binary frames to stdout
 - [x] IPC wire protocol round-trip tested (Rust serialization + deserialization)
-- [ ] Stdout wire protocol parses correctly in TypeScript
-- [ ] LiveServer spawns and manages `live-capture.exe` instances
-- [ ] HTTP API serves codec params and frame data
-- [ ] Multiple browsers can connect to the same stream
-- [ ] `live-app.exe` opens webview to localhost with locked aspect ratio
+- [x] Stdout wire protocol parses correctly in TypeScript (`server/protocol.ts`)
+- [x] LiveServer spawns and manages `live-capture.exe` instances (`server/process.ts`)
+- [x] HTTP API serves codec params and frame data (`server/api.ts`)
+- [x] Multiple browsers can connect to the same stream (circular buffer, no drain)
+- [x] `live-app.exe` opens webview to localhost with locked aspect ratio
+- [x] Frontend points at real HTTP API (`/streams/:id/init`, `/streams/:id/frames`)
 - [ ] Frontend works in both webview and regular browser
 
 ### End-to-End (Pending)
@@ -520,8 +575,9 @@ windows = { version = "0.62", features = [
 
 ```toml
 [dependencies]
-wry = "0.53"
+nkcore = { features = ["winit"] }  # Event loop integration (run_app_with)
 winit = { version = "0.30", features = ["rwh_06"] }
+wry = "0.54"
 ```
 
 ### LiveServer (TypeScript)
@@ -529,7 +585,34 @@ winit = { version = "0.30", features = ["rwh_06"] }
 ```json
 {
     "dependencies": {
-        "hono": "^4.x"
+        "hono": "^4.x",
+        "@hono/node-server": "^1.x",
+        "@hono/zod-validator": "^0.7.x",
+        "zod": "^4.x",
+        "immer": "^11.x",
+        "ts-pattern": "^5.x",
+        "remeda": "^2.x"
+    },
+    "devDependencies": {
+        "vite": "^7.x"
+    }
+}
+```
+
+### Frontend (TypeScript)
+
+```json
+{
+    "dependencies": {
+        "preact": "via @preact/compat override",
+        "@emotion/css": "^11.x",
+        "tailwindcss": "^4.x",
+        "hono": "^4.x",
+        "zod": "^4.x",
+        "immer": "^11.x",
+        "lucide-react": "^0.563",
+        "@fortawesome/react-fontawesome": "^3.x",
+        "@radix-ui/react-*": "shadcn UI primitives"
     }
 }
 ```
