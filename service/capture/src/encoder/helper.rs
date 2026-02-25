@@ -45,17 +45,17 @@ pub fn find_h264_encoder(dxgi_device: &IDXGIDevice) -> anyhow::Result<IMFTransfo
         anyhow::bail!("no hardware H.264 encoder found");
     }
 
-    log::info!("found {} hardware H.264 encoder(s)", out_count);
+    log::info!("found {out_count} hardware H.264 encoder(s)");
     defer(|| unsafe { CoTaskMemFree(Some(out_activate.cast())) });
 
     let activates = unsafe { std::slice::from_raw_parts(out_activate, out_count as usize) };
 
-    log::info!("scanning {} hardware H.264 encoder(s) for matching adapter...", out_count);
+    log::info!("scanning {out_count} hardware H.264 encoder(s) for matching adapter...");
     for (index, activate) in activates.iter().enumerate() {
         let activate =
             activate
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("null activate pointer at index {}", index))?;
+                .ok_or_else(|| anyhow::anyhow!("null activate pointer at index {index}"))?;
 
         let mut buf = [0u16; 256];
         let mut len = 0u32;
@@ -73,10 +73,10 @@ pub fn find_h264_encoder(dxgi_device: &IDXGIDevice) -> anyhow::Result<IMFTransfo
         };
 
         let name = name.to_string_lossy();
-        log::info!("Encoder #{}: '{}'", index, name);
+        log::info!("Encoder #{index}: '{name}'");
 
         if name.to_ascii_lowercase().contains("nvidia") {
-            log::info!("Selecting encoder #{} ('{}')", index, name);
+            log::info!("Selecting encoder #{index} ('{name}')");
             return Ok(api_call!(unsafe {
                 activate.ActivateObject::<IMFTransform>()
             })?);

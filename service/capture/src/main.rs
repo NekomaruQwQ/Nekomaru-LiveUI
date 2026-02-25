@@ -151,7 +151,7 @@ fn run(args: CliArgs) -> anyhow::Result<()> {
         .spawn({
             let device = device.clone();
             let device_context = device_context.clone();
-            let frame_source = staging_bgra8.clone();
+            let frame_source = staging_bgra8;
             move || encoding_thread(device, device_context, frame_source, frame_size)
         })
         .context("failed to spawn encoding thread")?;
@@ -246,7 +246,7 @@ fn encoding_thread(
         || {
             nv12_converter
                 .convert(&frame_source, &nv12_staging)
-                .expect("BGRA8 → NV12 conversion failed");
+                .expect("BGRA8 \u{2192} NV12 conversion failed");
             nv12_staging.clone()
         },
         // Frame target: serialize to stdout via IPC protocol

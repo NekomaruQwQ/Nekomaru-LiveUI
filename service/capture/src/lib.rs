@@ -124,10 +124,10 @@ pub enum Message {
 /// [u16 LE: pps_length][pps bytes]
 /// ```
 pub fn write_codec_params(w: &mut impl Write, params: &CodecParams) -> io::Result<()> {
-    debug_assert!(params.width <= u16::MAX as u32, "width exceeds u16 range");
-    debug_assert!(params.height <= u16::MAX as u32, "height exceeds u16 range");
-    debug_assert!(params.sps.len() <= u16::MAX as usize, "SPS exceeds u16 length");
-    debug_assert!(params.pps.len() <= u16::MAX as usize, "PPS exceeds u16 length");
+    debug_assert!(u16::try_from(params.width).is_ok(), "width exceeds u16 range");
+    debug_assert!(u16::try_from(params.height).is_ok(), "height exceeds u16 range");
+    debug_assert!(u16::try_from(params.sps.len()).is_ok(), "SPS exceeds u16 length");
+    debug_assert!(u16::try_from(params.pps.len()).is_ok(), "PPS exceeds u16 length");
 
     let payload_len = 2 + 2 + 2 + params.sps.len() + 2 + params.pps.len();
 
@@ -226,7 +226,7 @@ pub fn read_message(r: &mut impl Read) -> io::Result<Option<Message>> {
     }
 }
 
-/// Parse a CodecParams payload.
+/// Parse a `CodecParams` payload.
 fn read_codec_params_payload(data: &[u8]) -> io::Result<CodecParams> {
     let invalid = || io::Error::new(io::ErrorKind::InvalidData, "truncated CodecParams payload");
     if data.len() < 8 { return Err(invalid()); }

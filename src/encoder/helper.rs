@@ -21,7 +21,7 @@ pub fn find_h264_encoder(dxgi_device: &IDXGIDevice) -> anyhow::Result<IMFTransfo
 
     // --- Get the LUID from the Device ---
     let dxgi_adapter = api_call!(unsafe { dxgi_device.GetAdapter() })?;
-    let dxgi_adapter_desc = api_call!(unsafe { dxgi_adapter.GetDesc() })?;
+    let _dxgi_adapter_desc = api_call!(unsafe { dxgi_adapter.GetDesc() })?;
 
     // Search for hardware encoder (async)
     let mut out_activate = std::ptr::null_mut();

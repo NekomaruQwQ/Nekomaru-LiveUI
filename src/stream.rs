@@ -122,11 +122,10 @@ impl StreamManager {
         };
 
         // If queue is full, drop oldest frame (live streaming behavior)
-        if self.frame_queue.is_full() {
-            if let Some(dropped) = self.frame_queue.pop() {
+        if self.frame_queue.is_full()
+            && let Some(dropped) = self.frame_queue.pop() {
                 log::warn!("Stream queue full, dropping frame {}", dropped.sequence);
             }
-        }
 
         // Push new frame
         self.frame_queue

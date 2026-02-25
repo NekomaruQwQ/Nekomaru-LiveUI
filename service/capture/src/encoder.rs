@@ -167,9 +167,9 @@ impl H264Encoder {
             ("Rate control mode", &CODECAPI_AVEncCommonRateControlMode,
                 VARIANT::from(eAVEncCommonRateControlMode_CBR.0 as u32)),
         ] {
-            match api_call!(unsafe { codec_api.SetValue(api, &value) }) {
-                Ok(_) => log::info!("  {} set successfully", name),
-                Err(e) => log::warn!("  Failed to set {} (encoder may not support this setting): {:?}", name, e),
+            match api_call!(unsafe { codec_api.SetValue(api, &raw const value) }) {
+                Ok(()) => log::info!("  {name} set successfully"),
+                Err(e) => log::warn!("  Failed to set {name} (encoder may not support this setting): {e:?}"),
             }
         }
 
@@ -240,7 +240,7 @@ impl H264Encoder {
                         .unwrap();
                 }
                 _ => {
-                    log::trace!("Unhandled MFT event type: {:?}", event_type);
+                    log::trace!("Unhandled MFT event type: {event_type:?}");
                 }
             }
         }
@@ -255,7 +255,7 @@ impl H264Encoder {
         while SystemTime::now()
             .duration_since(self.time_of_last_frame)
             .context("unexpected time drift")?
-            .as_secs_f64() < (1.0_f64 / self.frame_rate as f64) {
+            .as_secs_f64() < (1.0f64 / self.frame_rate as f64) {
             std::thread::sleep(Duration::from_millis(1));
         }
 
@@ -295,11 +295,11 @@ impl H264Encoder {
         api_call!(unsafe { sample.SetSampleDuration(duration_100ns) })?;
 
         match unsafe { self.mf_transform.ProcessInput(0, &sample, 0) } {
-            Ok(_) => {
+            Ok(()) => {
                 log::trace!("feeding succeeded");
             },
             Err(e) if e.code() == MF_E_NOTACCEPTING => {
-                Err(e).context("encoder not accepting input — should not happen after METransformNeedInput")?;
+                Err(e).context("encoder not accepting input \u{2014} should not happen after METransformNeedInput")?;
             },
             Err(e) => {
                 Err(e).context("failed to process input sample")?;

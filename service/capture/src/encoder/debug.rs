@@ -30,15 +30,15 @@ pub fn print_mft_supported_input_types(transform: &IMFTransform) {
     for i in 0..100 {
         match unsafe { transform.GetInputAvailableType(0, i) } {
             Ok(media_type) => {
-                log::info!("Input type #{}:", i);
+                log::info!("Input type #{i}:");
                 print_media_type(&media_type);
             }
             Err(e) if e.code() == MF_E_NO_MORE_TYPES => {
-                log::info!("Total input types: {}", i);
+                log::info!("Total input types: {i}");
                 break;
             }
             Err(e) => {
-                log::warn!("Failed to get input type #{}: {:?}", i, e);
+                log::warn!("Failed to get input type #{i}: {e:?}");
                 break;
             }
         }
@@ -50,15 +50,15 @@ pub fn print_mft_supported_output_types(transform: &IMFTransform) {
     for i in 0..100 {
         match unsafe { transform.GetOutputAvailableType(0, i) } {
             Ok(media_type) => {
-                log::info!("Output type #{}:", i);
+                log::info!("Output type #{i}:");
                 print_media_type(&media_type);
             }
             Err(e) if e.code() == MF_E_NO_MORE_TYPES => {
-                log::info!("Total output types: {}", i);
+                log::info!("Total output types: {i}");
                 break;
             }
             Err(e) => {
-                log::warn!("Failed to get output type #{}: {:?}", i, e);
+                log::warn!("Failed to get output type #{i}: {e:?}");
                 break;
             }
         }
@@ -69,23 +69,19 @@ fn print_media_type(media_type: &IMFMediaType) {
     if let Ok(major_type) = api_call!(unsafe { media_type.GetGUID(&MF_MT_MAJOR_TYPE) }) {
         log::info!(
             "  Major type: {}",
-            name_of_media_type(major_type)
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| format!("{major_type:?}")));
+            name_of_media_type(major_type).map_or_else(|| format!("{major_type:?}"), ToOwned::to_owned));
     }
 
     if let Ok(subtype) = api_call!(unsafe { media_type.GetGUID(&MF_MT_SUBTYPE) }) {
         log::info!(
             "  Subtype: {}",
-            name_of_video_format(subtype)
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| format!("{subtype:?}")));
+            name_of_video_format(subtype).map_or_else(|| format!("{subtype:?}"), ToOwned::to_owned));
     }
 
     if let Ok(frame_size) = api_call!(unsafe { media_type.GetUINT64(&MF_MT_FRAME_SIZE) }) {
         let width = (frame_size >> 32) as u32;
         let height = (frame_size & 0xFFFF_FFFF) as u32;
-        log::info!("  Frame size: {}x{}", width, height);
+        log::info!("  Frame size: {width}x{height}");
     }
 
     if let Ok(frame_rate) = api_call!(unsafe { media_type.GetUINT64(&MF_MT_FRAME_RATE) }) {
@@ -99,6 +95,6 @@ fn print_media_type(media_type: &IMFMediaType) {
     }
 
     if let Ok(interlace) = api_call!(unsafe { media_type.GetUINT32(&MF_MT_INTERLACE_MODE) }) {
-        log::info!("  Interlace mode: {:?}", interlace);
+        log::info!("  Interlace mode: {interlace:?}");
     }
 }

@@ -192,32 +192,29 @@ impl LiveApp {
 
     fn on_window_event(&mut self, window_id: WindowId, event: WindowEvent) {
         if window_id == self.main_window.id() {
-            match event {
-                WindowEvent::RedrawRequested => {
-                    if self.main_capture_selector.update(&mut self.main_capture_hwnd) {
-                        // Note that we only try to start capture once per foreground window change.
-                        // If the first attempt fails, subsequent attempts will also fail for the
-                        // same window.
-                        self.main_capture =
-                            CaptureSession::from_hwnd(&self.device, self.main_capture_hwnd)
-                                .inspect_err(|err| log::error!("failed to start capture: {err}"))
-                                .ok();
-                        unsafe {
-                            self.device_context
-                                .ClearRenderTargetView(
-                                    &self.main_capture_staging_bgra8_rtv,
-                                    &[0.16, 0.16, 0.16, 1.0]);
-                        }
+            if event == WindowEvent::RedrawRequested {
+                if self.main_capture_selector.update(&mut self.main_capture_hwnd) {
+                    // Note that we only try to start capture once per foreground window change.
+                    // If the first attempt fails, subsequent attempts will also fail for the
+                    // same window.
+                    self.main_capture =
+                        CaptureSession::from_hwnd(&self.device, self.main_capture_hwnd)
+                            .inspect_err(|err| log::error!("failed to start capture: {err}"))
+                            .ok();
+                    unsafe {
+                        self.device_context
+                            .ClearRenderTargetView(
+                                &self.main_capture_staging_bgra8_rtv,
+                                &[0.16, 0.16, 0.16, 1.0]);
                     }
+                }
 
-                    // It's safe to ignore resampling errors here, as they do not affect
-                    // the stream integrity. The encoding thread will simply reuse the
-                    // last successfully resampled frame.
-                    let _ =
-                        self.resample_captured_frame()
-                            .inspect_err(|err| log::error!("failed to resample captured frame: {err}"));
-                },
-                _ => {},
+                // It's safe to ignore resampling errors here, as they do not affect
+                // the stream integrity. The encoding thread will simply reuse the
+                // last successfully resampled frame.
+                let _ =
+                    self.resample_captured_frame()
+                        .inspect_err(|err| log::error!("failed to resample captured frame: {err}"));
             }
         }
     }
@@ -329,7 +326,7 @@ mod encoding_thread {
                 // failures on the frontend, but it can possibly recover on receiving the next
                 // keyframe.
                 if let Err(e) = stream_manager.push_frame(nal_units) {
-                    log::error!("failed to push frame to stream: {:?}", e);
+                    log::error!("failed to push frame to stream: {e:?}");
                 }
             }),
         })
@@ -346,7 +343,7 @@ fn handle_stream_request(
     -> std::result::Result<wry::http::Response<Cow<'static, [u8]>>, Box<dyn std::error::Error>> {
     use wry::http::Response;
 
-    log::debug!("{:?}", request);
+    log::debug!("{request:?}");
 
     // Strip "/localhost" prefix for Edge WebView routing
     let path = request.uri().path().strip_prefix("/localhost").unwrap_or(request.uri().path());
@@ -407,7 +404,7 @@ fn handle_stream_request(
                 "frames": frames.iter().map(|frame| {
                     // Serialize frame as binary
                     let mut buffer = Vec::new();
-                    let _ = serialize_stream_frame(&frame, &mut buffer);
+                    let _ = serialize_stream_frame(frame, &mut buffer);
                     json!({
                         "sequence": frame.sequence,
                         "timestamp": frame.timestamp_us,
