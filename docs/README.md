@@ -293,19 +293,19 @@ The base64 `data` field contains a pre-serialized binary payload (timestamp + NA
 
 ## Implementation Status
 
-### Completed (`live-capture` crate — `service/capture/`)
+### Completed (`live-capture` crate — `core/live-capture/`)
 
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
-| **IPC Protocol (lib)** | `service/capture/src/lib.rs` | Done | Wire protocol types (`NALUnit`, `CodecParams`, `FrameMessage`) + serialization/deserialization via `impl Write`/`impl Read`. Round-trip tested. |
-| **CLI + Orchestration** | `service/capture/src/main.rs` | Done | Two exclusive capture modes: resample (`--width`/`--height`) and crop (`--crop-width`/`--crop-height`/`--crop-align`). `--enumerate-windows` and `--foreground-window` one-shot modes. Bakery model: capture thread + encoding thread → binary stdout. |
-| **D3D11 Helpers** | `service/capture/src/d3d11.rs` | Done | Device creation, texture/view factories (subset of monolith `app/helper.rs`) |
-| **Format Converter** | `service/capture/src/converter.rs` | Done | GPU-accelerated BGRA→NV12 via `ID3D11VideoProcessor`. Resolution now parameterized. |
-| **H.264 Encoder** | `service/capture/src/encoder.rs` | Done | Async MFT with low-latency settings, NAL parsing. Callbacks passed to `run()` (monomorphized, no `Box<dyn>`). |
-| **Encoder Helpers** | `service/capture/src/encoder/helper.rs` | Done | Finds NVIDIA NVENC encoder |
-| **Debug Logging** | `service/capture/src/encoder/debug.rs` | Done | Prints supported media types |
-| **Resampler** | `service/capture/src/resample.rs` | Done | Scales captured frames with viewport set |
-| **Capture + Crop** | `service/capture/src/capture.rs` | Done | Windows Graphics Capture wrapper + viewport calculation. Crop types (`CropSpec`, `CropDimension`, `Alignment`) and `compute_crop_box()` for subrect extraction via `CopySubresourceRegion`. |
+| **IPC Protocol (lib)** | `core/live-capture/src/lib.rs` | Done | Wire protocol types (`NALUnit`, `CodecParams`, `FrameMessage`) + serialization/deserialization via `impl Write`/`impl Read`. Round-trip tested. |
+| **CLI + Orchestration** | `core/live-capture/src/main.rs` | Done | Two exclusive capture modes: resample (`--width`/`--height`) and crop (`--crop-width`/`--crop-height`/`--crop-align`). `--enumerate-windows` and `--foreground-window` one-shot modes. Bakery model: capture thread + encoding thread → binary stdout. |
+| **D3D11 Helpers** | `core/live-capture/src/d3d11.rs` | Done | Device creation, texture/view factories (subset of monolith `app/helper.rs`) |
+| **Format Converter** | `core/live-capture/src/converter.rs` | Done | GPU-accelerated BGRA→NV12 via `ID3D11VideoProcessor`. Resolution now parameterized. |
+| **H.264 Encoder** | `core/live-capture/src/encoder.rs` | Done | Async MFT with low-latency settings, NAL parsing. Callbacks passed to `run()` (monomorphized, no `Box<dyn>`). |
+| **Encoder Helpers** | `core/live-capture/src/encoder/helper.rs` | Done | Finds NVIDIA NVENC encoder |
+| **Debug Logging** | `core/live-capture/src/encoder/debug.rs` | Done | Prints supported media types |
+| **Resampler** | `core/live-capture/src/resample.rs` | Done | Scales captured frames with viewport set |
+| **Capture + Crop** | `core/live-capture/src/capture.rs` | Done | Windows Graphics Capture wrapper + viewport calculation. Crop types (`CropSpec`, `CropDimension`, `Alignment`) and `compute_crop_box()` for subrect extraction via `CopySubresourceRegion`. |
 | **Window Enumeration** | `crates/enumerate-windows/src/lib.rs` | Done | `enumerate_windows()` lists capturable windows. `get_foreground_window()` returns current foreground window info. |
 
 ### Completed (Frontend Stream Module — `frontend/src/stream/`)
@@ -319,7 +319,7 @@ The base64 `data` field contains a pre-serialized binary payload (timestamp + NA
 
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
-| **live-app** | `app/src/main.rs` | Done | Non-resizable 1920x1200 wry webview via nkcore/winit event loop. Opens devtools in debug builds. Loads `http://localhost:3000`. |
+| **live-app** | `core/live-app/src/main.rs` | Done | Non-resizable 1920x1200 wry webview via nkcore/winit event loop. Opens devtools in debug builds. Loads `http://localhost:3000`. |
 
 ### Completed (LiveServer — `server/`)
 
@@ -391,13 +391,13 @@ The base64 `data` field contains a pre-serialized binary payload (timestamp + NA
 
 ## Encoding Pipeline Reference
 
-### Format Converter (`service/capture/src/converter.rs`)
+### Format Converter (`core/live-capture/src/converter.rs`)
 
 GPU-accelerated BGRA→NV12 conversion via `ID3D11VideoProcessor`. Hardware H.264 encoders require NV12 input.
 
 Performance: ~0.5-1ms for 1920x1200.
 
-### H.264 Encoder (`service/capture/src/encoder.rs`)
+### H.264 Encoder (`core/live-capture/src/encoder.rs`)
 
 Async Media Foundation Transform (MFT). Runs a blocking event loop:
 
@@ -457,43 +457,33 @@ Within `live-capture.exe`, the capture thread (main) and encoding thread share a
 
 ```
 Nekomaru-LiveUI-v2/
-├── Cargo.toml                       # Workspace root (members: ".", "app", "service/capture")
-├── src/                             # LiveUI monolith binary (legacy, workspace member ".")
-│   ├── main.rs
-│   ├── app.rs
-│   ├── app/
-│   │   ├── capture_selector.rs
-│   │   └── helper.rs
-│   ├── stream.rs
-│   ├── constant.rs
-│   ├── converter.rs
-│   ├── encoder.rs
-│   ├── encoder/
-│   │   ├── helper.rs
-│   │   └── debug.rs
-│   ├── resample.rs
-│   └── resample.hlsl
+├── Cargo.toml                       # Workspace root
 │
-├── app/                             # live-app.exe — webview host (Rust, wry + nkcore/winit)
-│   ├── Cargo.toml
-│   └── src/
-│       └── main.rs                  # Non-resizable 1920x1200 window, loads localhost:3000
-│
-├── service/
-│   └── capture/                     # live-capture.exe + live_capture lib (Rust)
-│       ├── Cargo.toml               # Emits both [[bin]] and [lib]
+├── core/
+│   ├── live-app/                    # live-app.exe — webview host (Rust, wry + nkcore/winit)
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       └── main.rs              # Non-resizable 1920x1200 window, loads localhost:3000
+│   │
+│   ├── live-capture/                # live-capture.exe + live_capture lib (Rust)
+│   │   ├── Cargo.toml               # Emits both [[bin]] and [lib]
+│   │   └── src/
+│   │       ├── lib.rs               # IPC protocol types + serialization (public API)
+│   │       ├── main.rs              # CLI args (resample vs crop mode), capture → encode → stdout
+│   │       ├── d3d11.rs             # D3D11 device + texture/view creation helpers
+│   │       ├── capture.rs           # Capture wrapper, viewport calc, crop types + box computation
+│   │       ├── converter.rs         # NV12Converter (BGRA→NV12, GPU, parameterized)
+│   │       ├── encoder.rs           # H264Encoder (async MFT, NAL parsing)
+│   │       ├── encoder/
+│   │       │   ├── helper.rs        # Encoder enumeration (NVIDIA preference)
+│   │       │   └── debug.rs         # Media type logging utilities
+│   │       ├── resample.rs          # BGRA scaling shader
+│   │       └── resample.hlsl        # Fullscreen triangle vertex/pixel shaders
+│   │
+│   └── live-control/                # live-control.exe — control panel (Rust, eframe/egui)
+│       ├── Cargo.toml
 │       └── src/
-│           ├── lib.rs               # IPC protocol types + serialization (public API)
-│           ├── main.rs              # CLI args (resample vs crop mode), capture → encode → stdout
-│           ├── d3d11.rs             # D3D11 device + texture/view creation helpers
-│           ├── capture.rs           # Capture wrapper, viewport calc, crop types + box computation
-│           ├── converter.rs         # NV12Converter (BGRA→NV12, GPU, parameterized)
-│           ├── encoder.rs           # H264Encoder (async MFT, NAL parsing)
-│           ├── encoder/
-│           │   ├── helper.rs        # Encoder enumeration (NVIDIA preference)
-│           │   └── debug.rs         # Media type logging utilities
-│           ├── resample.rs          # BGRA scaling shader
-│           └── resample.hlsl        # Fullscreen triangle vertex/pixel shaders
+│           └── main.rs
 │
 ├── server/                          # LiveServer — HTTP server (TypeScript, Hono on Bun)
 │   ├── package.json
