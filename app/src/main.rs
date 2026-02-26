@@ -4,27 +4,6 @@
 //! LiveServer frontend. This is a thin shell — all capture, encoding, and
 //! stream management lives in `live-capture.exe` and LiveServer.
 
-use nkcore::prelude::*;
-use nkcore::os::windows::winit::{
-    AppEvent,
-    EventLoopExt as _,
-};
-
-use winit::{
-    dpi::PhysicalPosition,
-    dpi::PhysicalSize,
-    event::WindowEvent,
-    event_loop::ActiveEventLoop,
-    event_loop::EventLoop,
-    window::Window,
-    window::WindowButtons,
-};
-
-use wry::WebView;
-use wry::WebViewBuilder;
-
-const WINDOW_SIZE: PhysicalSize<u32> = PhysicalSize::new(1920, 1080);
-
 /// Reads `LIVE_PORT` from the environment, panics if not set or invalid,
 /// and constructs the server URL.
 fn get_server_url() -> String {
@@ -36,63 +15,5 @@ fn get_server_url() -> String {
 }
 
 fn main() {
-    pretty_env_logger::init();
-
-    EventLoop::<()>::new()
-        .expect("failed to create event loop")
-        .run_app_with(|event_loop| {
-            let app = LiveApp::new(event_loop);
-            move |event_loop, event| {
-                // We do not need to do anything in the event loop, but we must
-                // keep the app alive for the lifetime of the loop. Dropping it
-                // will close the window and webview.
-                let _ = app;
-
-                if let AppEvent::WindowEvent(window_id, event) = event &&
-                    window_id == app.window.id() {
-                    match event {
-                        WindowEvent::CloseRequested =>
-                            event_loop.exit(),
-                        WindowEvent::Resized(new_size) => {
-                            let _ = app.webview.set_bounds(wry::Rect {
-                                position: PhysicalPosition::new(0i32, 0i32).into(),
-                                size: new_size.into(),
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        })
-        .expect("failed to run event loop");
-}
-
-/// Holds the window and webview, kept alive for the lifetime of the app.
-#[expect(dead_code, reason = "fields must be kept alive")]
-struct LiveApp {
-    window: Window,
-    webview: WebView,
-}
-
-impl LiveApp {
-    fn new(event_loop: &ActiveEventLoop) -> Self {
-        let window =
-            event_loop.create_window(
-                Window::default_attributes()
-                    .with_title("Nekomaru LiveUI v2")
-                    .with_inner_size(WINDOW_SIZE)
-                    .with_resizable(false)
-                    .with_enabled_buttons(WindowButtons::CLOSE))
-                .expect("failed to create window");
-
-        let url = get_server_url();
-        let webview =
-            WebViewBuilder::new()
-                .with_url(&url)
-                .build(&window)
-                .expect("failed to create webview");
-
-        log::info!("loading frontend at: {url}");
-        Self { window, webview }
-    }
+    live_app::run_webview("Nekomaru LiveUI v2", &get_server_url());
 }
