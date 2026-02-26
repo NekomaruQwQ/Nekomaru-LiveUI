@@ -8,7 +8,10 @@ use nkcore::prelude::*;
 use nkcore::debug::*;
 
 use windows::core::Interface as _;
-use windows::Win32::Graphics::Direct3D11::*;
+use windows::Win32::Graphics::{
+    Dxgi::Common::*,
+    Direct3D11::*,
+};
 
 /// Stateless format converter: BGRA textures → NV12 textures via GPU video processor.
 pub struct NV12Converter {
@@ -37,19 +40,22 @@ impl NV12Converter {
 
         let desc = D3D11_VIDEO_PROCESSOR_CONTENT_DESC {
             InputFrameFormat: D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE,
-            InputFrameRate: Default::default(),
+            InputFrameRate: DXGI_RATIONAL::default(),
             InputWidth: width,
             InputHeight: height,
-            OutputFrameRate: Default::default(),
+            OutputFrameRate: DXGI_RATIONAL::default(),
             OutputWidth: width,
             OutputHeight: height,
             Usage: D3D11_VIDEO_USAGE_PLAYBACK_NORMAL,
         };
 
+        // SAFETY: `device` is a valid `ID3D11VideoDevice` (cast above); `desc` is
+        // a fully initialized stack-local struct describing the video processor caps.
         let enumerator = api_call!(unsafe {
             device.CreateVideoProcessorEnumerator(&raw const desc)
         })?;
 
+        // SAFETY: `device` and `enumerator` are valid COM objects from the lines above.
         let processor = api_call!(unsafe {
             device.CreateVideoProcessor(
                 &enumerator,
@@ -86,6 +92,8 @@ impl NV12Converter {
         };
 
         let mut input_view = None;
+        // SAFETY: All COM objects (`device`, `enumerator`, `bgra_texture`) are valid.
+        // `input_view_desc` is a stack-local struct; `input_view` receives the result.
         api_call!(unsafe {
             self.device.CreateVideoProcessorInputView(
                 bgra_texture,
@@ -105,6 +113,8 @@ impl NV12Converter {
         };
 
         let mut output_view = None;
+        // SAFETY: All COM objects (`device`, `enumerator`, `nv12_texture`) are valid.
+        // `output_view_desc` is a stack-local struct; `output_view` receives the result.
         api_call!(unsafe {
             self.device.CreateVideoProcessorOutputView(
                 nv12_texture,
@@ -120,6 +130,8 @@ impl NV12Converter {
             ..default()
         };
 
+        // SAFETY: `processor`, `output_view`, and `stream` (containing the input view)
+        // are all valid COM objects created from the same D3D11 device in this call.
         api_call!(unsafe {
             self.device_context.VideoProcessorBlt(
                 &self.processor,

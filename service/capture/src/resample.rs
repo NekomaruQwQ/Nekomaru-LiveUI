@@ -45,6 +45,7 @@ impl Resampler {
     };
 
     pub fn new(device: &ID3D11Device) -> anyhow::Result<Self> {
+        // SAFETY: `device` is a valid D3D11 device; bytecode is compile-time generated.
         let vs =
             out_var_or_err(|out| api_call!(unsafe {
                 device.CreateVertexShader(
@@ -53,6 +54,7 @@ impl Resampler {
                     Some(out))
             }))?.unwrap();
 
+        // SAFETY: `device` is a valid D3D11 device; bytecode is compile-time generated.
         let ps =
             out_var_or_err(|out| api_call!(unsafe {
                 device.CreatePixelShader(
@@ -62,6 +64,7 @@ impl Resampler {
             }))?.unwrap();
 
         let sampler_desc = Self::SAMPLER_DESC;
+        // SAFETY: `device` is valid; `sampler_desc` is a stack-local struct.
         let sampler =
             out_var_or_err(|out| api_call!(unsafe {
                 device.CreateSamplerState(
@@ -77,7 +80,11 @@ impl Resampler {
     /// The caller **must** set the viewport via `RSSetViewports` before calling
     /// this — the resampler does not set its own viewport.  This is by design:
     /// the viewport controls the aspect-ratio-preserving letterbox region.
-    #[expect(clippy::multiple_unsafe_ops_per_block)]
+    // SAFETY: `ctx` is a valid device context; `source_srv`, `target_rtv`, and
+    // `self.{vs, ps, sampler}` are all valid D3D11 objects created from the same device.
+    // The draw call issues 6 vertices (two triangles) with no vertex buffer (procedural
+    // fullscreen quad generated in the vertex shader). Resources are unbound after draw.
+    #[expect(clippy::multiple_unsafe_ops_per_block, reason = "Windows API calls")]
     pub fn resample(
         &self,
         ctx: &ID3D11DeviceContext,

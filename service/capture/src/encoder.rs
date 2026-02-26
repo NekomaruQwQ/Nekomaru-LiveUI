@@ -35,7 +35,8 @@ use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Variant::VARIANT;
 
 pub struct H264Encoder {
-    mf_dxgi_manager: IMFDXGIDeviceManager,
+    _mf_dxgi_manager: IMFDXGIDeviceManager,
+
     mf_transform: IMFTransform,
     mf_event_generator: IMFMediaEventGenerator,
     frame_rate: u32,
@@ -48,6 +49,7 @@ pub struct H264Encoder {
 ///
 /// Does not include runtime callbacks — those are passed to [`H264Encoder::run`]
 /// so the compiler can monomorphize them instead of boxing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct H264EncoderConfig {
     pub frame_size: Size2D<u32>,
     pub frame_rate: u32,
@@ -73,12 +75,14 @@ impl H264Encoder {
             config.bitrate);
 
         // Initialize Media Foundation
+        // SAFETY: Called once during encoder construction, before any other MF calls.
         api_call!(unsafe { MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET) })?;
 
         // Find H.264 encoder transform
         let mf_transform =
             helper::find_h264_encoder(&api_call!(device.cast())?)
                 .context("failed to find H264Encoder")?;
+        // SAFETY: `mf_transform` is a valid MFT obtained from `find_h264_encoder`.
         let mf_attributes =
             api_call!(unsafe { mf_transform.GetAttributes() })?;
 
@@ -88,6 +92,7 @@ impl H264Encoder {
                 .context("failed to get IMFMediaEventGenerator interface")?;
 
         // Unlock async MFT
+        // SAFETY: `mf_attributes` is a valid IMFAttributes from the MFT above.
         api_call!(unsafe { mf_attributes.SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1) })
             .context("failed to unlock async MFT")?;
         log::info!("MFT async unlocked");
@@ -96,25 +101,31 @@ impl H264Encoder {
         debug::print_mft_supported_output_types(&mf_transform);
 
         // Configure output type (H.264) BEFORE setting D3D manager
+        // SAFETY: `mf_transform` is a valid, async-unlocked MFT. Stream index 0, type index 0.
         let output_type = unsafe { mf_transform.GetOutputAvailableType(0, 0)? };
 
+        // SAFETY: `output_type` is a valid IMFMediaType from the MFT.
         api_call!(unsafe { output_type.SetUINT32(&MF_MT_AVG_BITRATE, config.bitrate) })?;
 
         let frame_size_val =
             ((config.frame_size.width as u64) << 32) |
             (config.frame_size.height as u64);
+        // SAFETY: `output_type` is a valid IMFMediaType; packed u64 encodes width/height.
         api_call!(unsafe { output_type.SetUINT64(&MF_MT_FRAME_SIZE, frame_size_val) })?;
 
         let frame_rate_ratio = ((config.frame_rate as u64) << 32) | 1u64;
+        // SAFETY: `output_type` is a valid IMFMediaType; packed u64 encodes rate/denominator.
         api_call!(unsafe { output_type.SetUINT64(&MF_MT_FRAME_RATE, frame_rate_ratio) })?;
 
         // Baseline profile: no B-frames, maximum WebCodecs compatibility
+        // SAFETY: `output_type` is a valid IMFMediaType.
         api_call!(unsafe {
             output_type.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Base.0 as u32)
         })?;
         log::info!("H.264 profile set to Baseline (no B-frames)");
 
         log::info!("Setting output type (H.264)...");
+        // SAFETY: `mf_transform` and `output_type` are valid; output type is fully configured.
         api_call!(unsafe { mf_transform.SetOutputType(0, &output_type, 0) })
             .context("failed to set output type")?;
         log::info!("Output type set successfully!");
@@ -123,15 +134,18 @@ impl H264Encoder {
         debug::print_mft_supported_input_types(&mf_transform);
 
         // Configure input type (NV12) — use enumerated type #1
+        // SAFETY: `mf_transform` is valid; stream index 0, type index 1 (NV12).
         let input_type = unsafe { mf_transform.GetInputAvailableType(0, 1)? };
 
         log::info!("Setting input type (NV12)...");
+        // SAFETY: `mf_transform` and `input_type` are valid COM objects.
         api_call!(unsafe { mf_transform.SetInputType(0, &input_type, 0) })
             .context("failed to set input type")?;
         log::info!("Input type set successfully!");
 
         // Create DXGI Device Manager AFTER types are configured
         let mut reset_token = 0;
+        // SAFETY: `reset_token` is a stack-local `u32`; `out` receives the manager.
         let mf_dxgi_manager =
             out_var_or_err(|out| api_call!(unsafe {
                 MFCreateDXGIDeviceManager(&raw mut reset_token, out)
@@ -141,10 +155,14 @@ impl H264Encoder {
             api_call!(mf_dxgi_manager.cast::<IUnknown>())?;
 
         // Register D3D11 device with DXGI manager
+        // SAFETY: `mf_dxgi_manager` is valid; `device` is a live D3D11 device;
+        // `reset_token` is the token returned by `MFCreateDXGIDeviceManager`.
         api_call!(unsafe { mf_dxgi_manager.ResetDevice(device, reset_token) })
             .context("failed to register D3D11 device with DXGI manager")?;
 
         // Set D3D manager after both types are configured
+        // SAFETY: `mf_transform` is valid; the DXGI manager pointer is passed as a
+        // `usize` per the MFT_MESSAGE_SET_D3D_MANAGER contract.
         api_call!(unsafe {
             mf_transform.ProcessMessage(
                 MFT_MESSAGE_SET_D3D_MANAGER,
@@ -167,6 +185,8 @@ impl H264Encoder {
             ("Rate control mode", &CODECAPI_AVEncCommonRateControlMode,
                 VARIANT::from(eAVEncCommonRateControlMode_CBR.0 as u32)),
         ] {
+            // SAFETY: `codec_api` is a valid ICodecAPI cast from the MFT; `api` is a
+            // static GUID reference; `value` is a stack-local VARIANT with correct type.
             match api_call!(unsafe { codec_api.SetValue(api, &raw const value) }) {
                 Ok(()) => log::info!("  {name} set successfully"),
                 Err(e) => log::warn!("  Failed to set {name} (encoder may not support this setting): {e:?}"),
@@ -174,9 +194,11 @@ impl H264Encoder {
         }
 
         // Start streaming
+        // SAFETY: `mf_transform` is fully configured (types + D3D manager + codec API).
         api_call!(unsafe {
             mf_transform.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)
         })?;
+        // SAFETY: Same as above; notifies the MFT that the first sample is imminent.
         api_call!(unsafe {
             mf_transform.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)
         })?;
@@ -184,7 +206,7 @@ impl H264Encoder {
         log::info!("H.264 encoder ready");
 
         Ok(Self {
-            mf_dxgi_manager,
+            _mf_dxgi_manager: mf_dxgi_manager,
             mf_transform,
             mf_event_generator,
             frame_rate: config.frame_rate,
@@ -198,13 +220,17 @@ impl H264Encoder {
     ///
     /// - `frame_source`: called on `METransformNeedInput` — must return an NV12 texture.
     /// - `frame_target`: called on `METransformHaveOutput` — receives the parsed NAL units.
-    pub fn run(
+    pub fn run<
+        Src: FnMut() -> ID3D11Texture2D,
+        Dst: FnMut(Vec<NALUnit>)>(
         mut self,
-        mut frame_source: impl FnMut() -> ID3D11Texture2D,
-        mut frame_target: impl FnMut(Vec<NALUnit>)) {
+        mut frame_source: Src,
+        mut frame_target: Dst) {
         #[expect(clippy::infinite_loop, reason = "encoder runs until process exit")]
         loop {
             // Blocking wait for the next async MFT event.
+            // SAFETY: `mf_event_generator` is a valid IMFMediaEventGenerator from
+            // the MFT; `default()` means synchronous (blocking) wait.
             let event = match unsafe { self.mf_event_generator.GetEvent(default()) } {
                 Ok(event) => event,
                 Err(err) if err.code() == MF_E_NO_EVENTS_AVAILABLE =>
@@ -215,6 +241,7 @@ impl H264Encoder {
                 }
             };
 
+            // SAFETY: `event` is a valid IMFMediaEvent obtained from `GetEvent` above.
             let event_type = match api_call!(unsafe { event.GetType() }) {
                 Ok(event_type) => MF_EVENT_TYPE(event_type as _),
                 Err(err) => {
@@ -251,7 +278,6 @@ impl H264Encoder {
         frame_source: &mut impl FnMut() -> ID3D11Texture2D)
         -> anyhow::Result<()> {
         // Throttle to target frame rate
-        #[expect(clippy::while_float)]
         while SystemTime::now()
             .duration_since(self.time_of_last_frame)
             .context("unexpected time drift")?
@@ -275,6 +301,8 @@ impl H264Encoder {
         // Create DXGI surface buffer from the caller's NV12 texture
         log::trace!("feeding frame to encoder...");
         let frame_texture = frame_source();
+        // SAFETY: `frame_texture` is a valid NV12 `ID3D11Texture2D` from the caller.
+        // The IID identifies the texture interface; subresource 0, not bottom-up.
         let buffer = api_call!(unsafe {
             MFCreateDXGISurfaceBuffer(
                 &ID3D11Texture2D::IID,
@@ -283,17 +311,23 @@ impl H264Encoder {
                 false)
         })?;
 
+        // SAFETY: Creates an empty MF sample (no preconditions).
         let sample = api_call!(unsafe { MFCreateSample() })?;
+        // SAFETY: `sample` and `buffer` are valid COM objects created above.
         api_call!(unsafe { sample.AddBuffer(&buffer) })?;
 
         // Set sample time (convert us to 100ns units)
         let timestamp_us = self.time_elapsed.as_micros() as u64;
+        // SAFETY: `sample` is a valid IMFSample with one buffer attached.
         api_call!(unsafe { sample.SetSampleTime((timestamp_us * 10) as i64) })?;
 
         // Set sample duration
         let duration_100ns = elapsed.as_micros() as i64 * 10;
+        // SAFETY: `sample` is a valid IMFSample.
         api_call!(unsafe { sample.SetSampleDuration(duration_100ns) })?;
 
+        // SAFETY: `mf_transform` is a streaming MFT; `sample` is fully configured
+        // with a DXGI surface buffer, timestamp, and duration.
         match unsafe { self.mf_transform.ProcessInput(0, &sample, 0) } {
             Ok(()) => {
                 log::trace!("feeding succeeded");
@@ -316,6 +350,9 @@ impl H264Encoder {
         let mut output_buffers = [MFT_OUTPUT_DATA_BUFFER::default()];
         let mut status = 0;
 
+        // SAFETY: `mf_transform` is a streaming MFT; `output_buffers` is a stack-local
+        // array of one default-initialized `MFT_OUTPUT_DATA_BUFFER`. The MFT fills in
+        // `pSample` on success. `status` receives output status flags.
         match unsafe {
             self.mf_transform.ProcessOutput(
                 0,
@@ -324,6 +361,7 @@ impl H264Encoder {
         } {
             Ok(()) => {
                 if let Some(sample) = output_buffers[0].pSample.take() {
+                    // SAFETY: `sample` is a valid IMFSample produced by `ProcessOutput`.
                     let buffer = api_call!(unsafe { sample.ConvertToContiguousBuffer() })?;
                     let nal_units = Self::parse_nal_units_from_buffer(&buffer)?;
 
@@ -432,6 +470,9 @@ impl<'a> BufferLock<'a> {
         let mut ptr = std::ptr::null_mut();
         let mut len = 0;
 
+        // SAFETY: `buffer` is a valid IMFMediaBuffer. `ptr` and `len` are stack-local
+        // out-params. After Lock succeeds, `ptr` points to a contiguous byte array of
+        // `len` bytes owned by the buffer, valid until `Unlock`.
         api_call!(unsafe {
             buffer.Lock(
                 &raw mut ptr,
@@ -443,12 +484,17 @@ impl<'a> BufferLock<'a> {
     }
 
     const fn as_slice(&self) -> &[u8] {
+        // SAFETY: `self.ptr` is non-null and points to `self.len` contiguous bytes,
+        // guaranteed by a successful `IMFMediaBuffer::Lock` in `BufferLock::lock`.
+        // The buffer remains locked (and thus the pointer valid) for the lifetime `'a`.
         unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
     }
 }
 
 impl Drop for BufferLock<'_> {
     fn drop(&mut self) {
+        // SAFETY: `self.mf_buffer` is a valid locked buffer (locked in `BufferLock::lock`).
+        // Unlock is the required counterpart; errors are ignored because we're in Drop.
         unsafe {
             // Ignore error — we're in Drop, can't propagate
             let _ = self.mf_buffer.Unlock();

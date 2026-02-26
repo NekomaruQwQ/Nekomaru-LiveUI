@@ -95,6 +95,7 @@ doc_markdown = "allow" # allow non-words in docs without requiring backticks
 # I-language #restriction
 arbitrary_source_item_ordering = "allow"
 as_conversions = "allow"
+big_endian_bytes = "allow" # allows using `to_be_bytes` and `from_be_bytes`
 blanket_clippy_restriction_lints = "allow"
 default_numeric_fallback = "allow"
 exhaustive_enums = "allow"
@@ -104,6 +105,7 @@ implicit_return = "allow"
 indexing_slicing = "allow"
 let_underscore_must_use = "allow" # allows ignoring results of functions marked `#[must_use]`
 let_underscore_untyped = "allow"
+little_endian_bytes = "allow" # allows using `to_le_bytes` and `from_le_bytes`
 missing_docs_in_private_items = "allow"
 missing_inline_in_public_items = "allow"
 missing_trait_methods = "allow"
@@ -122,6 +124,7 @@ single_char_lifetime_names = "allow"
 std_instead_of_alloc = "allow"
 std_instead_of_core = "allow"
 unwrap_used = "allow"
+while_float = "allow"
 wildcard_enum_match_arm = "allow"
 
 # II-language-arithmetic-and-casting #pedantic
@@ -169,6 +172,7 @@ wildcard_imports = "allow"
 # IV-code-style #restriction
 as_underscore = "allow"
 absolute_paths = "allow"
+impl_trait_in_params = "allow"
 min_ident_chars = "allow"
 mod_module_files = "allow"
 multiple_inherent_impl = "allow"

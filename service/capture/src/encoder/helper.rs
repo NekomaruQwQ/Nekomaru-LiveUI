@@ -27,10 +27,14 @@ pub fn find_h264_encoder(dxgi_device: &IDXGIDevice) -> anyhow::Result<IMFTransfo
     };
 
     // Query the adapter (used for logging; LUID matching is commented out for now)
+    // SAFETY: `dxgi_device` is a valid IDXGIDevice cast from the D3D11 device.
     let _dxgi_adapter = api_call!(unsafe { dxgi_device.GetAdapter() })?;
 
     let mut out_activate = std::ptr::null_mut();
     let mut out_count = 0;
+    // SAFETY: `INPUT_TYPE` and `OUTPUT_TYPE` are static structs with valid GUIDs.
+    // `out_activate` and `out_count` are stack-local out-params that MFTEnumEx
+    // fills with a CoTaskMem-allocated array of IMFActivate pointers.
     api_call!(unsafe {
         MFTEnumEx(
             MFT_CATEGORY_VIDEO_ENCODER,
@@ -46,8 +50,12 @@ pub fn find_h264_encoder(dxgi_device: &IDXGIDevice) -> anyhow::Result<IMFTransfo
     }
 
     log::info!("found {out_count} hardware H.264 encoder(s)");
+    // SAFETY: `out_activate` was allocated by `MFTEnumEx` via `CoTaskMemAlloc`;
+    // freeing it with `CoTaskMemFree` is the required cleanup.
     defer(|| unsafe { CoTaskMemFree(Some(out_activate.cast())) });
 
+    // SAFETY: `out_activate` is non-null (checked above) and points to `out_count`
+    // contiguous `Option<IMFActivate>` pointers allocated by `MFTEnumEx`.
     let activates = unsafe { std::slice::from_raw_parts(out_activate, out_count as usize) };
 
     log::info!("scanning {out_count} hardware H.264 encoder(s) for matching adapter...");
@@ -59,6 +67,8 @@ pub fn find_h264_encoder(dxgi_device: &IDXGIDevice) -> anyhow::Result<IMFTransfo
 
         let mut buf = [0u16; 256];
         let mut len = 0;
+        // SAFETY: `activate` is a valid IMFActivate from the `MFTEnumEx` array.
+        // `buf` is a 256-element stack array; `len` receives the actual string length.
         api_call!(unsafe {
             activate.GetString(
                 &MFT_FRIENDLY_NAME_Attribute,
@@ -66,6 +76,8 @@ pub fn find_h264_encoder(dxgi_device: &IDXGIDevice) -> anyhow::Result<IMFTransfo
                 Some(&raw mut len))
         })?;
 
+        // SAFETY: `buf` contains a valid wide string of `len` characters written
+        // by `GetString`. The pointer is valid for the lifetime of `buf`.
         let name = unsafe {
             widestring::U16Str::from_ptr(
                 buf.as_ptr(),
@@ -77,6 +89,7 @@ pub fn find_h264_encoder(dxgi_device: &IDXGIDevice) -> anyhow::Result<IMFTransfo
 
         if name.to_ascii_lowercase().contains("nvidia") {
             log::info!("Selecting encoder #{index} ('{name}')");
+            // SAFETY: `activate` is a valid IMFActivate for an NVIDIA H.264 encoder.
             return Ok(api_call!(unsafe {
                 activate.ActivateObject::<IMFTransform>()
             })?);

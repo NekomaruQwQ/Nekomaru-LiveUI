@@ -22,8 +22,10 @@ use windows::Win32::Graphics::Dxgi::Common::*;
 /// `BGRA_SUPPORT` (required for Desktop Duplication / WGC textures),
 /// and multithread protection (required for cross-thread texture sharing).
 pub fn create_device() -> anyhow::Result<(IDXGIFactory6, ID3D11Device, ID3D11DeviceContext)> {
+    // SAFETY: No preconditions; creates a new DXGI factory COM object.
     let dxgi_factory =
         api_call!(unsafe { CreateDXGIFactory::<IDXGIFactory6>() })?;
+    // SAFETY: `dxgi_factory` is a valid COM object from the line above.
     let dxgi_adapter =
         api_call!(unsafe {
             dxgi_factory.EnumAdapterByGpuPreference::<IDXGIAdapter>(
@@ -32,7 +34,9 @@ pub fn create_device() -> anyhow::Result<(IDXGIFactory6, ID3D11Device, ID3D11Dev
         })?;
 
     let DXGI_ADAPTER_DESC { Description: adapter_name, .. } =
+        // SAFETY: `dxgi_adapter` is a valid COM object obtained above.
         api_call!(unsafe { dxgi_adapter.GetDesc() })?;
+    // SAFETY: `adapter_name` is a null-terminated wide string from `DXGI_ADAPTER_DESC`.
     let adapter_name =
         unsafe { widestring::U16CString::from_ptr_str(adapter_name.as_ptr()) }
             .to_string_lossy();
@@ -40,6 +44,8 @@ pub fn create_device() -> anyhow::Result<(IDXGIFactory6, ID3D11Device, ID3D11Dev
 
     let mut device = None;
     let mut device_context = None;
+    // SAFETY: `dxgi_adapter` is valid. Output pointers are stack-local `Option`s
+    // initialized to `None`; D3D11 writes into them on success.
     api_call!(unsafe {
         D3D11CreateDevice(
             &dxgi_adapter,
@@ -66,7 +72,9 @@ pub fn create_device() -> anyhow::Result<(IDXGIFactory6, ID3D11Device, ID3D11Dev
 
     // Enable multithread protection so the capture thread and encoding thread
     // can safely share textures through the same device.
+    // SAFETY: `device` is a valid D3D11 device; all D3D11 devices implement `ID3D11Multithread`.
     let multithread = api_call!(unsafe { device.cast::<ID3D11Multithread>() })?;
+    // SAFETY: `multithread` is a valid COM interface obtained from the cast above.
     let _ = unsafe { multithread.SetMultithreadProtected(true) };
 
     Ok((dxgi_factory, device, device_context))
@@ -96,6 +104,7 @@ pub fn create_texture_2d(
         MiscFlags: 0,
     };
 
+    // SAFETY: `device` is valid; `desc` is a stack-local struct with valid fields.
     out_var_or_err(|out| api_call!(unsafe {
         device.CreateTexture2D(
             &raw const desc,
@@ -108,6 +117,7 @@ pub fn create_texture_2d(
 pub fn create_srv_for_texture_2d(device: &ID3D11Device, texture: &ID3D11Texture2D)
     -> anyhow::Result<ID3D11ShaderResourceView> {
     Ok({
+        // SAFETY: `device` and `texture` are valid COM objects from the same D3D11 device.
         out_var_or_err(|out| api_call!(unsafe {
             device.CreateShaderResourceView(
                 texture,
@@ -121,6 +131,7 @@ pub fn create_srv_for_texture_2d(device: &ID3D11Device, texture: &ID3D11Texture2
 pub fn create_rtv_for_texture_2d(device: &ID3D11Device, texture: &ID3D11Texture2D)
     -> anyhow::Result<ID3D11RenderTargetView> {
     Ok({
+        // SAFETY: `device` and `texture` are valid COM objects from the same D3D11 device.
         out_var_or_err(|out| api_call!(unsafe {
             device.CreateRenderTargetView(
                 texture,

@@ -121,11 +121,10 @@ enum CaptureMode {
 
 /// Parses a window handle from decimal (`12345`) or hex (`0x1A2B3C`).
 fn parse_hwnd(s: &str) -> Result<isize, String> {
-    let value = if let Some(hex) = s.strip_prefix("0x") {
-        isize::from_str_radix(hex, 16)
-    } else {
-        s.parse()
-    };
+    let value =
+        s
+            .strip_prefix("0x")
+            .map_or_else(|| s.parse(), |hex| isize::from_str_radix(hex, 16));
     let value = value.map_err(|e| format!("invalid HWND '{s}': {e}"))?;
     if value == 0 {
         Err("HWND must be non-zero".into())
@@ -231,6 +230,7 @@ fn main() {
 }
 
 fn run(hwnd: isize, mode: CaptureMode) -> anyhow::Result<()> {
+    // SAFETY: Called once at the start of the main thread before any COM usage.
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
         .ok()
         .context("CoInitializeEx failed")?;
@@ -286,6 +286,8 @@ fn run(hwnd: isize, mode: CaptureMode) -> anyhow::Result<()> {
             .context("failed to create BGRA8 staging RTV")?;
 
     // Clear to dark gray so the first few frames aren't random garbage
+    // SAFETY: `device_context` and `staging_bgra8_rtv` are valid D3D11 objects
+    // created from the same device. The RGBA array is a stack-local float[4].
     unsafe {
         device_context.ClearRenderTargetView(
             &staging_bgra8_rtv,
@@ -329,6 +331,9 @@ fn run(hwnd: isize, mode: CaptureMode) -> anyhow::Result<()> {
                     // at native resolution (no scaling).
                     let crop_box =
                         capture::compute_crop_box(frame_size, spec.align, frame.size);
+                    // SAFETY: `device_context`, `staging_bgra8`, and `frame.raw_texture`
+                    // are valid D3D11 objects from the same device. `crop_box` is computed
+                    // to stay within source bounds by `compute_crop_box`.
                     unsafe {
                         device_context.CopySubresourceRegion(
                             &staging_bgra8,    // dst
@@ -336,7 +341,7 @@ fn run(hwnd: isize, mode: CaptureMode) -> anyhow::Result<()> {
                             0, 0, 0,           // dst x, y, z
                             &frame.raw_texture, // src
                             0,                 // src subresource
-                            Some(&crop_box));
+                            Some(&raw const crop_box));
                     }
                 } else {
                     // ── Resample path ────────────────────────────────
@@ -344,6 +349,7 @@ fn run(hwnd: isize, mode: CaptureMode) -> anyhow::Result<()> {
                     // aspect-ratio-preserving letterboxing.
                     let viewport =
                         capture::calculate_resample_viewport(frame.size, frame_size);
+                    // SAFETY: `device_context` is valid; `viewport` is a stack-local struct.
                     unsafe { device_context.RSSetViewports(Some(&[viewport])); }
 
                     let source_srv =
@@ -352,11 +358,13 @@ fn run(hwnd: isize, mode: CaptureMode) -> anyhow::Result<()> {
                     resampler.as_ref().unwrap()
                         .resample(&device_context, &source_srv, &staging_bgra8_rtv);
 
+                    // SAFETY: `device_context` is valid; clearing the viewport array.
                     unsafe { device_context.RSSetViewports(Some(&[])); }
                 }
 
                 // Flush GPU commands so the encoding thread sees the new frame.
                 // The small sleep gives the GPU time to finish before the encoder reads.
+                // SAFETY: `device_context` is a valid D3D11 device context.
                 unsafe { device_context.Flush(); }
                 thread::sleep(Duration::from_millis(5));
             },
@@ -397,6 +405,7 @@ fn encoding_thread(
     frame_size: Size2D<u32>) {
     log::info!("encoding thread started");
 
+    // SAFETY: Called once at the start of the encoding thread before any COM usage.
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
         .ok()
         .expect("CoInitializeEx failed on encoding thread");

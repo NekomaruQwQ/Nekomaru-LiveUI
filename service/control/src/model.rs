@@ -16,6 +16,7 @@ pub struct StreamInfo {
 
 /// A capturable window as returned by `GET /streams/windows`.
 #[derive(Debug, Clone, Deserialize)]
+#[expect(dead_code, reason = "deserialization struct; fields may be unused depending on the endpoint")]
 pub struct WindowInfo {
     /// Raw window handle (numeric). Format as `0x{:X}` before sending to the server.
     pub hwnd: usize,

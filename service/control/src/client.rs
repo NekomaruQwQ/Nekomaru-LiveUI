@@ -76,6 +76,7 @@ impl Client {
     /// at native resolution.
     ///
     /// `crop_width` / `crop_height` are either a pixel count as a string or `"full"`.
+    #[expect(clippy::redundant_closure_for_method_calls, reason = "generated code")]
     pub fn create_stream_crop(
         &self,
         hwnd: &str,

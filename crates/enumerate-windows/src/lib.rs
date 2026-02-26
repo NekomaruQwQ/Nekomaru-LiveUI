@@ -42,6 +42,7 @@ pub struct WindowInfo {
 /// Returns info about the current foreground window, or `None` if the
 /// foreground handle is null/invalid.
 pub fn get_foreground_window() -> Option<WindowInfo> {
+    // SAFETY: No preconditions. Returns null/invalid HWND if no foreground window exists.
     let hwnd = unsafe { GetForegroundWindow() };
     if hwnd.is_invalid() {
         return None;
@@ -69,6 +70,9 @@ pub fn enumerate_windows() -> Vec<WindowInfo> {
 
     // `EnumWindows` invokes the callback for every top-level window.
     // We collect qualifying windows into `results` via the raw pointer.
+    // SAFETY: `out_ptr` points to a live `Vec` on this stack frame. The callback
+    // only runs synchronously during `EnumWindows`, so the pointer remains valid
+    // for the entire enumeration and no other thread accesses the Vec.
     let _ = unsafe {
         EnumWindows(
             Some(enum_callback),
@@ -83,6 +87,9 @@ pub fn enumerate_windows() -> Vec<WindowInfo> {
 
 /// Callback for `EnumWindows`. Returns `TRUE` to continue enumeration.
 unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    // SAFETY: `lparam` carries the `&raw mut Vec<WindowInfo>` passed to `EnumWindows`
+    // in `enumerate_windows()`. The Vec lives on that caller's stack and is exclusively
+    // borrowed for the duration of `EnumWindows` (synchronous enumeration).
     let out = unsafe {
         (lparam.0 as *mut Vec<WindowInfo>)
             .as_mut_unchecked()
@@ -93,11 +100,13 @@ unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
 
 fn enum_callback_internal(hwnd: HWND, out: &mut Vec<WindowInfo>) {
     // Skip invisible windows.
+    // SAFETY: `hwnd` comes from `EnumWindows`; the API tolerates stale handles gracefully.
     if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
         return;
     }
 
     // Skip owned windows (popups, toolbars, etc.) — only want top-level.
+    // SAFETY: `hwnd` from `EnumWindows`; returns default HWND on failure.
     if !(
         unsafe { GetWindow(hwnd, GW_OWNER) }
             .unwrap_or_default()
@@ -129,8 +138,12 @@ fn enum_callback_internal(hwnd: HWND, out: &mut Vec<WindowInfo>) {
 
 /// Returns the window title via `GetWindowTextW`, or an empty string on failure.
 fn get_window_title(hwnd: HWND) -> String {
+    // SAFETY: `hwnd` is a window handle from enumeration or `GetForegroundWindow`.
+    // Both APIs tolerate stale/invalid handles (returning 0 / writing nothing).
     let buf_len = unsafe { GetWindowTextLengthW(hwnd) } as usize + 1;
     let mut buf = vec![0u16; buf_len];
+    // SAFETY: `buf` is a freshly allocated slice of `buf_len` u16s — sufficient for
+    // the title length returned above (plus null terminator).
     let _ = unsafe { GetWindowTextW(hwnd, &mut buf) };
     if let Some(pos) = buf.iter().position(|&c| c == 0) {
         buf.truncate(pos);
@@ -142,6 +155,7 @@ fn get_window_title(hwnd: HWND) -> String {
 /// On failure (e.g. elevated process), returns `(0, PathBuf::new())`.
 fn get_process_info(hwnd: HWND) -> (u32, PathBuf) {
     let mut pid = 0;
+    // SAFETY: `hwnd` is a valid enumerated handle; `&raw mut pid` is a valid local.
     unsafe { GetWindowThreadProcessId(hwnd, Some(&raw mut pid)); }
     if pid == 0 {
         return (0, PathBuf::new());
@@ -154,6 +168,10 @@ fn get_process_info(hwnd: HWND) -> (u32, PathBuf) {
 
 /// Opens the process by PID and queries its full executable path.
 fn get_executable_path(pid: u32) -> Option<PathBuf> {
+    // SAFETY: `pid` is a non-zero process ID obtained from `GetWindowThreadProcessId`.
+    // `OpenProcess` with `QUERY_LIMITED_INFORMATION` is a low-privilege operation.
+    // `buf` is a stack-allocated 260-element u16 array (MAX_PATH). `CloseHandle` is
+    // always called on the opened handle before returning.
     #[expect(clippy::multiple_unsafe_ops_per_block, reason = "Windows API calls")]
     unsafe {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
@@ -181,6 +199,9 @@ fn get_executable_path(pid: u32) -> Option<PathBuf> {
 fn is_cloaked(hwnd: HWND) -> bool {
     let mut cloaked: u32 = 0;
     let cloacked_ptr = &raw mut cloaked;
+    // SAFETY: `cloacked_ptr` points to a stack-local `u32` with the correct size
+    // passed as the last argument. `DwmGetWindowAttribute` writes at most `size_of::<u32>()`
+    // bytes into the buffer.
     let hr = unsafe {
         DwmGetWindowAttribute(
             hwnd,

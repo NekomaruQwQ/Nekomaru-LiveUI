@@ -25,13 +25,13 @@ use std::io::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum NALUnitType {
-    /// Non-IDR slice (inter-predicted P-frame)
+    /// Non-IDR slice (inter-predicted P-frame).
     NonIDR = 1,
-    /// Instantaneous Decoder Refresh (keyframe)
+    /// Instantaneous Decoder Refresh (keyframe).
     IDR = 5,
-    /// Sequence Parameter Set — codec configuration
+    /// Sequence Parameter Set — codec configuration.
     SPS = 7,
-    /// Picture Parameter Set — picture-level parameters
+    /// Picture Parameter Set — picture-level parameters.
     PPS = 8,
 }
 
@@ -54,9 +54,9 @@ impl NALUnitType {
 /// A single encoded H.264 NAL unit.
 #[derive(Debug, Clone)]
 pub struct NALUnit {
-    /// Type of this NAL unit
+    /// Type of this NAL unit.
     pub unit_type: NALUnitType,
-    /// Raw NAL unit data including the Annex B start code (`00 00 00 01` or `00 00 01`)
+    /// Raw NAL unit data including the Annex B start code (`00 00 00 01` or `00 00 01`).
     pub data: Vec<u8>,
 }
 
@@ -82,13 +82,13 @@ pub enum MessageType {
 /// The server caches these to initialize late-joining clients.
 #[derive(Debug, Clone)]
 pub struct CodecParams {
-    /// Sequence Parameter Set (raw NAL data without start code)
+    /// Sequence Parameter Set (raw NAL data without start code).
     pub sps: Vec<u8>,
-    /// Picture Parameter Set (raw NAL data without start code)
+    /// Picture Parameter Set (raw NAL data without start code).
     pub pps: Vec<u8>,
-    /// Video width in pixels
+    /// Video width in pixels.
     pub width: u32,
-    /// Video height in pixels
+    /// Video height in pixels.
     pub height: u32,
 }
 
@@ -97,11 +97,11 @@ pub struct CodecParams {
 /// Sent as a `0x02` message for every frame the encoder produces.
 #[derive(Debug, Clone)]
 pub struct FrameMessage {
-    /// Wall-clock timestamp in microseconds since stream start
+    /// Wall-clock timestamp in microseconds since stream start.
     pub timestamp_us: u64,
-    /// Whether this frame contains an IDR NAL unit (keyframe)
+    /// Whether this frame contains an IDR NAL unit (keyframe).
     pub is_keyframe: bool,
-    /// All NAL units that make up this frame
+    /// All NAL units that make up this frame.
     pub nal_units: Vec<NALUnit>,
 }
 
