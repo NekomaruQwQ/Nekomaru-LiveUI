@@ -15,8 +15,6 @@ import { ProtocolParser } from "./protocol";
 export interface CaptureStream {
     id: string;
     hwnd: string;
-    width: number;
-    height: number;
     status: "starting" | "running" | "stopped";
     buffer: StreamBuffer;
     /// Bun child process handle.  Null after the process has exited and been
@@ -55,21 +53,19 @@ export async function enumerateWindows(): Promise<unknown[]> {
 
 // ── Create / destroy streams ─────────────────────────────────────────────────
 
-/// Spawn a new live-capture.exe process for the given window.
+/// Spawn a live-capture.exe child process with the given CLI args, wire up
+/// stdout parsing and stderr forwarding, and register the stream.
 ///
-/// Returns the CaptureStream immediately; the status transitions from
-/// "starting" to "running" once the first CodecParams message arrives
-/// (meaning the encoder has initialized and produced its first IDR frame).
-export function createStream(hwnd: string, width: number, height: number): CaptureStream {
+/// Returns immediately; status transitions to "running" once the first
+/// CodecParams message arrives from the encoder.
+function spawnCapture(hwnd: string, args: string[], label: string): CaptureStream {
     const id = crypto.randomUUID().slice(0, 8);
     const buffer = new StreamBuffer(frameBufferCapacity);
 
-    const proc = Bun.spawn(
-        [captureExePath, "--hwnd", hwnd, "--width", String(width), "--height", String(height)],
-        { stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
 
     const stream: CaptureStream = {
-        id, hwnd, width, height,
+        id, hwnd,
         status: "starting",
         buffer,
         process: proc,
@@ -96,20 +92,41 @@ export function createStream(hwnd: string, width: number, height: number): Captu
         }
     });
 
-    // Read stdout in a background async loop.
     pipeStdout(id, proc, parser);
-
-    // Forward stderr with a prefix for easy identification.
     pipeStderr(id, proc);
 
-    // Track process exit.
     proc.exited.then((code) => {
         console.log(`[stream:${id}] process exited with code ${code}`);
         stream.status = "stopped";
     });
 
-    console.log(`[stream:${id}] spawned (hwnd=${hwnd}, ${width}x${height})`);
+    console.log(`[stream:${id}] spawned (${label})`);
     return stream;
+}
+
+/// Spawn a resample-mode capture: scales the full window to `width x height`.
+export function createStream(hwnd: string, width: number, height: number): CaptureStream {
+    return spawnCapture(hwnd,
+        [captureExePath, "--hwnd", hwnd, "--width", String(width), "--height", String(height)],
+        `hwnd=${hwnd}, resample ${width}x${height}`);
+}
+
+/// Spawn a crop-mode capture: extracts a subrect at native resolution.
+///
+/// `cropWidth`/`cropHeight` are either a pixel count (multiple of 16) or
+/// `"full"` for the source dimension.  `cropAlign` controls placement of the
+/// crop rect within the source window (e.g. "bottom", "center").
+export function createCropStream(
+    hwnd: string,
+    cropWidth: "full" | number,
+    cropHeight: "full" | number,
+    cropAlign: string): CaptureStream {
+    return spawnCapture(hwnd,
+        [captureExePath, "--hwnd", hwnd,
+            "--crop-width", String(cropWidth),
+            "--crop-height", String(cropHeight),
+            "--crop-align", cropAlign],
+        `hwnd=${hwnd}, crop ${cropWidth}x${cropHeight} ${cropAlign}`);
 }
 
 /// Kill the child process and remove the stream from the registry.

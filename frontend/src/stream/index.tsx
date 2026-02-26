@@ -56,7 +56,7 @@ export function StreamRenderer({ streamId }: { streamId: string }) {
     return (
         <canvas
             ref={canvasRef}
-            className="w-full bg-[#1e1f22] object-contain rounded-2xl"
+            className="w-full bg-[#1e1f22] object-contain"
         />
     );
 }

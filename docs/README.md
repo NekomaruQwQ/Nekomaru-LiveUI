@@ -2,7 +2,7 @@
 
 **Low-latency (<100ms) screen capture streaming from DirectX 11 to the browser**
 
-**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | Frontend Integrated | UI Redesigned (JetBrains Islands) | Auto Window Selector Integrated | Frontend Refactored (stream/ + capture hook) | Crop Mode Added | End-to-End Testing Next
+**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | Frontend Integrated | UI Redesigned (JetBrains Islands) | Auto Window Selector Integrated | Frontend Refactored (stream/ + capture hook) | Crop Mode Added | YouTube Music Island Added | End-to-End Testing Next
 **Last Updated**: 2026-02-26
 **Hardware**: RTX 5090 | Windows 11
 
@@ -228,17 +228,22 @@ Served by LiveServer (Hono on Bun). Port is preconfigured via environment variab
 
 ```json
 [
-    { "id": "abc123", "hwnd": "0x1A2B3C", "width": 1920, "height": 1200, "status": "running" }
+    { "id": "abc123", "hwnd": "0x1A2B3C", "status": "running" }
 ]
 ```
 
-**`POST /streams`** — Create a new capture (spawns a `live-capture.exe` instance).
+**`POST /streams`** — Create a new capture (spawns a `live-capture.exe` instance). Accepts either resample mode or crop mode (mutually exclusive).
 
 ```json
-// Request
+// Resample mode — scale the full window to fit width × height
 { "hwnd": "0x1A2B3C", "width": 1920, "height": 1200 }
 
-// Response
+// Crop mode — extract a subrect at native resolution
+// cropWidth/cropHeight: positive int (multiple of 16) or "full"
+// cropAlign: center, top-left, top, top-right, left, right, bottom-left, bottom, bottom-right
+{ "hwnd": "0x1A2B3C", "cropWidth": "full", "cropHeight": 128, "cropAlign": "bottom" }
+
+// Response (both modes)
 { "id": "abc123" }
 ```
 
@@ -321,8 +326,8 @@ The base64 `data` field contains a pre-serialized binary payload (timestamp + NA
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
 | **Entry Point** | `server/index.ts` | Done | Hono app + Vite dev server (middleware mode) on single `node:http` port. Routes `/streams` → API, everything else → Vite. SIGINT/SIGTERM cleanup. |
-| **Stream API** | `server/api.ts` | Done | Hono routes: `GET/POST/DELETE /streams`, `GET/POST/DELETE /streams/auto`, `GET /streams/:id/init`, `GET /streams/:id/frames?after=N`, `GET /streams/windows`. Zod validation on POST. |
-| **Process Manager** | `server/process.ts` | Done | Spawns `live-capture.exe` via `Bun.spawn`. Wires stdout → ProtocolParser → StreamBuffer. Tracks lifecycle (starting → running → stopped). stderr forwarded with `[capture:id]` prefix. |
+| **Stream API** | `server/api.ts` | Done | Hono routes: `GET/POST/DELETE /streams`, `GET/POST/DELETE /streams/auto`, `GET /streams/:id/init`, `GET /streams/:id/frames?after=N`, `GET /streams/windows`. POST accepts resample or crop mode (Zod union). |
+| **Process Manager** | `server/process.ts` | Done | Shared `spawnCapture()` helper + `createStream()` (resample) and `createCropStream()` (crop) wrappers. Wires stdout → ProtocolParser → StreamBuffer. Tracks lifecycle (starting → running → stopped). |
 | **Protocol Parser** | `server/protocol.ts` | Done | Push-based incremental binary parser. Handles partial reads, greedy parse loop. Mirrors Rust wire format exactly. |
 | **Frame Buffer** | `server/buffer.ts` | Done | Per-stream circular buffer (60 frames). Multi-viewer safe (no drain). Pre-serializes frames on push. Skips to first keyframe for new clients. |
 | **Constants** | `server/common.ts` | Done | Port (`LIVE_PORT` env or 3000), exe path, buffer capacity. |
@@ -334,7 +339,8 @@ The base64 `data` field contains a pre-serialized binary payload (timestamp + NA
 |-----------|------|--------|-------|
 | **API Client** | `frontend/src/api.ts` | Done | Typed Hono RPC client via `hc<ApiType>("/streams")`. Imports server route type for end-to-end type safety. |
 | **Capture Hook** | `frontend/src/capture.ts` | Done | `useCaptureControl()` hook. Owns all capture state (stream ID, auto-selector, window list). Auto-selector polling, window enumeration, stream create/destroy. |
-| **App** | `frontend/src/app.tsx` | Done | Pure UI shell. JetBrains Islands dark theme (Tailwind utilities). Delegates all capture logic to `useCaptureControl()`. |
+| **YouTube Music Hook** | `frontend/src/youtube-music.ts` | Done | `useYouTubeMusicStream()` hook. Auto-discovers YouTube Music window by title prefix, creates a crop-mode stream (full width × 128px, bottom-aligned playback bar). Polls every 5s for window appear/disappear. Independent of main capture lifecycle. |
+| **App** | `frontend/src/app.tsx` | Done | Pure UI shell. JetBrains Islands dark theme (Tailwind utilities). Top row: main capture + controls. Bottom island: YouTube Music playback bar (auto-detected). |
 | **Entry Point** | `frontend/index.tsx` | Done | React 19 `createRoot()` (migrated from Preact). |
 | **Vite Config** | `frontend/vite.config.ts` | Done | `@vitejs/plugin-react-swc`, `root: "."`, `@` and `@shadcn` aliases. |
 
@@ -515,6 +521,7 @@ Nekomaru-LiveUI-v2/
     │   ├── api.ts                   # Hono RPC client (imports ApiType from server)
     │   ├── app.tsx                  # Pure UI shell (JetBrains Islands, delegates to hooks)
     │   ├── capture.ts               # useCaptureControl() hook (auto-selector, stream lifecycle)
+    │   ├── youtube-music.ts         # useYouTubeMusicStream() hook (crop-mode playback bar)
     │   └── stream/                  # Self-contained H.264 stream module
     │       ├── index.tsx            # <StreamRenderer> component (Canvas + polling loop)
     │       └── decoder.ts           # H264Decoder (WebCodecs + avcC + fetchInit)
@@ -564,6 +571,16 @@ Nekomaru-LiveUI-v2/
 - [x] Frontend starts in auto-select mode by default, polls `/streams/auto` for stream ID changes
 - [x] Manual fallback mode (window picker) available when auto-select is stopped
 - [ ] Frontend works in both webview and regular browser
+
+### YouTube Music Island (Pending)
+
+- [ ] Bottom island auto-detects YouTube Music window by title prefix
+- [ ] Crop-mode stream created (full width × 128px, bottom-aligned)
+- [ ] Playback bar renders in the bottom island via `<StreamRenderer>`
+- [ ] Island shows placeholder when YouTube Music is not running
+- [ ] Closing YouTube Music tears down the stream within 5s
+- [ ] Re-opening YouTube Music auto-creates a new stream within 5s
+- [ ] YouTube Music stream lifecycle independent of main capture stream
 
 ### Crop Mode (Pending)
 

@@ -34,22 +34,38 @@ const api = new Hono()
         return c.json(streams.map((s) => ({
             id: s.id,
             hwnd: s.hwnd,
-            width: s.width,
-            height: s.height,
             status: s.status,
         })));
     })
 
     /// Create a new capture stream (spawns a live-capture.exe instance).
+    /// Accepts either resample mode (`width` + `height`) or crop mode
+    /// (`cropWidth` + `cropHeight` + optional `cropAlign`).
     .post("/",
-        zValidator("json", z.object({
-            hwnd: z.string(),
-            width: z.number().int().positive(),
-            height: z.number().int().positive(),
-        })),
+        zValidator("json", z.union([
+            z.object({
+                hwnd: z.string(),
+                width: z.number().int().positive(),
+                height: z.number().int().positive(),
+            }),
+            z.object({
+                hwnd: z.string(),
+                cropWidth: z.union([z.literal("full"), z.number().int().positive()]),
+                cropHeight: z.union([z.literal("full"), z.number().int().positive()]),
+                cropAlign: z.enum([
+                    "center", "top-left", "top", "top-right",
+                    "left", "right", "bottom-left", "bottom", "bottom-right",
+                ]).default("center"),
+            }),
+        ])),
         (c) => {
-            const { hwnd, width, height } = c.req.valid("json");
-            const stream = proc.createStream(hwnd, width, height);
+            const body = c.req.valid("json");
+            if ("cropWidth" in body) {
+                const stream = proc.createCropStream(
+                    body.hwnd, body.cropWidth, body.cropHeight, body.cropAlign);
+                return c.json({ id: stream.id }, 201);
+            }
+            const stream = proc.createStream(body.hwnd, body.width, body.height);
             return c.json({ id: stream.id }, 201);
         })
 
