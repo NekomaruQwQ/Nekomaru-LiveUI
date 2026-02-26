@@ -4,6 +4,8 @@ list:
     just --list
 app:
     cargo run -p live-app
+control:
+    cargo run -p live-control
 server:
     cd server; bun --hot index.ts;
 

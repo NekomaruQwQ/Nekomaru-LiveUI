@@ -1,0 +1,17 @@
+[package]
+name = "live-control"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "live-control"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+eframe = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

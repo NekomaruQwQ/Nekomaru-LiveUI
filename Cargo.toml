@@ -4,6 +4,7 @@ members = [
     "app",
     "crates/enumerate-windows",
     "service/capture",
+    "service/control",
 ]
 
 [workspace.package]
@@ -50,6 +51,9 @@ tap = "1.0.1"
 widestring = "1.2.1"
 clap = { version = "4", features = ["derive"] }
 
+eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
 # egui = "0.33.2"
 # egui-winit = "0.33.2"
 # egui-directx11 = "0.12.1"
