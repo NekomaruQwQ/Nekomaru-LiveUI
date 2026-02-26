@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
 
-import { DEBUG } from '../debug';
-import { api } from './api';
-import { H264Decoder, parseStreamFrame } from './streamDecoder';
+import { DEBUG } from '../../debug';
+import { api } from '../api';
+import { H264Decoder, parseStreamFrame } from './decoder';
 
 /**
  * Video renderer component that decodes and displays H.264 stream

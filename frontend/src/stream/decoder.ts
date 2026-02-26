@@ -1,5 +1,5 @@
-import { DEBUG } from '../debug';
-import { fetchInit } from './api';
+import { DEBUG } from '../../debug';
+import { api } from '../api';
 
 export interface NALUnitData {
     type: number;
@@ -11,6 +11,48 @@ export interface StreamFrameData {
     nalUnits: NALUnitData[];
     isKeyframe: boolean;
 }
+
+// ── Init with retry ─────────────────────────────────────────────────────
+
+/// Codec init params returned by the server.
+interface InitParams {
+    sps: string;
+    pps: string;
+    width: number;
+    height: number;
+}
+
+/// Fetch codec initialization params, retrying on 503 (stream starting up).
+///
+/// The server returns 503 while the capture process is initializing (the
+/// encoder hasn't produced its first IDR frame yet).  This wrapper retries
+/// with exponential backoff up to ~5 seconds before giving up.
+async function fetchInit(streamId: string): Promise<InitParams> {
+    const maxRetries = 20;
+    const baseDelayMs = 250;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        const res = await api[":id"].init.$get({ param: { id: streamId } });
+
+        if (res.ok) {
+            // Narrow from the union of all possible response types to the
+            // success case — safe because we've confirmed res.ok (status 200).
+            return await res.json() as InitParams;
+        }
+
+        if (res.status === 503) {
+            const delay = baseDelayMs * Math.min(2 ** attempt, 8);
+            await new Promise((r) => setTimeout(r, delay));
+            continue;
+        }
+
+        throw new Error(`Failed to fetch codec params: ${res.status} ${res.statusText}`);
+    }
+
+    throw new Error("Timed out waiting for codec params");
+}
+
+// ── H.264 Decoder ───────────────────────────────────────────────────────
 
 /**
  * H.264 decoder using WebCodecs API
@@ -194,6 +236,8 @@ export class H264Decoder {
     }
 }
 
+// ── Codec helpers ───────────────────────────────────────────────────────
+
 /**
  * Build avcC descriptor for H.264 decoder configuration (ISO 14496-15 format)
  */
@@ -283,6 +327,8 @@ function stripStartCode(data: Uint8Array): Uint8Array {
     // No start code found, return as-is
     return data;
 }
+
+// ── Frame parser ────────────────────────────────────────────────────────
 
 /**
  * Parse binary stream frame data

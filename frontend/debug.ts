@@ -27,9 +27,9 @@
  */
 
 export const DEBUG = {
-    /** Enable debug output for H.264 decoder (streamDecoder.ts) */
+    /** Enable debug output for H.264 decoder (stream/decoder.ts) */
     debugStreamDecoder: false,
-    /** Enable debug output for video renderer component (streamRenderer.tsx) */
+    /** Enable debug output for video renderer component (stream/index.tsx) */
     debugStreamRenderer: false,
 };
 

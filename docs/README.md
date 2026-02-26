@@ -2,8 +2,8 @@
 
 **Low-latency (<100ms) screen capture streaming from DirectX 11 to the browser**
 
-**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | Frontend Integrated | UI Redesigned (JetBrains Islands) | Auto Window Selector Integrated | End-to-End Testing Next
-**Last Updated**: 2026-02-25
+**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | Frontend Integrated | UI Redesigned (JetBrains Islands) | Auto Window Selector Integrated | Frontend Refactored (stream/ + capture hook) | End-to-End Testing Next
+**Last Updated**: 2026-02-26
 **Hardware**: RTX 5090 | Windows 11
 
 ---
@@ -290,12 +290,12 @@ The base64 `data` field contains a pre-serialized binary payload (timestamp + NA
 | **Capture** | `service/capture/src/capture.rs` | Done | Windows Graphics Capture wrapper + viewport calculation |
 | **Window Enumeration** | `crates/enumerate-windows/src/lib.rs` | Done | `enumerate_windows()` lists capturable windows. `get_foreground_window()` returns current foreground window info. |
 
-### Completed (Frontend Decoder)
+### Completed (Frontend Stream Module — `frontend/src/stream/`)
 
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
-| **Frontend Decoder** | `frontend/src/streamDecoder.ts` | Done | H264Decoder with WebCodecs, avcC descriptor |
-| **Frontend Renderer** | `frontend/src/streamRenderer.tsx` | Done | StreamRenderer with Canvas, ~60fps polling |
+| **Decoder** | `frontend/src/stream/decoder.ts` | Done | H264Decoder with WebCodecs, avcC descriptor. `fetchInit()` with 503 retry/backoff. |
+| **Renderer** | `frontend/src/stream/index.tsx` | Done | `<StreamRenderer>` component. Canvas rendering, ~60fps polling loop. |
 
 ### Completed (Webview Host)
 
@@ -319,10 +319,9 @@ The base64 `data` field contains a pre-serialized binary payload (timestamp + NA
 
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
-| **API Client** | `frontend/src/api.ts` | Done | Typed Hono RPC client via `hc<ApiType>("/streams")`. Imports server route type for end-to-end type safety. `fetchInit()` retries on 503 with exponential backoff. |
-| **Decoder** | `frontend/src/streamDecoder.ts` | Done | Uses `fetchInit()` from API client (handles 503 retry). WebCodecs H264Decoder with avcC descriptor. |
-| **Renderer** | `frontend/src/streamRenderer.tsx` | Done | Polls `/streams/:id/frames` via typed Hono RPC client at ~60fps. Canvas rendering with GPU memory management. Styled with Tailwind. |
-| **App** | `frontend/src/app.tsx` | Done | Stream management UI. JetBrains Islands dark theme (Tailwind utility classes, no Emotion). Auto-select mode by default (polls `/streams/auto`). Manual fallback: window picker, create/stop captures. |
+| **API Client** | `frontend/src/api.ts` | Done | Typed Hono RPC client via `hc<ApiType>("/streams")`. Imports server route type for end-to-end type safety. |
+| **Capture Hook** | `frontend/src/capture.ts` | Done | `useCaptureControl()` hook. Owns all capture state (stream ID, auto-selector, window list). Auto-selector polling, window enumeration, stream create/destroy. |
+| **App** | `frontend/src/app.tsx` | Done | Pure UI shell. JetBrains Islands dark theme (Tailwind utilities). Delegates all capture logic to `useCaptureControl()`. |
 | **Entry Point** | `frontend/index.tsx` | Done | React 19 `createRoot()` (migrated from Preact). |
 | **Vite Config** | `frontend/vite.config.ts` | Done | `@vitejs/plugin-react-swc`, `root: "."`, `@` and `@shadcn` aliases. |
 
@@ -501,9 +500,11 @@ Nekomaru-LiveUI-v2/
     ├── debug.ts                     # Debug flags
     ├── src/                         # Application source (aliased as @/)
     │   ├── api.ts                   # Hono RPC client (imports ApiType from server)
-    │   ├── app.tsx                  # Main app: JetBrains Islands UI, stream management
-    │   ├── streamDecoder.ts         # H264Decoder (WebCodecs + avcC)
-    │   └── streamRenderer.tsx       # StreamRenderer (Canvas + polling)
+    │   ├── app.tsx                  # Pure UI shell (JetBrains Islands, delegates to hooks)
+    │   ├── capture.ts               # useCaptureControl() hook (auto-selector, stream lifecycle)
+    │   └── stream/                  # Self-contained H.264 stream module
+    │       ├── index.tsx            # <StreamRenderer> component (Canvas + polling loop)
+    │       └── decoder.ts           # H264Decoder (WebCodecs + avcC + fetchInit)
     └── public/
         └── img/
 ```
