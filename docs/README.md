@@ -2,7 +2,7 @@
 
 **Low-latency (<100ms) screen capture streaming from DirectX 11 to the browser**
 
-**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | Frontend Integrated | UI Redesigned (JetBrains Islands) | Auto Window Selector Integrated | Frontend Refactored (stream/ + capture hook) | End-to-End Testing Next
+**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | Frontend Integrated | UI Redesigned (JetBrains Islands) | Auto Window Selector Integrated | Frontend Refactored (stream/ + capture hook) | Crop Mode Added | End-to-End Testing Next
 **Last Updated**: 2026-02-26
 **Hardware**: RTX 5090 | Windows 11
 
@@ -61,7 +61,8 @@ The project is split into three independently running components. The hard work 
 │                                                                  │
 │  Windows Graphics Capture                                        │
 │    ↓                                                             │
-│  Resample (scale to target resolution, set viewport)             │
+│  Resample mode: scale to --width x --height (GPU shader)        │
+│  Crop mode:     extract subrect at native res (GPU copy)        │
 │    ↓                                                             │
 │  BGRA → NV12 (ID3D11VideoProcessor, GPU)                        │
 │    ↓                                                             │
@@ -184,12 +185,17 @@ Non-fatal error. Fatal errors are signaled by process exit.
 
 ### CLI Interface
 
+Two exclusive capture modes: **resample** (scale full window) or **crop** (extract subrect at native resolution).
+
 ```bash
-# Spawn a capture for a specific window
+# Resample mode — scale full window to target resolution
 live-capture.exe --hwnd 0x1A2B3C --width 1920 --height 1200
 
-# Capture the primary monitor's active window
-live-capture.exe --width 1920 --height 1200
+# Crop mode — extract a 1280x720 subrect, centered
+live-capture.exe --hwnd 0x1A2B3C --crop-width 1280 --crop-height 720 --crop-align center
+
+# Crop mode — full width, top 544px (aligned to 16)
+live-capture.exe --hwnd 0x1A2B3C --crop-width full --crop-height 544 --crop-align top
 
 # List capturable windows as JSON
 live-capture.exe --enumerate-windows
@@ -200,6 +206,13 @@ live-capture.exe --foreground-window
 # Dump to file for debugging
 live-capture.exe --hwnd 0x1A2B3C --width 1920 --height 1200 > capture_dump.bin
 ```
+
+**Crop mode args:**
+- `--crop-width <N|full>` — subrect width in source pixels, or `full` for the source width. Must be a multiple of 16 (unless `full`).
+- `--crop-height <N|full>` — subrect height in source pixels, or `full` for the source height. Must be a multiple of 16 (unless `full`).
+- `--crop-align <alignment>` — `center` (default), `top-left`, `top`, `top-right`, `left`, `right`, `bottom-left`, `bottom`, `bottom-right`.
+
+Resample args (`--width`/`--height`) and crop args (`--crop-*`) conflict — you pick one mode.
 
 Logging goes to stderr.
 
@@ -280,14 +293,14 @@ The base64 `data` field contains a pre-serialized binary payload (timestamp + NA
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
 | **IPC Protocol (lib)** | `service/capture/src/lib.rs` | Done | Wire protocol types (`NALUnit`, `CodecParams`, `FrameMessage`) + serialization/deserialization via `impl Write`/`impl Read`. Round-trip tested. |
-| **CLI + Orchestration** | `service/capture/src/main.rs` | Done | `--hwnd`, `--width`, `--height` CLI. `--enumerate-windows` and `--foreground-window` one-shot modes. Bakery model: capture thread + encoding thread → binary stdout. |
+| **CLI + Orchestration** | `service/capture/src/main.rs` | Done | Two exclusive capture modes: resample (`--width`/`--height`) and crop (`--crop-width`/`--crop-height`/`--crop-align`). `--enumerate-windows` and `--foreground-window` one-shot modes. Bakery model: capture thread + encoding thread → binary stdout. |
 | **D3D11 Helpers** | `service/capture/src/d3d11.rs` | Done | Device creation, texture/view factories (subset of monolith `app/helper.rs`) |
 | **Format Converter** | `service/capture/src/converter.rs` | Done | GPU-accelerated BGRA→NV12 via `ID3D11VideoProcessor`. Resolution now parameterized. |
 | **H.264 Encoder** | `service/capture/src/encoder.rs` | Done | Async MFT with low-latency settings, NAL parsing. Callbacks passed to `run()` (monomorphized, no `Box<dyn>`). |
 | **Encoder Helpers** | `service/capture/src/encoder/helper.rs` | Done | Finds NVIDIA NVENC encoder |
 | **Debug Logging** | `service/capture/src/encoder/debug.rs` | Done | Prints supported media types |
 | **Resampler** | `service/capture/src/resample.rs` | Done | Scales captured frames with viewport set |
-| **Capture** | `service/capture/src/capture.rs` | Done | Windows Graphics Capture wrapper + viewport calculation |
+| **Capture + Crop** | `service/capture/src/capture.rs` | Done | Windows Graphics Capture wrapper + viewport calculation. Crop types (`CropSpec`, `CropDimension`, `Alignment`) and `compute_crop_box()` for subrect extraction via `CopySubresourceRegion`. |
 | **Window Enumeration** | `crates/enumerate-windows/src/lib.rs` | Done | `enumerate_windows()` lists capturable windows. `get_foreground_window()` returns current foreground window info. |
 
 ### Completed (Frontend Stream Module — `frontend/src/stream/`)
@@ -465,9 +478,9 @@ Nekomaru-LiveUI-v2/
 │       ├── Cargo.toml               # Emits both [[bin]] and [lib]
 │       └── src/
 │           ├── lib.rs               # IPC protocol types + serialization (public API)
-│           ├── main.rs              # CLI args, orchestrates capture → encode → stdout
+│           ├── main.rs              # CLI args (resample vs crop mode), capture → encode → stdout
 │           ├── d3d11.rs             # D3D11 device + texture/view creation helpers
-│           ├── capture.rs           # Windows Graphics Capture wrapper + viewport calc
+│           ├── capture.rs           # Capture wrapper, viewport calc, crop types + box computation
 │           ├── converter.rs         # NV12Converter (BGRA→NV12, GPU, parameterized)
 │           ├── encoder.rs           # H264Encoder (async MFT, NAL parsing)
 │           ├── encoder/
@@ -551,6 +564,15 @@ Nekomaru-LiveUI-v2/
 - [x] Frontend starts in auto-select mode by default, polls `/streams/auto` for stream ID changes
 - [x] Manual fallback mode (window picker) available when auto-select is stopped
 - [ ] Frontend works in both webview and regular browser
+
+### Crop Mode (Pending)
+
+- [ ] Crop mode produces valid H.264 output (center-aligned fixed dimensions)
+- [ ] `full` dimension resolves correctly from source window size
+- [ ] Alignment variants position the crop box correctly (center, top-left, bottom-right, etc.)
+- [ ] Source window resize: crop clamps gracefully (no crash, partial view)
+- [ ] CLI rejects mixing `--width`/`--height` with `--crop-*`
+- [ ] CLI rejects non-multiple-of-16 crop dimensions
 
 ### End-to-End (Pending)
 
