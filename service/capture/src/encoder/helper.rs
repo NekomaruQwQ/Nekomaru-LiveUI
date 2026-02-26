@@ -30,7 +30,7 @@ pub fn find_h264_encoder(dxgi_device: &IDXGIDevice) -> anyhow::Result<IMFTransfo
     let _dxgi_adapter = api_call!(unsafe { dxgi_device.GetAdapter() })?;
 
     let mut out_activate = std::ptr::null_mut();
-    let mut out_count = 0u32;
+    let mut out_count = 0;
     api_call!(unsafe {
         MFTEnumEx(
             MFT_CATEGORY_VIDEO_ENCODER,
@@ -58,7 +58,7 @@ pub fn find_h264_encoder(dxgi_device: &IDXGIDevice) -> anyhow::Result<IMFTransfo
                 .ok_or_else(|| anyhow::anyhow!("null activate pointer at index {index}"))?;
 
         let mut buf = [0u16; 256];
-        let mut len = 0u32;
+        let mut len = 0;
         api_call!(unsafe {
             activate.GetString(
                 &MFT_FRIENDLY_NAME_Attribute,

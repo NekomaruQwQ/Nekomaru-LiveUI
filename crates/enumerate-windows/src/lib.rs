@@ -141,7 +141,7 @@ fn get_window_title(hwnd: HWND) -> String {
 /// Returns `(pid, executable_path)` for the process owning `hwnd`.
 /// On failure (e.g. elevated process), returns `(0, PathBuf::new())`.
 fn get_process_info(hwnd: HWND) -> (u32, PathBuf) {
-    let mut pid = 0u32;
+    let mut pid = 0;
     unsafe { GetWindowThreadProcessId(hwnd, Some(&raw mut pid)); }
     if pid == 0 {
         return (0, PathBuf::new());

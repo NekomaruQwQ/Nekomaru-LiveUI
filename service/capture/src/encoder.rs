@@ -131,7 +131,7 @@ impl H264Encoder {
         log::info!("Input type set successfully!");
 
         // Create DXGI Device Manager AFTER types are configured
-        let mut reset_token = 0u32;
+        let mut reset_token = 0;
         let mf_dxgi_manager =
             out_var_or_err(|out| api_call!(unsafe {
                 MFCreateDXGIDeviceManager(&raw mut reset_token, out)
@@ -158,7 +158,7 @@ impl H264Encoder {
 
         for (name, api, value) in [
             // No B-frames for low latency (B-frames add 2+ frame latency)
-            ("B-frame count", &CODECAPI_AVEncMPVDefaultBPictureCount, VARIANT::from(0u32)),
+            ("B-frame count", &CODECAPI_AVEncMPVDefaultBPictureCount, VARIANT::from(0)),
             // GOP size = 2 seconds (e.g. 120 frames at 60fps for fast recovery)
             ("GOP size", &CODECAPI_AVEncMPVGOPSize, VARIANT::from(config.frame_rate * 2)),
             // Low latency mode
@@ -314,7 +314,7 @@ impl H264Encoder {
         frame_target: &mut impl FnMut(Vec<NALUnit>))
         -> anyhow::Result<()> {
         let mut output_buffers = [MFT_OUTPUT_DATA_BUFFER::default()];
-        let mut status = 0u32;
+        let mut status = 0;
 
         match unsafe {
             self.mf_transform.ProcessOutput(
@@ -430,7 +430,7 @@ struct BufferLock<'a> {
 impl<'a> BufferLock<'a> {
     fn lock(buffer: &'a IMFMediaBuffer) -> anyhow::Result<Self> {
         let mut ptr = std::ptr::null_mut();
-        let mut len = 0u32;
+        let mut len = 0;
 
         api_call!(unsafe {
             buffer.Lock(
