@@ -16,7 +16,7 @@ import { H264Decoder, parseStreamFrame } from "./decoder";
  * 404 responses are treated as retriable (the server may create the stream
  * shortly), so the component can be rendered before the stream exists.
  */
-export function StreamRenderer({ streamId }: { streamId: string }) {
+export function StreamRenderer({ streamId, className }: { streamId: string; className?: string }) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
 
     useEffect(() => {
@@ -48,7 +48,7 @@ export function StreamRenderer({ streamId }: { streamId: string }) {
     return (
         <canvas
             ref={canvasRef}
-            className="w-full bg-[#1e1f22] object-contain"
+            className={`w-full bg-[#1e1f22] object-contain ${className ?? ""}`}
         />
     );
 }
