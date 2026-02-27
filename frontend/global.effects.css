@@ -1,3 +1,28 @@
+/* ── Visual effects layer ──────────────────────────────────────────────────────
+   This file owns every purely decorative effect — things that could be removed
+   without breaking layout or functionality.  Three systems cooperate:
+
+   1. MESH GRADIENT BACKGROUND (div#app)
+      Four One Dark palette blobs (blue, purple, cyan, orange) at 30% opacity
+      over a dark linear base.  Each blob has a different background-size so a
+      single @keyframes animation drifts them at different apparent speeds,
+      creating a slowly shifting organic glow across the viewport.
+
+   2. DARK MICA ISLANDS (div.island)
+      Nearly opaque dark panels (92% alpha, chroma 0.01) with light backdrop
+      blur.  The inset glow (30px, chroma 0.08) is the main effect — a
+      luminous rim lit by --border-hue.
+
+   3. CHROMA-KEY TRANSPARENCY (YouTube Music island)
+      The YouTube Music stream is captured with a solid #212121 background.
+      A WebGL2 fragment shader (see stream/chroma-key.ts) replaces pixels
+      matching that color with transparency via Chebyshev distance + smoothstep
+      alpha falloff.  The island's near-opaque background then shows through
+      the keyed-out areas, and the mesh gradient peeks through the island's
+      own 5% transparency.  The shader runs entirely on the GPU — video frame
+      uploads as a texture, no CPU readback.
+   ───────────────────────────────────────────────────────────────────────────── */
+
 /* ── Flowing mesh gradient background ─────────────────────────────────────────
    Layered radial-gradient mesh — each blob is an One Dark color at low opacity
    over a dark base.  Different background-size per layer means a single position
@@ -30,24 +55,25 @@ div#app {
     inherits: false;
 }
 
-/* ── Dark glass islands ─────────────────────────────────────────────────────
-   Tinted transparent surface with light backdrop blur lets the mesh gradient
-   show through clearly.  Border hue cycles through the four One Dark palette
-   hues.  Inset top-edge highlight gives a sharp specular glint on the smooth
-   glass surface.  Low-chroma inset glow synced to --border-hue simulates
-   light refracting at the glass edges. */
+/* ── Dark Mica islands ─────────────────────────────────────────────────────
+   Nearly opaque dark panels (92% alpha) with a barely-there environmental
+   tint (chroma 0.01) and a light backdrop blur (8px).  The 8% transparency
+   lets a soft hint of the mesh gradient seep through without shifting the
+   perceived base color, while the blur diffuses it into an even wash.
+   The inset glow (30px, chroma 0.08, 12% opacity) is the main visual
+   effect — a luminous colored rim lit by the ambient environment. */
 
 div.island {
     --border-hue: 240deg;
     border: 1px solid oklch(0.70 0.15 var(--border-hue) / 0.4);
     box-shadow:
-        inset 0 0 24px oklch(0.70 0.05 var(--border-hue) / 0.09),
-        inset 0 1px 0 rgba(255, 255, 255, 0.14),
+        inset 0 0 30px oklch(0.70 0.08 var(--border-hue) / 0.12),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08),
         0 1px 3px rgba(0, 0, 0, 0.3),
         0 4px 12px rgba(0, 0, 0, 0.15);
-    background: rgba(255, 255, 255, 0.14);
-    backdrop-filter: blur(12px) saturate(1.2);
-    -webkit-backdrop-filter: blur(12px) saturate(1.2);
+    background: oklch(0.18 0.01 var(--border-hue) / 0.92);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     animation: cycle-border-hue 8s ease-in-out infinite;
 }
 
