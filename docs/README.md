@@ -2,7 +2,7 @@
 
 **Low-latency (<100ms) screen capture streaming from DirectX 11 to the browser**
 
-**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | Frontend Integrated | UI Redesigned (JetBrains Islands) | Auto Window Selector Integrated | Frontend Refactored (stream/ + capture hook) | Crop Mode Added | YouTube Music Island Added | Control Panel Added (egui) | Server-Managed Streams with Well-Known IDs | End-to-End Testing Next
+**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | Frontend Integrated | UI Redesigned (JetBrains Islands) | Auto Window Selector Integrated | Frontend Refactored (stream/ + capture hook) | Crop Mode Added | Crop Mode Refactored (Absolute Box Coordinates) | YouTube Music Island Added | Control Panel Rewritten (stream overview, auto-config editor, string store editor) | Server-Managed Streams with Well-Known IDs | String Store Added | Marquee Banner Added | Control Panel CJK Font (Microsoft YaHei UI) | File Persistence (Strings + Selector Config) | Window Dimensions in Enumeration | Per-Monitor DPI Awareness | End-to-End Testing Next
 **Last Updated**: 2026-02-26
 **Hardware**: RTX 5090 | Windows 11
 
@@ -66,7 +66,7 @@ The project is split into four independently running components. The hard work (
 │  Windows Graphics Capture                                        │
 │    ↓                                                             │
 │  Resample mode: scale to --width x --height (GPU shader)        │
-│  Crop mode:     extract subrect at native res (GPU copy)        │
+│  Crop mode:     extract absolute subrect at native res (GPU copy)│
 │    ↓                                                             │
 │  BGRA → NV12 (ID3D11VideoProcessor, GPU)                        │
 │    ↓                                                             │
@@ -95,13 +95,21 @@ The project is split into four independently running components. The hard work (
 │  Auto Selector + YouTube Music Manager                           │
 │    - Auto-starts on server boot                                  │
 │    - Selector: polls foreground, replaces "main" stream          │
+│    - Selector config persisted to data/ (survives restarts)      │
 │    - YTM: polls window list, manages "youtube-music" stream      │
+│                                                                  │
+│  String Store                                                    │
+│    - Key-value Map<string, string>, persisted to data/           │
+│    - Well-known IDs map to frontend display locations             │
+│    - Control panel or curl writes, frontend polls                 │
 │                                                                  │
 │  HTTP API                                                        │
 │    - /streams             → list / create / delete captures      │
 │    - /streams/auto        → start / stop / status auto-selector  │
+│    - /streams/auto/config → get / set include/exclude patterns   │
 │    - /streams/:id/init    → codec params (SPS, PPS, resolution)  │
 │    - /streams/:id/frames  → encoded frames + generation (poll)   │
+│    - /strings             → get / set / delete strings           │
 │                                                                  │
 │  Frontend Server                                                 │
 │    - Proxies to Vite dev server (development)                    │
@@ -122,6 +130,7 @@ The project is split into four independently running components. The hard work (
 │    - StreamRenderer (Canvas rendering, ~60fps polling)           │
 │    - Generation-aware: reinits decoder on stream replacement     │
 │    - Hardcoded stream IDs: "main" + "youtube-music"              │
+│    - Polls /strings for dynamic text display by well-known ID    │
 │    - Multiple viewers can connect to the same stream             │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -198,19 +207,16 @@ Non-fatal error. Fatal errors are signaled by process exit.
 
 ### CLI Interface
 
-Two exclusive capture modes: **resample** (scale full window) or **crop** (extract subrect at native resolution).
+Two exclusive capture modes: **resample** (scale full window) or **crop** (extract an absolute subrect at native resolution).
 
 ```bash
 # Resample mode — scale full window to target resolution
 live-capture.exe --hwnd 0x1A2B3C --width 1920 --height 1200
 
-# Crop mode — extract a 1280x720 subrect, centered
-live-capture.exe --hwnd 0x1A2B3C --crop-width 1280 --crop-height 720 --crop-align center
+# Crop mode — absolute bounding box in source pixels
+live-capture.exe --hwnd 0x1A2B3C --crop-min-x 0 --crop-min-y 600 --crop-max-x 1920 --crop-max-y 700
 
-# Crop mode — full width, top 544px (aligned to 16)
-live-capture.exe --hwnd 0x1A2B3C --crop-width full --crop-height 544 --crop-align top
-
-# List capturable windows as JSON
+# List capturable windows as JSON (includes width/height)
 live-capture.exe --enumerate-windows
 
 # Get the current foreground window as JSON (used by auto-selector)
@@ -221,9 +227,12 @@ live-capture.exe --hwnd 0x1A2B3C --width 1920 --height 1200 > capture_dump.bin
 ```
 
 **Crop mode args:**
-- `--crop-width <N|full>` — subrect width in source pixels, or `full` for the source width. Must be a multiple of 16 (unless `full`).
-- `--crop-height <N|full>` — subrect height in source pixels, or `full` for the source height. Must be a multiple of 16 (unless `full`).
-- `--crop-align <alignment>` — `center` (default), `top-left`, `top`, `top-right`, `left`, `right`, `bottom-left`, `bottom`, `bottom-right`.
+- `--crop-min-x <N>` — left edge of the crop rect (inclusive), in source pixels.
+- `--crop-min-y <N>` — top edge of the crop rect (inclusive), in source pixels.
+- `--crop-max-x <N>` — right edge of the crop rect (exclusive), in source pixels.
+- `--crop-max-y <N>` — bottom edge of the crop rect (exclusive), in source pixels.
+
+Non-16-aligned dimensions are accepted; the encoder output is padded to the next multiple of 16. Coordinates are clamped to source bounds at capture time.
 
 Resample args (`--width`/`--height`) and crop args (`--crop-*`) conflict — you pick one mode.
 
@@ -251,10 +260,8 @@ Served by LiveServer (Hono on Bun). Port is preconfigured via environment variab
 // Resample mode — scale the full window to fit width × height
 { "hwnd": "0x1A2B3C", "width": 1920, "height": 1200 }
 
-// Crop mode — extract a subrect at native resolution
-// cropWidth/cropHeight: positive int (multiple of 16) or "full"
-// cropAlign: center, top-left, top, top-right, left, right, bottom-left, bottom, bottom-right
-{ "hwnd": "0x1A2B3C", "cropWidth": "full", "cropHeight": 128, "cropAlign": "bottom" }
+// Crop mode — absolute bounding box in source pixels
+{ "hwnd": "0x1A2B3C", "cropMinX": 0, "cropMinY": 600, "cropMaxX": 1920, "cropMaxY": 700 }
 
 // Response (both modes)
 { "id": "abc123" }
@@ -303,6 +310,54 @@ The `generation` field increments each time the underlying capture process is re
 
 **`DELETE /streams/auto`** — Stop the auto-selector and destroy the `"main"` stream.
 
+**`GET /streams/auto/config`** — Get the auto-selector's include/exclude pattern lists.
+
+```json
+{
+    "includeList": ["devenv.exe", "C:\\Program Files\\JetBrains\\", "D:\\7-Games\\"],
+    "excludeList": ["gogh.exe", "vtube studio.exe"]
+}
+```
+
+**`PUT /streams/auto/config`** — Replace the include/exclude pattern lists. Include patterns use substring matching on the executable path. Exclude patterns use case-insensitive substring matching.
+
+```json
+// Request body
+{
+    "includeList": ["devenv.exe", "C:\\Program Files\\JetBrains\\"],
+    "excludeList": ["gogh.exe"]
+}
+
+// Response
+{ "ok": true }
+```
+
+### String Store
+
+Server-managed key-value string store. The control panel (or curl) writes values; the frontend polls and displays them at designated locations by well-known ID.
+
+**`GET /strings`** — Get all key-value pairs.
+
+```json
+{ "test": "Hello World", "banner": "Live now!" }
+```
+
+**`PUT /strings/:key`** — Set a string value (idempotent).
+
+```json
+// Request body
+{ "value": "Hello World" }
+
+// Response
+{ "ok": true }
+```
+
+**`DELETE /strings/:key`** — Delete a string.
+
+```json
+{ "ok": true }
+```
+
 ---
 
 ## Implementation Status
@@ -312,15 +367,15 @@ The `generation` field increments each time the underlying capture process is re
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
 | **IPC Protocol (lib)** | `core/live-capture/src/lib.rs` | Done | Wire protocol types (`NALUnit`, `CodecParams`, `FrameMessage`) + serialization/deserialization via `impl Write`/`impl Read`. Round-trip tested. |
-| **CLI + Orchestration** | `core/live-capture/src/main.rs` | Done | Two exclusive capture modes: resample (`--width`/`--height`) and crop (`--crop-width`/`--crop-height`/`--crop-align`). `--enumerate-windows` and `--foreground-window` one-shot modes. Bakery model: capture thread + encoding thread → binary stdout. |
+| **CLI + Orchestration** | `core/live-capture/src/main.rs` | Done | Two exclusive capture modes: resample (`--width`/`--height`) and crop (`--crop-min-x/y`/`--crop-max-x/y` absolute box). `--enumerate-windows` and `--foreground-window` one-shot modes. Per-monitor DPI aware (physical pixel sizes). Bakery model: capture thread + encoding thread → binary stdout. |
 | **D3D11 Helpers** | `core/live-capture/src/d3d11.rs` | Done | Device creation, texture/view factories (subset of monolith `app/helper.rs`) |
 | **Format Converter** | `core/live-capture/src/converter.rs` | Done | GPU-accelerated BGRA→NV12 via `ID3D11VideoProcessor`. Resolution now parameterized. |
 | **H.264 Encoder** | `core/live-capture/src/encoder.rs` | Done | Async MFT with low-latency settings, NAL parsing. Callbacks passed to `run()` (monomorphized, no `Box<dyn>`). |
 | **Encoder Helpers** | `core/live-capture/src/encoder/helper.rs` | Done | Finds NVIDIA NVENC encoder |
 | **Debug Logging** | `core/live-capture/src/encoder/debug.rs` | Done | Prints supported media types |
 | **Resampler** | `core/live-capture/src/resample.rs` | Done | Scales captured frames with viewport set |
-| **Capture + Crop** | `core/live-capture/src/capture.rs` | Done | Windows Graphics Capture wrapper + viewport calculation. Crop types (`CropSpec`, `CropDimension`, `Alignment`) and `compute_crop_box()` for subrect extraction via `CopySubresourceRegion`. |
-| **Window Enumeration** | `crates/enumerate-windows/src/lib.rs` | Done | `enumerate_windows()` lists capturable windows. `get_foreground_window()` returns current foreground window info. |
+| **Capture + Crop** | `core/live-capture/src/capture.rs` | Done | Windows Graphics Capture wrapper + viewport calculation. `CropBox` (absolute min/max coordinates) with `to_d3d11_box()` for subrect extraction via `CopySubresourceRegion`. |
+| **Window Enumeration** | `crates/enumerate-windows/src/lib.rs` | Done | `enumerate_windows()` lists capturable windows (with client-area width/height in physical pixels). `get_foreground_window()` returns current foreground window info. |
 
 ### Completed (Frontend Stream Module — `frontend/src/stream/`)
 
@@ -333,10 +388,10 @@ The `generation` field increments each time the underlying capture process is re
 
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
-| **Entry Point** | `core/live-control/src/main.rs` | Done | `eframe::run_native`, reads `LIVE_PORT` env var (default 3000). |
-| **App** | `core/live-control/src/app.rs` | Done | `ControlApp` (eframe::App). Three sections: auto-selector, active streams, new capture. Polls server every 2s. Shows disconnected state when server is unreachable. |
-| **HTTP Client** | `core/live-control/src/client.rs` | Done | Blocking reqwest wrapper. One method per API endpoint. 1s timeout to avoid UI hangs. |
-| **Data Types** | `core/live-control/src/model.rs` | Done | `StreamInfo`, `WindowInfo`, `AutoStatus`, `CreateStreamResponse` — mirrors server JSON responses. |
+| **Entry Point** | `core/live-control/src/main.rs` | Done | `eframe::run_native`, reads `LIVE_PORT` env var. 720×640 window. Loads Microsoft YaHei UI (`msyh.ttc` index 1) at startup for CJK support. |
+| **App** | `core/live-control/src/app.rs` | Done | `ControlApp` (eframe::App). Three sections: stream overview (grid with ID, generation, hwnd, title, executable, status, destroy), auto-selector (start/stop + include/exclude list editor with dirty tracking), string store (CRUD, immediate API calls). Polls server every 2s. Cross-references stream hwnd with window list for title/executable resolution. |
+| **HTTP Client** | `core/live-control/src/client.rs` | Done | Blocking reqwest wrapper. Endpoints: streams (list, destroy), auto-selector (status, start, stop, get/set config), string store (get all, set, delete). 1s timeout to avoid UI hangs. |
+| **Data Types** | `core/live-control/src/model.rs` | Done | `StreamInfo` (with generation), `WindowInfo`, `AutoStatus`, `SelectorConfig` — mirrors server JSON responses. |
 
 ### Completed (Webview Host)
 
@@ -349,21 +404,25 @@ The `generation` field increments each time the underlying capture process is re
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
 | **Entry Point** | `server/index.ts` | Done | Hono app + Vite dev server (middleware mode) on single `node:http` port. Routes `/streams` → API, everything else → Vite. Auto-starts selector and YTM manager on boot. SIGINT/SIGTERM cleanup. |
-| **Stream API** | `server/api.ts` | Done | Hono routes: `GET/POST/DELETE /streams`, `GET/POST/DELETE /streams/auto`, `GET /streams/:id/init`, `GET /streams/:id/frames?after=N`, `GET /streams/windows`. POST accepts resample or crop mode (Zod union). `generation` field in list and frames responses. |
-| **Process Manager** | `server/process.ts` | Done | `CaptureStream` with `generation` counter. `spawnAndWire()` helper shared by create and replace paths. `createStream()`/`createCropStream()` for manual use (random IDs). `replaceStream()`/`replaceCropStream()` for well-known IDs — kills old process, resets buffer, bumps generation in-place (idempotent: creates if missing). |
+| **Stream API** | `server/api.ts` | Done | Hono routes: `GET/POST/DELETE /streams`, `GET/POST/DELETE /streams/auto`, `GET/PUT /streams/auto/config`, `GET /streams/:id/init`, `GET /streams/:id/frames?after=N`, `GET /streams/windows`. POST accepts resample or crop mode (Zod union — crop uses absolute bounding box). `generation` field in list and frames responses. |
+| **Process Manager** | `server/process.ts` | Done | `CaptureStream` with `generation` counter. `spawnAndWire()` helper shared by create and replace paths. `createStream()`/`createCropStream()` for manual use (random IDs). `replaceStream()`/`replaceCropStream()` for well-known IDs — kills old process, resets buffer, bumps generation in-place (idempotent: creates if missing). Crop streams use absolute bounding box (minX/Y, maxX/Y). |
 | **Protocol Parser** | `server/protocol.ts` | Done | Push-based incremental binary parser. Handles partial reads, greedy parse loop. Mirrors Rust wire format exactly. |
 | **Frame Buffer** | `server/buffer.ts` | Done | Per-stream circular buffer (60 frames). Multi-viewer safe (no drain). Pre-serializes frames on push. Skips to first keyframe for new clients. `reset()` clears all state on stream replacement. |
-| **Constants** | `server/common.ts` | Done | Port (`LIVE_PORT` env or 3000), exe path, buffer capacity. |
-| **Auto Selector** | `server/selector.ts` | Done | `LiveWindowSelector` class. Polls foreground window every 2s via `live-capture.exe --foreground-window`. Include/exclude list matching. Uses `replaceStream("main", ...)` — stream ID is always `"main"`, generation bumps on each switch. |
-| **YouTube Music Manager** | `server/youtube-music.ts` | Done | `YouTubeMusicManager` class. Polls `enumerateWindows()` every 5s, finds window by `"YouTube Music"` title prefix. Creates/replaces `"youtube-music"` crop stream (full width × 128px, bottom-aligned). Destroys stream when window disappears. |
+| **Constants** | `server/common.ts` | Done | Port (`LIVE_PORT` env or 3000), exe path, buffer capacity, data directory path. |
+| **Auto Selector** | `server/selector.ts` | Done | `LiveWindowSelector` class. Polls foreground window every 2s via `live-capture.exe --foreground-window`. Mutable include/exclude lists (editable at runtime via `GET/PUT /auto/config`). Config persisted to `data/selector-config.json` — loaded on startup, written on every change. Uses `replaceStream("main", ...)` — stream ID is always `"main"`, generation bumps on each switch. |
+| **YouTube Music Manager** | `server/youtube-music.ts` | Done | `YouTubeMusicManager` class. Polls `enumerateWindows()` every 5s, finds window by `"YouTube Music"` title prefix. Creates/replaces `"youtube-music"` crop stream (bottom 96px computed from window dimensions). Destroys stream when window disappears. |
+| **Persistence** | `server/persist.ts` | Done | Thin JSON file persistence utility. `loadJson(path, fallback)` / `saveJson(path, data)` using Bun APIs. Creates `data/` directory on module load. |
+| **String Store** | `server/strings.ts` | Done | `Map<string, string>` persisted to `data/strings.json`. Hono routes: `GET /` (all pairs), `PUT /:key` (set + save), `DELETE /:key` (delete + save). Loaded from disk on startup, falls back to empty. Exports `StringsApiType` for frontend RPC. Mounted at `/strings` in `index.ts`. |
 
 ### Completed (Frontend — React + Hono RPC)
 
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
 | **API Client** | `frontend/src/api.ts` | Done | Typed Hono RPC client via `hc<ApiType>("/streams")`. Imports server route type for end-to-end type safety. |
+| **Strings API Client** | `frontend/src/strings-api.ts` | Done | Typed Hono RPC client via `hc<StringsApiType>("/strings")`. Same pattern as `api.ts`. |
 | **Stream Status** | `frontend/src/streams.ts` | Done | `useStreamStatus()` hook. Polls `GET /streams` every 2s, returns `{ hasMain, hasYouTubeMusic }` booleans for UI visibility. |
-| **App** | `frontend/src/app.tsx` | Done | Pure viewer shell (~65 lines). JetBrains Islands dark theme. Hardcoded `streamId="main"` and `streamId="youtube-music"`. YouTube Music island shown/hidden via `useStreamStatus()`. No control buttons — all lifecycle is server-managed. |
+| **String Store Hook** | `frontend/src/strings.ts` | Done | `useStrings()` hook. Polls `GET /strings` every 2s, returns `Record<string, string>` of all key-value pairs. |
+| **App** | `frontend/src/app.tsx` | Done | Pure viewer shell. JetBrains Islands dark theme. Hardcoded `streamId="main"` and `streamId="youtube-music"`. YouTube Music island shown/hidden via `useStreamStatus()`. Displays server-managed strings by well-known ID (e.g. `"test"` in sidebar, `"marquee"` in scrolling top banner). No control buttons — all lifecycle is server-managed. |
 | **Entry Point** | `frontend/index.tsx` | Done | React 19 `createRoot()` (migrated from Preact). |
 | **Vite Config** | `frontend/vite.config.ts` | Done | `@vitejs/plugin-react-swc` + `@tailwindcss/vite`, `root: "."`, `@` and `@shadcn` aliases. |
 
@@ -472,6 +531,10 @@ Within `live-capture.exe`, the capture thread (main) and encoding thread share a
 Nekomaru-LiveUI-v2/
 ├── Cargo.toml                       # Workspace root
 │
+├── data/                            # Persisted runtime data (gitignored)
+│   ├── strings.json                 # String store key-value pairs
+│   └── selector-config.json         # Auto-selector include/exclude lists
+│
 ├── core/
 │   ├── live-app/                    # live-app.exe — webview host (Rust, wry + nkcore/winit)
 │   │   ├── Cargo.toml
@@ -484,7 +547,7 @@ Nekomaru-LiveUI-v2/
 │   │       ├── lib.rs               # IPC protocol types + serialization (public API)
 │   │       ├── main.rs              # CLI args (resample vs crop mode), capture → encode → stdout
 │   │       ├── d3d11.rs             # D3D11 device + texture/view creation helpers
-│   │       ├── capture.rs           # Capture wrapper, viewport calc, crop types + box computation
+│   │       ├── capture.rs           # Capture wrapper, viewport calc, CropBox (absolute coordinates)
 │   │       ├── converter.rs         # NV12Converter (BGRA→NV12, GPU, parameterized)
 │   │       ├── encoder.rs           # H264Encoder (async MFT, NAL parsing)
 │   │       ├── encoder/
@@ -497,7 +560,7 @@ Nekomaru-LiveUI-v2/
 │       ├── Cargo.toml
 │       └── src/
 │           ├── main.rs              # Entry point, reads LIVE_PORT env, launches eframe window
-│           ├── app.rs               # ControlApp: egui UI (auto-selector, streams, new capture)
+│           ├── app.rs               # ControlApp: egui UI (stream overview, auto-selector config, string store)
 │           ├── client.rs            # Blocking reqwest wrapper (1s timeout, one method per endpoint)
 │           └── model.rs             # Serde types mirroring server JSON responses
 │
@@ -512,13 +575,15 @@ Nekomaru-LiveUI-v2/
 │   ├── tsconfig.json
 │   ├── biome.json                   # Biome formatter/linter config
 │   ├── index.ts                     # Entry point: Hono + Vite on single node:http port, auto-starts managers
-│   ├── common.ts                    # Constants (port, exe path, buffer capacity)
+│   ├── common.ts                    # Constants (port, exe path, buffer capacity, data dir)
 │   ├── api.ts                       # Hono routes for /streams/* (exports ApiType for frontend RPC)
 │   ├── process.ts                   # Spawn/manage live-capture.exe (generation counter, replace in-place)
 │   ├── buffer.ts                    # Per-stream circular frame buffer + SPS/PPS cache + reset()
 │   ├── protocol.ts                  # Incremental binary wire protocol parser
+│   ├── persist.ts                   # JSON file persistence utility (loadJson/saveJson, creates data/)
 │   ├── selector.ts                  # Auto window selector (replaces "main" stream on foreground change)
-│   └── youtube-music.ts             # YouTube Music manager (manages "youtube-music" crop stream)
+│   ├── youtube-music.ts             # YouTube Music manager (manages "youtube-music" crop stream)
+│   └── strings.ts                   # String store: Map<string,string> + Hono routes, persisted to data/
 │
 └── frontend/                        # Frontend (React + Vite + Tailwind)
     ├── package.json
@@ -532,8 +597,10 @@ Nekomaru-LiveUI-v2/
     ├── debug.ts                     # Debug flags
     ├── src/                         # Application source (aliased as @/)
     │   ├── api.ts                   # Hono RPC client (imports ApiType from server)
-    │   ├── app.tsx                  # Pure viewer shell (hardcoded "main" + "youtube-music" streams)
+    │   ├── strings-api.ts           # Hono RPC client for /strings (imports StringsApiType)
+    │   ├── app.tsx                  # Pure viewer shell (streams + server-managed strings by ID)
     │   ├── streams.ts               # useStreamStatus() hook (polls availability for UI visibility)
+    │   ├── strings.ts               # useStrings() hook (polls /strings every 2s)
     │   └── stream/                  # Self-contained H.264 stream module
     │       ├── index.tsx            # <StreamRenderer> (generation-aware, owns decoder lifecycle)
     │       └── decoder.ts           # H264Decoder (WebCodecs + avcC + fetchInit, retries 404/503)
