@@ -11,78 +11,40 @@ use windows::Win32::Graphics::Direct3D11::{D3D11_BOX, D3D11_VIEWPORT};
 
 // ── Crop types ──────────────────────────────────────────────────────────────
 
-/// A single crop dimension: either a fixed pixel count or the full source extent.
-#[derive(Debug, Clone, Copy)]
-pub enum CropDimension {
-    Pixels(u32),
-    Full,
-}
-
-/// Where within the source window the crop rect is anchored.
-#[derive(Debug, Clone, Copy, Default)]
-pub enum Alignment {
-    TopLeft, Top, TopRight,
-    Left, #[default] Center, Right,
-    BottomLeft, Bottom, BottomRight,
-}
-
-/// Specifies a subrect to extract from the captured window.
-#[derive(Debug, Clone)]
-pub struct CropSpec {
-    pub width: CropDimension,
-    pub height: CropDimension,
-    pub align: Alignment,
-}
-
-impl CropSpec {
-    /// Resolve `Full` dimensions against a concrete source size, returning the
-    /// output (staging / encoder) resolution.  Both axes are clamped to the
-    /// source and rounded down to the nearest multiple of 16.
-    pub fn resolve_output_size(&self, source: Size2D<u32>) -> Size2D<u32> {
-        let w = match self.width {
-            CropDimension::Pixels(px) => px.min(source.width),
-            CropDimension::Full => source.width,
-        };
-        let h = match self.height {
-            CropDimension::Pixels(px) => px.min(source.height),
-            CropDimension::Full => source.height,
-        };
-        // Round down to a multiple of 16 (encoder requirement).
-        Size2D::new(w & !15, h & !15)
-    }
-}
-
-/// Compute the `D3D11_BOX` that selects the crop region from a source texture.
+/// Absolute crop rectangle in source-pixel coordinates.
 ///
-/// `crop_size` is the already-resolved output size (from [`CropSpec::resolve_output_size`]).
-/// The box is positioned according to `align` and clamped so it never exceeds
-/// the source bounds.
-pub fn compute_crop_box(
-    crop_size: Size2D<u32>,
-    align: Alignment,
-    source_size: Size2D<u32>) -> D3D11_BOX {
-    let w = crop_size.width.min(source_size.width);
-    let h = crop_size.height.min(source_size.height);
+/// Specifies the exact subrect to extract from the captured window. The caller
+/// is responsible for providing valid coordinates (e.g. from `WindowInfo` or a
+/// prior size query).  Coordinates are clamped to source bounds at capture time
+/// to guard against window resizes.
+#[derive(Debug, Clone, Copy)]
+pub struct CropBox {
+    pub min_x: u32,
+    pub min_y: u32,
+    pub max_x: u32,
+    pub max_y: u32,
+}
 
-    let (ox, oy) = match align {
-        Alignment::TopLeft     => (0, 0),
-        Alignment::Top         => ((source_size.width - w) / 2, 0),
-        Alignment::TopRight    => (source_size.width - w, 0),
-        Alignment::Left        => (0, (source_size.height - h) / 2),
-        Alignment::Center      => ((source_size.width - w) / 2, (source_size.height - h) / 2),
-        Alignment::Right       => (source_size.width - w, (source_size.height - h) / 2),
-        Alignment::BottomLeft  => (0, source_size.height - h),
-        Alignment::Bottom      => ((source_size.width - w) / 2, source_size.height - h),
-        Alignment::BottomRight => (source_size.width - w, source_size.height - h),
-    };
+impl CropBox {
+    /// Encoder-compatible output size: box dimensions rounded UP to the nearest
+    /// multiple of 16.  Used for texture allocation, NV12 converter, and H.264
+    /// encoder.  When the rounded size exceeds the actual crop, the extra pixels
+    /// appear as padding on the right / bottom edge (filled with the staging
+    /// texture's clear colour).
+    pub fn output_size(&self) -> Size2D<u32> {
+        let w = self.max_x - self.min_x;
+        let h = self.max_y - self.min_y;
+        Size2D::new((w + 15) & !15, (h + 15) & !15)
+    }
 
-    D3D11_BOX {
-        left: ox,
-        top: oy,
-        front: 0,
-        right: ox + w,
-        bottom: oy + h,
-        back: 1,
+    /// Convert to a `D3D11_BOX` for `CopySubresourceRegion`, clamping to
+    /// `source` so the box never reads out of bounds.
+    pub fn to_d3d11_box(&self, source: Size2D<u32>) -> D3D11_BOX {
+        let left = self.min_x.min(source.width);
+        let top  = self.min_y.min(source.height);
+        let right  = self.max_x.min(source.width);
+        let bottom = self.max_y.min(source.height);
+        D3D11_BOX { left, top, front: 0, right, bottom, back: 1 }
     }
 }
 

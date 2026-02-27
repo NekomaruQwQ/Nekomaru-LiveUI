@@ -6,7 +6,7 @@
 //!
 //! Two exclusive capture modes:
 //! - **Resample**: scales the full window to `--width x --height` (letterboxed).
-//! - **Crop**: extracts a subrect at native resolution via `--crop-*` args.
+//! - **Crop**: extracts an absolute subrect via `--crop-min-x/y --crop-max-x/y`.
 //!
 //! ## Usage
 //!
@@ -14,8 +14,8 @@
 //! # Resample mode
 //! live-capture.exe --hwnd 0x1A2B3C --width 1920 --height 1200
 //!
-//! # Crop mode (center-aligned 1280x720 subrect)
-//! live-capture.exe --hwnd 0x1A2B3C --crop-width 1280 --crop-height 720 --crop-align center
+//! # Crop mode (absolute bounding box in source pixels)
+//! live-capture.exe --hwnd 0x1A2B3C --crop-min-x 0 --crop-min-y 600 --crop-max-x 1920 --crop-max-y 700
 //!
 //! # Utility modes
 //! live-capture.exe --enumerate-windows
@@ -28,7 +28,7 @@ mod converter;
 mod encoder;
 mod resample;
 
-use capture::{Alignment, CaptureSession, CropDimension, CropSpec};
+use capture::{CaptureSession, CropBox};
 use converter::NV12Converter;
 use encoder::{H264Encoder, H264EncoderConfig};
 use resample::Resampler;
@@ -47,6 +47,7 @@ use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::System::Com::*;
+use windows::Win32::UI::HiDpi::*;
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -77,44 +78,50 @@ struct CliArgs {
 
     /// Output width for resample mode (must be a multiple of 16).
     #[arg(long, requires = "height",
-        conflicts_with_all = ["crop_width", "crop_height", "crop_align"])]
+        conflicts_with_all = ["crop_min_x", "crop_min_y", "crop_max_x", "crop_max_y"])]
     width: Option<u32>,
 
     /// Output height for resample mode (must be a multiple of 16).
     #[arg(long, requires = "width",
-        conflicts_with_all = ["crop_width", "crop_height", "crop_align"])]
+        conflicts_with_all = ["crop_min_x", "crop_min_y", "crop_max_x", "crop_max_y"])]
     height: Option<u32>,
 
     // ── Crop mode ────────────────────────────────────────────────────────
+    // Absolute bounding box in source pixels.  All four are required together.
+    // Non-16-aligned dimensions are accepted; the encoder output is padded
+    // to the next multiple of 16.
 
-    /// Crop width in source pixels, or "full" for the source width.
-    /// Must be a multiple of 16 (unless "full").
-    #[arg(long, value_parser = parse_crop_dimension,
-        requires = "crop_height",
+    /// Left edge of the crop rect (inclusive), in source pixels.
+    #[arg(long,
+        requires_all = ["crop_min_y", "crop_max_x", "crop_max_y"],
         conflicts_with_all = ["width", "height"])]
-    crop_width: Option<CropDimension>,
+    crop_min_x: Option<u32>,
 
-    /// Crop height in source pixels, or "full" for the source height.
-    /// Must be a multiple of 16 (unless "full").
-    #[arg(long, value_parser = parse_crop_dimension,
-        requires = "crop_width",
+    /// Top edge of the crop rect (inclusive), in source pixels.
+    #[arg(long,
+        requires_all = ["crop_min_x", "crop_max_x", "crop_max_y"],
         conflicts_with_all = ["width", "height"])]
-    crop_height: Option<CropDimension>,
+    crop_min_y: Option<u32>,
 
-    /// Alignment of the crop rect within the source window.
-    /// One of: center, top-left, top, top-right, left, right,
-    /// bottom-left, bottom, bottom-right.  Defaults to center.
-    #[arg(long, value_parser = parse_alignment, default_value = "center",
+    /// Right edge of the crop rect (exclusive), in source pixels.
+    #[arg(long,
+        requires_all = ["crop_min_x", "crop_min_y", "crop_max_y"],
         conflicts_with_all = ["width", "height"])]
-    crop_align: Alignment,
+    crop_max_x: Option<u32>,
+
+    /// Bottom edge of the crop rect (exclusive), in source pixels.
+    #[arg(long,
+        requires_all = ["crop_min_x", "crop_min_y", "crop_max_x"],
+        conflicts_with_all = ["width", "height"])]
+    crop_max_y: Option<u32>,
 }
 
 /// Resolved capture mode after CLI validation.
 enum CaptureMode {
     /// Scale the full window to fit `width x height` with letterboxing.
     Resample { width: u32, height: u32 },
-    /// Extract a subrect at native resolution.
-    Crop(CropSpec),
+    /// Extract an absolute subrect at native resolution.
+    Crop(CropBox),
 }
 
 // ── CLI parsers ─────────────────────────────────────────────────────────────
@@ -130,38 +137,6 @@ fn parse_hwnd(s: &str) -> Result<isize, String> {
         Err("HWND must be non-zero".into())
     } else {
         Ok(value)
-    }
-}
-
-/// Parses a crop dimension: a positive integer (must be multiple of 16) or
-/// the literal `"full"`.
-fn parse_crop_dimension(s: &str) -> Result<CropDimension, String> {
-    if s.eq_ignore_ascii_case("full") {
-        return Ok(CropDimension::Full);
-    }
-    let px: u32 = s.parse().map_err(|e| format!("invalid crop dimension '{s}': {e}"))?;
-    if px == 0 {
-        Err("crop dimension must be positive".into())
-    } else if !px.is_multiple_of(16) {
-        Err(format!("crop dimension must be a multiple of 16 (got {px})"))
-    } else {
-        Ok(CropDimension::Pixels(px))
-    }
-}
-
-/// Parses an alignment keyword.
-fn parse_alignment(s: &str) -> Result<Alignment, String> {
-    match s.to_ascii_lowercase().as_str() {
-        "center"       => Ok(Alignment::Center),
-        "top-left"     => Ok(Alignment::TopLeft),
-        "top"          => Ok(Alignment::Top),
-        "top-right"    => Ok(Alignment::TopRight),
-        "left"         => Ok(Alignment::Left),
-        "right"        => Ok(Alignment::Right),
-        "bottom-left"  => Ok(Alignment::BottomLeft),
-        "bottom"       => Ok(Alignment::Bottom),
-        "bottom-right" => Ok(Alignment::BottomRight),
-        _ => Err(format!("unknown alignment '{s}' (expected: center, top-left, top, top-right, left, right, bottom-left, bottom, bottom-right)")),
     }
 }
 
@@ -181,21 +156,26 @@ fn resolve_capture_mode(args: &CliArgs) -> anyhow::Result<Option<CaptureMode>> {
         return Ok(Some(CaptureMode::Resample { width: w, height: h }));
     }
 
-    if let (Some(cw), Some(ch)) = (args.crop_width, args.crop_height) {
-        return Ok(Some(CaptureMode::Crop(CropSpec {
-            width: cw,
-            height: ch,
-            align: args.crop_align,
-        })));
+    if let (Some(min_x), Some(min_y), Some(max_x), Some(max_y)) =
+        (args.crop_min_x, args.crop_min_y, args.crop_max_x, args.crop_max_y) {
+        anyhow::ensure!(max_x > min_x, "crop-max-x ({max_x}) must be greater than crop-min-x ({min_x})");
+        anyhow::ensure!(max_y > min_y, "crop-max-y ({max_y}) must be greater than crop-min-y ({min_y})");
+        return Ok(Some(CaptureMode::Crop(CropBox { min_x, min_y, max_x, max_y })));
     }
 
     anyhow::bail!(
-        "either --width/--height (resample) or --crop-width/--crop-height (crop) is required");
+        "either --width/--height (resample) or --crop-min-x/y --crop-max-x/y (crop) is required");
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
 fn main() {
+    // Declare per-monitor DPI awareness so that Win32 geometry APIs (e.g.
+    // `GetClientRect` in enumerate-windows) return physical pixels instead
+    // of DPI-virtualized logical pixels.
+    // SAFETY: Called once, before any window or geometry API usage.
+    let _ = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+
     pretty_env_logger::init();
 
     let args = CliArgs::parse();
@@ -242,31 +222,27 @@ fn run(hwnd: isize, mode: CaptureMode) -> anyhow::Result<()> {
         d3d11::create_device()
             .context("failed to create D3D11 device")?;
 
-    // Create capture session (needed early in crop mode to resolve `full` dimensions)
     let mut capture =
         CaptureSession::from_hwnd(&device, hwnd_handle)
             .context("failed to start capture session")?;
 
     // Determine the output frame size (used for staging texture, NV12, encoder).
     // In resample mode this is the explicit --width/--height.
-    // In crop mode this is the resolved crop size (clamped to source, aligned to 16).
-    let (frame_size, crop_spec) = match mode {
+    // In crop mode this is the box dimensions rounded up to the nearest
+    // multiple of 16.
+    let (frame_size, crop_box) = match mode {
         CaptureMode::Resample { width, height } => {
             let size = Size2D::new(width, height);
             log::info!("resample mode: HWND={hwnd:#X}, output={width}x{height}");
             (size, None)
         }
-        CaptureMode::Crop(spec) => {
-            // Peek the first frame to learn the source resolution and resolve `full`.
-            let source_size = peek_source_size(&mut capture, &device_context)?;
-            let size = spec.resolve_output_size(source_size);
-            anyhow::ensure!(
-                size.width > 0 && size.height > 0,
-                "resolved crop size is zero (source={source_size:?}, spec={spec:?})");
+        CaptureMode::Crop(crop) => {
+            let output = crop.output_size();
             log::info!(
-                "crop mode: HWND={hwnd:#X}, source={source_size:?}, crop={}x{}, align={:?}",
-                size.width, size.height, spec.align);
-            (size, Some(spec))
+                "crop mode: HWND={hwnd:#X}, box=({},{})..({},{}), output={}x{}",
+                crop.min_x, crop.min_y, crop.max_x, crop.max_y,
+                output.width, output.height);
+            (output, Some(crop))
         }
     };
 
@@ -295,7 +271,7 @@ fn run(hwnd: isize, mode: CaptureMode) -> anyhow::Result<()> {
     }
 
     // Only needed in resample mode; skip shader compilation in crop mode.
-    let resampler = if crop_spec.is_none() {
+    let resampler = if crop_box.is_none() {
         Some(Resampler::new(&device).context("failed to create resampler")?)
     } else {
         None
@@ -325,15 +301,15 @@ fn run(hwnd: isize, mode: CaptureMode) -> anyhow::Result<()> {
 
         match capture.get_next_frame(&device_context) {
             Ok(Some(frame)) => {
-                if let Some(ref spec) = crop_spec {
+                if let Some(crop) = crop_box {
                     // ── Crop path ────────────────────────────────────
                     // Copy a subrect of the captured frame into staging_bgra8
-                    // at native resolution (no scaling).
-                    let crop_box =
-                        capture::compute_crop_box(frame_size, spec.align, frame.size);
+                    // at native resolution (no scaling).  The D3D11_BOX is
+                    // clamped to source bounds by `to_d3d11_box`.
+                    let d3d_box = crop.to_d3d11_box(frame.size);
                     // SAFETY: `device_context`, `staging_bgra8`, and `frame.raw_texture`
-                    // are valid D3D11 objects from the same device. `crop_box` is computed
-                    // to stay within source bounds by `compute_crop_box`.
+                    // are valid D3D11 objects from the same device. `d3d_box` is clamped
+                    // to stay within source bounds by `CropBox::to_d3d11_box`.
                     unsafe {
                         device_context.CopySubresourceRegion(
                             &staging_bgra8,    // dst
@@ -341,7 +317,7 @@ fn run(hwnd: isize, mode: CaptureMode) -> anyhow::Result<()> {
                             0, 0, 0,           // dst x, y, z
                             &frame.raw_texture, // src
                             0,                 // src subresource
-                            Some(&raw const crop_box));
+                            Some(&raw const d3d_box));
                     }
                 } else {
                     // ── Resample path ────────────────────────────────
@@ -376,22 +352,6 @@ fn run(hwnd: isize, mode: CaptureMode) -> anyhow::Result<()> {
                 // Non-fatal: the encoder will re-encode the last good frame.
                 thread::sleep(Duration::from_millis(100));
             },
-        }
-    }
-}
-
-/// Wait for the first captured frame and return its size.
-///
-/// Used in crop mode to resolve `CropDimension::Full` before allocating
-/// textures.  Blocks until a frame arrives (typically < 16ms).
-fn peek_source_size(
-    capture: &mut CaptureSession,
-    ctx: &ID3D11DeviceContext) -> anyhow::Result<Size2D<u32>> {
-    loop {
-        match capture.get_next_frame(ctx) {
-            Ok(Some(frame)) => return Ok(frame.size),
-            Ok(None) => thread::sleep(Duration::from_millis(1)),
-            Err(e) => anyhow::bail!("failed to peek source size: {e:?}"),
         }
     }
 }
