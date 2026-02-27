@@ -22,17 +22,35 @@ use winit::{
     window::WindowButtons,
 };
 
-const WINDOW_SIZE: LogicalSize<u32> = LogicalSize::new(1280, 720);
-
 /// CLI arguments for the webview host.
 #[derive(Parser)]
-#[command(name = "live-app")]
+#[command(name = "live-app", about = "Minimal wry webview host for Nekomaru LiveUI")]
 struct LiveAppArgs {
-    /// URL to load in the webview.
+    /// URL to load in the webview. If not provided, defaults to
+    /// `http://localhost:{LIVE_PORT}`.
     pub url: Option<String>,
 
-    /// Window title. Defaults to the URL if not provided.
-    #[arg(long, short = 'm')]
+    /// Initial width of the window in logical pixels. Must be provided if
+    /// `height` is provided.
+    ///
+    /// Logical pixels are converted to physical pixels using the provided
+    /// `scale_factor` or the system scaling factor if `scale_factor` is not
+    /// provided.
+    #[arg(long, short = 'x', requires = "height", default_value = "1280")]
+    pub width: u32,
+
+    /// Initial height of the window in logical pixels. Must be provided if
+    /// `width` is provided.
+    ///
+    /// Logical pixels are converted to physical pixels using the provided
+    /// `scale_factor` or the system scaling factor if `scale_factor` is not
+    /// provided.
+    #[arg(long, short = 'y', requires = "width", default_value = "800")]
+    pub height: u32,
+
+    /// Window title to use for the webview. If not provided, defaults to
+    /// "Nekomaru LiveUI v2".
+    #[arg(long, short = 't')]
     pub title: Option<String>,
 
     /// Device scaling factor to use for the webview. If not provided, the
@@ -64,6 +82,15 @@ fn main() {
         } else {
             Borrowed("Nekomaru LiveUI v2")
         };
+    let window_size =
+        LogicalSize::new(args.width, args.height);
+    let window_size =
+        if let Some(scale_factor) = args.scale_factor {
+            WindowSize::from(window_size.to_physical::<f64>(scale_factor as f64))
+        } else {
+            WindowSize::from(window_size)
+        };
+
     let url = args.url.unwrap_or_else(get_server_url);
     let scale_factor = args.scale_factor;
 
@@ -90,13 +117,6 @@ fn main() {
     EventLoop::<()>::new()
         .expect("failed to create event loop")
         .run_app_with(move |event_loop| {
-            let window_size: WindowSize =
-                if let Some(scale_factor) = scale_factor {
-                    WINDOW_SIZE.to_physical::<f64>(scale_factor as f64).into()
-                } else {
-                    WINDOW_SIZE.into()
-                };
-
             let window =
                 event_loop.create_window(
                     Window::default_attributes()

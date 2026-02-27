@@ -20,8 +20,8 @@ youtube-music *args:
     use .mod.nu run; \
     run live-app youtube-music \
         "https://music.youtube.com/" \
-        -m "YouTube Music" \
-        -s "2" \
+        -t "YouTube Music" \
+        -s 2 \
         {{args}}
 
 install: install-frontend install-server
