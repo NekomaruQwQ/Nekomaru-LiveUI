@@ -1,40 +1,22 @@
 /// egui application for the LiveServer control panel.
 ///
 /// `ControlApp` implements `eframe::App`. It holds all UI state and a blocking
-/// HTTP client. Periodic polling refreshes stream list and auto-selector status
-/// every ~2 seconds. All other calls are on-demand (button clicks).
+/// HTTP client. Periodic polling refreshes stream list, window list, auto-selector
+/// status/config, and string store every ~2 seconds. All other calls are on-demand
+/// (button clicks).
 ///
 /// When the server is unreachable, the UI shows a disconnected state instead
 /// of the normal controls. Connectivity is re-checked every poll interval.
+use std::collections::HashMap;
 use std::time::Instant;
 
 use eframe::egui;
 
-use crate::client::Client;
-use crate::model::*;
+use crate::api::Client;
+use crate::data::*;
 
 /// How often to poll the server for stream list and auto-selector status.
 const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
-
-/// Capture mode selection in the "New Capture" section.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CaptureMode {
-    Resample,
-    Crop,
-}
-
-/// All available crop alignment options, mirroring the server's accepted values.
-const CROP_ALIGNMENTS: &[&str] = &[
-    "center",
-    "top-left",
-    "top",
-    "top-right",
-    "left",
-    "right",
-    "bottom-left",
-    "bottom",
-    "bottom-right",
-];
 
 pub struct ControlApp {
     client: Client,
@@ -50,26 +32,32 @@ pub struct ControlApp {
     // ── Cached server state (refreshed by polling) ──────────────────────
 
     streams: Vec<StreamInfo>,
-    auto_status: Option<AutoStatus>,
+    /// Window list, cross-referenced with streams to resolve title/executable.
     windows: Vec<WindowInfo>,
+    auto_status: Option<AutoStatus>,
+    /// String store fetched from server. Not updated while `strings_dirty`.
+    strings: HashMap<String, String>,
 
     // ── Polling ─────────────────────────────────────────────────────────
 
     last_poll: Instant,
 
-    // ── UI state: new capture form ──────────────────────────────────────
+    // ── UI state: auto-selector config editing ──────────────────────────
 
-    /// Index into `self.windows` for the selected window.
-    selected_window: Option<usize>,
-    capture_mode: CaptureMode,
-    resample_width: String,
-    resample_height: String,
-    crop_width: String,
-    crop_height: String,
-    crop_width_full: bool,
-    crop_height_full: bool,
-    /// Index into `CROP_ALIGNMENTS`.
-    crop_align_idx: usize,
+    /// Local copy of the config, edited in the UI.
+    config_include: Vec<String>,
+    config_exclude: Vec<String>,
+    /// True when the user has made unsaved edits to the config lists.
+    config_dirty: bool,
+    /// Text input for adding a new include pattern.
+    config_include_input: String,
+    /// Text input for adding a new exclude pattern.
+    config_exclude_input: String,
+
+    // ── UI state: string store editing ───────────────────────────────────
+
+    string_key_input: String,
+    string_value_input: String,
 
     // ── Status bar ──────────────────────────────────────────────────────
 
@@ -85,18 +73,17 @@ impl ControlApp {
             connected: false,
             last_error: None,
             streams: Vec::new(),
-            auto_status: None,
             windows: Vec::new(),
+            auto_status: None,
+            strings: HashMap::new(),
             last_poll: Instant::now() - POLL_INTERVAL, // trigger immediate first poll
-            selected_window: None,
-            capture_mode: CaptureMode::Resample,
-            resample_width: "1920".into(),
-            resample_height: "1200".into(),
-            crop_width: "1280".into(),
-            crop_height: "720".into(),
-            crop_width_full: false,
-            crop_height_full: false,
-            crop_align_idx: 0, // "center"
+            config_include: Vec::new(),
+            config_exclude: Vec::new(),
+            config_dirty: false,
+            config_include_input: String::new(),
+            config_exclude_input: String::new(),
+            string_key_input: String::new(),
+            string_value_input: String::new(),
             status: None,
         }
     }
@@ -106,15 +93,16 @@ impl ControlApp {
         self.status = Some((msg.into(), Instant::now()));
     }
 
-    /// Poll the server for stream list and auto-selector status.
-    /// Updates `self.connected` based on whether the requests succeed.
+    /// Poll the server for stream list, window list, auto-selector status/config,
+    /// and string store. Updates `self.connected` based on whether the primary
+    /// request succeeds.
     fn poll(&mut self) {
         if self.last_poll.elapsed() < POLL_INTERVAL {
             return;
         }
         self.last_poll = Instant::now();
 
-        // Use list_streams as the connectivity probe — if it fails, we're disconnected.
+        // Use list_streams as the connectivity probe.
         match self.client.list_streams() {
             Ok(streams) => {
                 self.streams = streams;
@@ -124,13 +112,37 @@ impl ControlApp {
             Err(e) => {
                 self.connected = false;
                 self.last_error = Some(e);
-                return; // skip auto-status fetch if server is down
+                return;
             }
         }
-        match self.client.get_auto_status() {
-            Ok(status) => self.auto_status = Some(status),
-            Err(e) => self.set_status(e),
+
+        // Window list — for cross-referencing stream hwnd → title/executable.
+        if let Ok(w) = self.client.list_windows() {
+            self.windows = w;
         }
+
+        if let Ok(status) = self.client.get_auto_status() {
+            self.auto_status = Some(status);
+        }
+
+        // Only overwrite config from server when the user has no unsaved edits.
+        if !self.config_dirty {
+            if let Ok(config) = self.client.get_auto_config() {
+                self.config_include = config.include_list;
+                self.config_exclude = config.exclude_list;
+            }
+        }
+
+        if let Ok(s) = self.client.get_strings() {
+            self.strings = s;
+        }
+    }
+
+    /// Build a lookup from hex hwnd string → WindowInfo for cross-referencing.
+    fn window_lookup(&self) -> HashMap<String, &WindowInfo> {
+        self.windows.iter()
+            .map(|w| (format!("0x{:X}", w.hwnd), w))
+            .collect()
     }
 
     // ── UI: disconnected state ──────────────────────────────────────────
@@ -152,9 +164,59 @@ impl ControlApp {
 
     // ── UI sections ─────────────────────────────────────────────────────
 
+    fn ui_streams(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Streams");
+        ui.add_space(4.0);
+
+        if self.streams.is_empty() {
+            ui.label("No active streams.");
+            return;
+        }
+
+        let lookup = self.window_lookup();
+
+        egui::Grid::new("streams_grid")
+            .num_columns(6)
+            .striped(true)
+            .show(ui, |ui| {
+                ui.strong("ID");
+                ui.strong("Gen");
+                ui.strong("HWND");
+                ui.strong("Executable");
+                ui.strong("Status");
+                ui.strong("Title");
+                ui.end_row();
+
+                for stream in &self.streams {
+                    let win = lookup.get(&stream.hwnd);
+
+                    ui.label(&stream.id);
+                    ui.label(stream.generation.to_string());
+                    ui.label(&stream.hwnd);
+
+                    // Executable — extract filename from full path.
+                    let exe = win
+                        .map(|w| w.executable_path.rsplit('\\').next().unwrap_or(&w.executable_path))
+                        .unwrap_or("?");
+                    ui.label(exe);
+
+                    ui.label(&stream.status);
+
+                    // Window title last — clips at window width instead of overflowing.
+                    let title = win
+                        .map(|w| if w.title.is_empty() { "<untitled>" } else { &w.title })
+                        .unwrap_or("?");
+                    ui.add(egui::Label::new(title).truncate());
+                    ui.end_row();
+                }
+            });
+    }
+
     fn ui_auto_selector(&mut self, ui: &mut egui::Ui) {
         ui.heading("Auto-Selector");
         ui.add_space(4.0);
+
+        // ── Status + Start/Stop ──────────────────────────────────────────
 
         if let Some(ref status) = self.auto_status {
             ui.horizontal(|ui| {
@@ -165,9 +227,6 @@ impl ControlApp {
                     ui.colored_label(egui::Color32::GRAY, "Inactive");
                 }
             });
-            if let Some(ref id) = status.current_stream_id {
-                ui.label(format!("  Stream: {id}"));
-            }
             if let Some(ref hwnd) = status.current_hwnd {
                 ui.label(format!("  HWND: {hwnd}"));
             }
@@ -196,161 +255,159 @@ impl ControlApp {
                 }
             }
         });
-    }
 
-    fn ui_active_streams(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Active Streams");
-        ui.add_space(4.0);
+        ui.add_space(8.0);
 
-        if self.streams.is_empty() {
-            ui.label("No active streams.");
-            return;
-        }
+        // ── Include list ─────────────────────────────────────────────────
 
-        // Find the stream to destroy (if any) after iterating,
-        // so we don't borrow self.streams while calling self.client.
-        let mut destroy_id: Option<String> = None;
+        ui.strong("Include Patterns");
+        ui.add_space(2.0);
+        ui.label("Substring match on executable path.");
+        ui.add_space(2.0);
 
-        egui::Grid::new("streams_grid")
-            .num_columns(4)
-            .striped(true)
-            .show(ui, |ui| {
-                ui.strong("ID");
-                ui.strong("HWND");
-                ui.strong("Status");
-                ui.strong("");
-                ui.end_row();
-
-                for stream in &self.streams {
-                    ui.label(&stream.id);
-                    ui.label(&stream.hwnd);
-                    ui.label(&stream.status);
-                    if ui.small_button("Destroy").clicked() {
-                        destroy_id = Some(stream.id.clone());
-                    }
-                    ui.end_row();
+        let mut include_remove: Option<usize> = None;
+        for (i, pattern) in self.config_include.iter().enumerate() {
+            ui.horizontal(|ui| {
+                let mut text = pattern.clone();
+                ui.add(egui::TextEdit::singleline(&mut text)
+                    .desired_width(ui.available_width() - 24.0)
+                    .interactive(false));
+                if ui.small_button("×").clicked() {
+                    include_remove = Some(i);
                 }
             });
-
-        if let Some(id) = destroy_id {
-            match self.client.destroy_stream(&id) {
-                Ok(()) => self.set_status(format!("Destroyed stream {id}")),
-                Err(e) => self.set_status(e),
-            }
         }
-    }
-
-    fn ui_new_capture(&mut self, ui: &mut egui::Ui) {
-        ui.heading("New Capture");
-        ui.add_space(4.0);
-
-        // ── Window picker ───────────────────────────────────────────────
-
-        if ui.button("Refresh Windows").clicked() {
-            match self.client.list_windows() {
-                Ok(w) => {
-                    self.windows = w;
-                    self.selected_window = None;
-                    self.set_status("Window list refreshed");
-                }
-                Err(e) => self.set_status(e),
-            }
+        if let Some(i) = include_remove {
+            self.config_include.remove(i);
+            self.config_dirty = true;
         }
-
-        if !self.windows.is_empty() {
-            ui.add_space(4.0);
-            egui::ScrollArea::vertical()
-                .max_height(150.0)
-                .show(ui, |ui| {
-                    for (i, win) in self.windows.iter().enumerate() {
-                        let label = format!(
-                            "{} (0x{:X})",
-                            if win.title.is_empty() { "<untitled>" } else { &win.title },
-                            win.hwnd);
-                        let selected = self.selected_window == Some(i);
-                        if ui.selectable_label(selected, label).clicked() {
-                            self.selected_window = Some(i);
-                        }
-                    }
-                });
-        }
-
-        ui.add_space(8.0);
-
-        // ── Capture mode ────────────────────────────────────────────────
 
         ui.horizontal(|ui| {
-            ui.label("Mode:");
-            ui.radio_value(&mut self.capture_mode, CaptureMode::Resample, "Resample");
-            ui.radio_value(&mut self.capture_mode, CaptureMode::Crop, "Crop");
+            ui.add(egui::TextEdit::singleline(&mut self.config_include_input)
+                .desired_width(ui.available_width() - 40.0)
+                .hint_text("path or substring..."));
+            if ui.small_button("Add").clicked() && !self.config_include_input.is_empty() {
+                self.config_include.push(self.config_include_input.drain(..).collect());
+                self.config_dirty = true;
+            }
         });
-
-        ui.add_space(4.0);
-
-        match self.capture_mode {
-            CaptureMode::Resample => {
-                ui.horizontal(|ui| {
-                    ui.label("Width:");
-                    ui.add(egui::TextEdit::singleline(&mut self.resample_width).desired_width(60.0));
-                    ui.label("Height:");
-                    ui.add(egui::TextEdit::singleline(&mut self.resample_height).desired_width(60.0));
-                });
-            }
-            CaptureMode::Crop => {
-                ui.horizontal(|ui| {
-                    ui.label("Crop W:");
-                    ui.add_enabled(
-                        !self.crop_width_full,
-                        egui::TextEdit::singleline(&mut self.crop_width).desired_width(60.0));
-                    ui.checkbox(&mut self.crop_width_full, "Full");
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Crop H:");
-                    ui.add_enabled(
-                        !self.crop_height_full,
-                        egui::TextEdit::singleline(&mut self.crop_height).desired_width(60.0));
-                    ui.checkbox(&mut self.crop_height_full, "Full");
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Align:");
-                    egui::ComboBox::from_id_salt("crop_align")
-                        .selected_text(CROP_ALIGNMENTS[self.crop_align_idx])
-                        .show_ui(ui, |ui| {
-                            for (i, &align) in CROP_ALIGNMENTS.iter().enumerate() {
-                                ui.selectable_value(&mut self.crop_align_idx, i, align);
-                            }
-                        });
-                });
-            }
-        }
 
         ui.add_space(8.0);
 
-        // ── Create button ───────────────────────────────────────────────
+        // ── Exclude list ─────────────────────────────────────────────────
 
-        let can_create = self.selected_window.is_some();
-        if ui.add_enabled(can_create, egui::Button::new("Create Capture")).clicked() {
-            if let Some(idx) = self.selected_window {
-                let hwnd = format!("0x{:X}", self.windows[idx].hwnd);
-                let result = match self.capture_mode {
-                    CaptureMode::Resample => {
-                        let w = self.resample_width.parse::<u32>().unwrap_or(1920);
-                        let h = self.resample_height.parse::<u32>().unwrap_or(1200);
-                        self.client.create_stream_resample(&hwnd, w, h)
-                    }
-                    CaptureMode::Crop => {
-                        let cw = if self.crop_width_full { "full" } else { &self.crop_width };
-                        let ch = if self.crop_height_full { "full" } else { &self.crop_height };
-                        let align = CROP_ALIGNMENTS[self.crop_align_idx];
-                        self.client.create_stream_crop(&hwnd, cw, ch, align)
-                    }
+        ui.strong("Exclude Patterns");
+        ui.add_space(2.0);
+        ui.label("Case-insensitive substring match.");
+        ui.add_space(2.0);
+
+        let mut exclude_remove: Option<usize> = None;
+        for (i, pattern) in self.config_exclude.iter().enumerate() {
+            ui.horizontal(|ui| {
+                let mut text = pattern.clone();
+                ui.add(egui::TextEdit::singleline(&mut text)
+                    .desired_width(ui.available_width() - 24.0)
+                    .interactive(false));
+                if ui.small_button("×").clicked() {
+                    exclude_remove = Some(i);
+                }
+            });
+        }
+        if let Some(i) = exclude_remove {
+            self.config_exclude.remove(i);
+            self.config_dirty = true;
+        }
+
+        ui.horizontal(|ui| {
+            ui.add(egui::TextEdit::singleline(&mut self.config_exclude_input)
+                .desired_width(ui.available_width() - 40.0)
+                .hint_text("path or substring..."));
+            if ui.small_button("Add").clicked() && !self.config_exclude_input.is_empty() {
+                self.config_exclude.push(self.config_exclude_input.drain(..).collect());
+                self.config_dirty = true;
+            }
+        });
+
+        ui.add_space(8.0);
+
+        // ── Save button ──────────────────────────────────────────────────
+
+        ui.horizontal(|ui| {
+            if ui.add_enabled(self.config_dirty, egui::Button::new("Save Config")).clicked() {
+                let config = SelectorConfig {
+                    include_list: self.config_include.clone(),
+                    exclude_list: self.config_exclude.clone(),
                 };
-                match result {
-                    Ok(id) => self.set_status(format!("Created stream {id}")),
+                match self.client.set_auto_config(&config) {
+                    Ok(()) => {
+                        self.config_dirty = false;
+                        self.set_status("Config saved");
+                    }
                     Err(e) => self.set_status(e),
                 }
             }
+            if self.config_dirty {
+                ui.colored_label(egui::Color32::from_rgb(255, 200, 100), "unsaved changes");
+            }
+        });
+    }
+
+    fn ui_string_store(&mut self, ui: &mut egui::Ui) {
+        ui.heading("String Store");
+        ui.add_space(4.0);
+
+        if self.strings.is_empty() {
+            ui.label("No entries.");
         }
+
+        // Collect into sorted vec for stable display order.
+        let mut entries: Vec<_> = self.strings.iter().collect();
+        entries.sort_by_key(|(k, _)| k.as_str());
+
+        let mut delete_key: Option<String> = None;
+        for (key, value) in &entries {
+            ui.horizontal(|ui| {
+                ui.label(format!("{key} ="));
+                let mut val = (*value).clone();
+                ui.add(egui::TextEdit::singleline(&mut val)
+                    .desired_width(ui.available_width() - 24.0)
+                    .interactive(false));
+                if ui.small_button("×").clicked() {
+                    delete_key = Some((*key).clone());
+                }
+            });
+        }
+
+        if let Some(ref key) = delete_key {
+            match self.client.delete_string(key) {
+                Ok(()) => {
+                    self.strings.remove(key);
+                    self.set_status(format!("Deleted string \"{key}\""));
+                }
+                Err(e) => self.set_status(e),
+            }
+        }
+
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.add(egui::TextEdit::singleline(&mut self.string_key_input)
+                .desired_width(100.0)
+                .hint_text("key"));
+            ui.add(egui::TextEdit::singleline(&mut self.string_value_input)
+                .desired_width(ui.available_width() - 40.0)
+                .hint_text("value"));
+            if ui.small_button("Set").clicked() && !self.string_key_input.is_empty() {
+                let key: String = self.string_key_input.drain(..).collect();
+                let value: String = self.string_value_input.drain(..).collect();
+                match self.client.set_string(&key, &value) {
+                    Ok(()) => {
+                        self.set_status(format!("Set \"{key}\""));
+                        self.strings.insert(key, value);
+                    }
+                    Err(e) => self.set_status(e),
+                }
+            }
+        });
     }
 
     fn ui_status_bar(&mut self, ui: &mut egui::Ui) {
@@ -384,11 +441,12 @@ impl eframe::App for ControlApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                self.ui_auto_selector(ui);
+                self.ui_streams(ui);
                 ui.separator();
-                self.ui_active_streams(ui);
-                ui.separator();
-                self.ui_new_capture(ui);
+                ui.columns(2, |cols| {
+                    self.ui_string_store(&mut cols[0]);
+                    self.ui_auto_selector(&mut cols[1]);
+                });
             });
         });
     }
