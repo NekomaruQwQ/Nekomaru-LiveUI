@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 
 import { DEBUG } from "../../debug";
 import { api } from "../api";
+import { ChromaKeyRenderer, parseHexColor } from "./chroma-key";
 import { H264Decoder, parseStreamFrame } from "./decoder";
 
 /**
@@ -15,8 +16,12 @@ import { H264Decoder, parseStreamFrame } from "./decoder";
  *
  * 404 responses are treated as retriable (the server may create the stream
  * shortly), so the component can be rendered before the stream exists.
+ *
+ * When `chromaKey` is set (e.g. "#212121"), a WebGL2 fragment shader replaces
+ * pixels matching that color with transparency.  The entire pipeline stays on
+ * the GPU — no CPU readback.
  */
-export function StreamRenderer({ streamId, className }: { streamId: string; className?: string }) {
+export function StreamRenderer({ streamId, chromaKey }: { streamId: string; chromaKey?: string }) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
 
     useEffect(() => {
@@ -28,27 +33,43 @@ export function StreamRenderer({ streamId, className }: { streamId: string; clas
             return;
         }
 
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-            console.error("StreamRenderer: Failed to get 2D context");
-            return;
+        // ── Build the frame renderer ─────────────────────────────────────
+        // When chroma-key is active, use a WebGL2 shader that keys out the
+        // target color.  Otherwise, use a plain 2D canvas drawImage path.
+        let onFrame: (frame: VideoFrame) => void;
+        let cleanup: (() => void) | undefined;
+
+        if (chromaKey) {
+            const renderer = new ChromaKeyRenderer(canvas, parseHexColor(chromaKey));
+            onFrame = (frame) => renderer.render(frame);
+            cleanup = () => renderer.dispose();
+            console.log("StreamRenderer: Using WebGL chroma-key renderer (key=%s)", chromaKey);
+        } else {
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+                console.error("StreamRenderer: Failed to get 2D context");
+                return;
+            }
+            onFrame = (frame) => renderFrame(canvas, ctx, frame);
+            console.log("StreamRenderer: Using 2D canvas renderer");
         }
 
         console.log("StreamRenderer: Canvas ready: %dx%d", canvas.width, canvas.height);
 
         const abortController = new AbortController();
-        startStreamLoop(streamId, canvas, ctx, abortController.signal);
+        startStreamLoop(streamId, onFrame, abortController.signal);
 
         return () => {
             console.log("StreamRenderer: Component unmounting, aborting stream loop");
             abortController.abort();
+            cleanup?.();
         };
-    }, [streamId]);
+    }, [streamId, chromaKey]);
 
     return (
         <canvas
             ref={canvasRef}
-            className={`w-full bg-[#1e1f22] object-contain ${className ?? ""}`}
+            className={`w-full object-contain ${chromaKey ? "" : "bg-[#1e1f22]"}`}
         />
     );
 }
@@ -97,11 +118,13 @@ function renderFrame(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, f
  * created).
  *
  * Runs until the AbortSignal fires (component unmount / streamId change).
+ *
+ * @param onFrame  Callback that renders a decoded VideoFrame.  Responsible
+ *                 for closing the frame after use.
  */
 async function startStreamLoop(
     streamId: string,
-    canvas: HTMLCanvasElement,
-    ctx: CanvasRenderingContext2D,
+    onFrame: (frame: VideoFrame) => void,
     signal: AbortSignal,
 ): Promise<void> {
     console.log("StreamLoop: Starting stream loop");
@@ -109,7 +132,7 @@ async function startStreamLoop(
     // Create the initial decoder.  fetchInit inside init() retries on 503
     // and 404, so this blocks until the stream's encoder has produced its
     // first IDR frame.
-    let decoder = new H264Decoder(streamId, (frame) => renderFrame(canvas, ctx, frame));
+    let decoder = new H264Decoder(streamId, onFrame);
     try {
         await decoder.init();
     } catch (e) {
@@ -164,7 +187,7 @@ async function startStreamLoop(
                 console.log("StreamLoop: Generation changed %d → %d, reinitializing decoder",
                     currentGeneration, data.generation);
                 decoder.close();
-                decoder = new H264Decoder(streamId, (frame) => renderFrame(canvas, ctx, frame));
+                decoder = new H264Decoder(streamId, onFrame);
                 await decoder.init();
                 lastSequence = 0;
             }
