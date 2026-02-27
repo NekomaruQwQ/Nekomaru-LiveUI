@@ -35,6 +35,14 @@ pub struct WindowInfo {
     pub title: String,
     /// Full executable path, or empty if inaccessible.
     pub executable_path: PathBuf,
+    /// Client-area width in physical pixels, or 0 if unavailable.
+    /// Requires the calling process to be per-monitor DPI aware; otherwise
+    /// Windows virtualizes the value to logical pixels.
+    pub width: u32,
+    /// Client-area height in physical pixels, or 0 if unavailable.
+    /// Requires the calling process to be per-monitor DPI aware; otherwise
+    /// Windows virtualizes the value to logical pixels.
+    pub height: u32,
 }
 
 // ── Foreground window ───────────────────────────────────────────────────
@@ -50,12 +58,15 @@ pub fn get_foreground_window() -> Option<WindowInfo> {
 
     let title = get_window_title(hwnd);
     let (pid, executable_path) = get_process_info(hwnd);
+    let (width, height) = get_client_size(hwnd);
 
     Some(WindowInfo {
         hwnd: hwnd.0 as usize,
         pid,
         title,
         executable_path,
+        width,
+        height,
     })
 }
 
@@ -125,12 +136,15 @@ fn enum_callback_internal(hwnd: HWND, out: &mut Vec<WindowInfo>) {
     }
 
     let (pid, executable_path) = get_process_info(hwnd);
+    let (width, height) = get_client_size(hwnd);
 
     out.push(WindowInfo {
         hwnd: hwnd.0 as usize,
         pid,
         title,
         executable_path,
+        width,
+        height,
     });
 }
 
@@ -191,6 +205,20 @@ fn get_executable_path(pid: u32) -> Option<PathBuf> {
 
         Some(PathBuf::from(OsString::from_wide(&buf[..len as usize])))
     }
+}
+
+/// Returns the client-area size `(width, height)` of a window, or `(0, 0)` on failure.
+///
+/// Uses `GetClientRect` because Windows Graphics Capture captures the client area,
+/// so these dimensions match the captured texture size.
+fn get_client_size(hwnd: HWND) -> (u32, u32) {
+    let mut rect = RECT::default();
+    // SAFETY: `hwnd` is a valid enumerated handle; `&raw mut rect` is a valid local.
+    let ok = unsafe { GetClientRect(hwnd, &raw mut rect) };
+    if ok.is_err() {
+        return (0, 0);
+    }
+    ((rect.right - rect.left) as u32, (rect.bottom - rect.top) as u32)
 }
 
 /// Checks whether a window is "cloaked" (hidden by DWM).
