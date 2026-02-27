@@ -1655,7 +1655,7 @@ name = "live-app"
 version = "0.1.0"
 dependencies = [
  "clap",
- "nkcore",
+ "nkcore 0.1.0 (git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=9bcfd3b0)",
  "winit",
  "wry",
 ]
@@ -1667,7 +1667,7 @@ dependencies = [
  "clap",
  "enumerate-windows",
  "ngd3dcompile_macro",
- "nkcore",
+ "nkcore 0.1.0 (git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=9bcfd3b0)",
  "pretty-name",
  "serde_json",
  "widestring",
@@ -1858,11 +1858,31 @@ dependencies = [
 [[package]]
 name = "nkcore"
 version = "0.1.0"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=9bcfd3b0#9bcfd3b0bd60813456510dffd21678593f4bd14a"
+dependencies = [
+ "nkcore-base 0.1.0 (git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=9bcfd3b0)",
+ "nkcore-debug 0.1.0 (git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=9bcfd3b0)",
+ "nkcore-windows 0.1.0 (git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=9bcfd3b0)",
+]
+
+[[package]]
+name = "nkcore"
+version = "0.1.0"
 source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=a1afbe89#a1afbe896e8d590781a0f71b4a96c2f678f50cf3"
 dependencies = [
- "nkcore-base",
- "nkcore-debug",
- "nkcore-windows",
+ "nkcore-base 0.1.0 (git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=a1afbe89)",
+ "nkcore-debug 0.1.0 (git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=a1afbe89)",
+ "nkcore-windows 0.1.0 (git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=a1afbe89)",
+]
+
+[[package]]
+name = "nkcore-base"
+version = "0.1.0"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=9bcfd3b0#9bcfd3b0bd60813456510dffd21678593f4bd14a"
+dependencies = [
+ "anyhow",
+ "euclid",
+ "log",
 ]
 
 [[package]]
@@ -1878,11 +1898,33 @@ dependencies = [
 [[package]]
 name = "nkcore-debug"
 version = "0.1.0"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=9bcfd3b0#9bcfd3b0bd60813456510dffd21678593f4bd14a"
+dependencies = [
+ "anyhow",
+ "nkcore-debug-macros 0.1.0 (git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=9bcfd3b0)",
+ "pretty-name",
+]
+
+[[package]]
+name = "nkcore-debug"
+version = "0.1.0"
 source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=a1afbe89#a1afbe896e8d590781a0f71b4a96c2f678f50cf3"
 dependencies = [
  "anyhow",
- "nkcore-debug-macros",
+ "nkcore-debug-macros 0.1.0 (git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=a1afbe89)",
  "pretty-name",
+]
+
+[[package]]
+name = "nkcore-debug-macros"
+version = "0.1.0"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=9bcfd3b0#9bcfd3b0bd60813456510dffd21678593f4bd14a"
+dependencies = [
+ "darling 0.23.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+ "tap",
 ]
 
 [[package]]
@@ -1900,12 +1942,22 @@ dependencies = [
 [[package]]
 name = "nkcore-windows"
 version = "0.1.0"
-source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=a1afbe89#a1afbe896e8d590781a0f71b4a96c2f678f50cf3"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=9bcfd3b0#9bcfd3b0bd60813456510dffd21678593f4bd14a"
 dependencies = [
  "pretty_env_logger",
  "raw-window-handle",
  "windows 0.62.2",
  "winit",
+]
+
+[[package]]
+name = "nkcore-windows"
+version = "0.1.0"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=a1afbe89#a1afbe896e8d590781a0f71b4a96c2f678f50cf3"
+dependencies = [
+ "pretty_env_logger",
+ "raw-window-handle",
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -4492,7 +4544,7 @@ name = "winrt-capture"
 version = "0.1.0"
 source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=a1afbe89#a1afbe896e8d590781a0f71b4a96c2f678f50cf3"
 dependencies = [
- "nkcore",
+ "nkcore 0.1.0 (git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=a1afbe89)",
  "windows 0.62.2",
 ]
 

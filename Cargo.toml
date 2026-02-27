@@ -13,7 +13,7 @@ edition = "2024"
 
 [workspace.dependencies.nkcore]
 git = "git://nekomaru-ubuntu/Nekomaru-Rust.git"
-rev = "a1afbe89"
+rev = "9bcfd3b0"
 
 [workspace.dependencies.ngd3dcompile]
 git = "git://nekomaru-ubuntu/Nekomaru-Graphics-2025.git"
@@ -24,39 +24,23 @@ package = "ngd3dcompile_macro"
 git = "git://nekomaru-ubuntu/Nekomaru-Rust.git"
 rev = "a1afbe89"
 
-[workspace.dependencies.enumerate-windows]
-path = "crates/enumerate-windows"
-
-[workspace.dependencies.winit]
-version = "0.30.9"
-default-features = false
-features = ["rwh_06"]
-
-[workspace.dependencies.wry]
-version = "0.54.2"
-default-features = false
-features = ["devtools", "protocol"]
-
 [workspace.dependencies]
+enumerate-windows = { path = "crates/enumerate-windows" }
+
 # bytemuck = { version = "1.24.0", features = ["derive", "const_zeroed"] }
 # glam = { version = "0.30.9", features = ["approx", "bytemuck", "glam-assert"] }
 # cfg-if = "1.0.4"
+
 base64 = "0.22"    # Base64 encoding for SPS/PPS in protocol handler
+clap = { version = "4", features = ["derive"] }
 crossbeam = "0.8"  # Lock-free queue for stream manager
 log = "0.4.29"
-pretty-name = "0.4.5"
 pretty_env_logger = "0.5.0"
+pretty-name = "0.4.5"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"   # JSON serialization for protocol responses
 tap = "1.0.1"
 widestring = "1.2.1"
-clap = { version = "4", features = ["derive"] }
-
-eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow"] }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
-serde = { version = "1", features = ["derive"] }
-# egui = "0.33.2"
-# egui-winit = "0.33.2"
-# egui-directx11 = "0.12.1"
 
 # LOCK: wry@0.54.2 depends on windows@^0.61
 windows = { version = "0.62.2", features = [
@@ -76,8 +60,34 @@ windows = { version = "0.62.2", features = [
     "Win32_System_Threading",
     "Win32_System_Variant",
     "Win32_System_WinRT_Direct3D11",
+    "Win32_UI_HiDpi",
     "Win32_UI_WindowsAndMessaging",
 ]}
+
+[workspace.dependencies.egui]
+version = "0.33.3"
+default-features = false
+features = ["default_fonts"]
+
+[workspace.dependencies.eframe]
+version = "0.33.3"
+default-features = false
+features = ["default_fonts", "glow"]
+
+[workspace.dependencies.reqwest]
+version = "0.12.28"
+default-features = false
+features = ["blocking", "json", "rustls-tls"]
+
+[workspace.dependencies.winit]
+version = "0.30.9"
+default-features = false
+features = ["rwh_06"]
+
+[workspace.dependencies.wry]
+version = "0.54.2"
+default-features = false
+features = ["devtools", "protocol"]
 
 [workspace.lints.clippy]
 cargo       = { level = "warn", priority = -1 }
@@ -159,6 +169,7 @@ manual_range_contains = "allow" # makes graphics code less noisy
 match_ref_pats = "allow" # just looks cool XD
 
 # IV-code-style #nursery
+option_if_let_else = "allow" # makes code more readable in many cases
 suboptimal_flops = "allow" # makes graphics code less noisy
 
 # IV-code-style #pedantic

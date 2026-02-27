@@ -3,14 +3,6 @@ name = "live-capture"
 version = "0.1.0"
 edition = "2024"
 
-[lib]
-name = "live_capture"
-path = "src/lib.rs"
-
-[[bin]]
-name = "live-capture"
-path = "src/main.rs"
-
 [lints]
 workspace = true
 
@@ -18,7 +10,7 @@ workspace = true
 clap = { workspace = true }
 enumerate-windows = { workspace = true }
 ngd3dcompile = { workspace = true }
-nkcore = { workspace = true }
+nkcore = { workspace = true, features = ["debug"] }
 pretty-name = { workspace = true }
 serde_json = { workspace = true }
 widestring = { workspace = true }
