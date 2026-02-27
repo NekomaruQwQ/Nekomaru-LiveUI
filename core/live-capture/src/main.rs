@@ -117,6 +117,7 @@ struct CliArgs {
 }
 
 /// Resolved capture mode after CLI validation.
+#[derive(Clone, Copy)]
 enum CaptureMode {
     /// Scale the full window to fit `width x height` with letterboxing.
     Resample { width: u32, height: u32 },
@@ -204,7 +205,7 @@ fn main() {
     };
 
     if let Err(e) = run(hwnd, mode) {
-        eprintln!("fatal: {e:?}");
+        eprintln!("fatal: {e}");
         std::process::exit(1);
     }
 }
@@ -284,7 +285,7 @@ fn run(hwnd: isize, mode: CaptureMode) -> anyhow::Result<()> {
             let device = device.clone();
             let device_context = device_context.clone();
             let frame_source = staging_bgra8.clone();
-            move || encoding_thread(device, device_context, frame_source, frame_size)
+            move || encoding_thread(&device, &device_context, &frame_source, frame_size)
         })
         .context("failed to spawn encoding thread")?;
 
@@ -358,10 +359,12 @@ fn run(hwnd: isize, mode: CaptureMode) -> anyhow::Result<()> {
 
 // ── Encoding thread ─────────────────────────────────────────────────────────
 
+#[expect(clippy::similar_names, reason = "last_sps/last_pps are intentionally parallel — SPS and PPS are paired H.264 parameter sets")]
+#[expect(clippy::exit, reason = "intentional exit when stdout pipe breaks (server killed capture process)")]
 fn encoding_thread(
-    device: ID3D11Device,
-    device_context: ID3D11DeviceContext,
-    frame_source: ID3D11Texture2D,
+    device: &ID3D11Device,
+    device_context: &ID3D11DeviceContext,
+    frame_source: &ID3D11Texture2D,
     frame_size: Size2D<u32>) {
     log::info!("encoding thread started");
 
@@ -371,11 +374,11 @@ fn encoding_thread(
         .expect("CoInitializeEx failed on encoding thread");
 
     let nv12_converter =
-        NV12Converter::new(&device, &device_context, frame_size.width, frame_size.height)
+        NV12Converter::new(device, device_context, frame_size.width, frame_size.height)
             .expect("failed to create NV12 converter");
     let nv12_staging =
         d3d11::create_texture_2d(
-            &device,
+            device,
             frame_size,
             DXGI_FORMAT_NV12,
             &[D3D11_BIND_RENDER_TARGET])
@@ -387,7 +390,7 @@ fn encoding_thread(
     let mut last_sps: Option<Vec<u8>> = None;
     let mut last_pps: Option<Vec<u8>> = None;
 
-    let encoder = H264Encoder::new(&device, H264EncoderConfig {
+    let encoder = H264Encoder::new(device, H264EncoderConfig {
         frame_size,
         frame_rate: FRAME_RATE,
         bitrate: BITRATE,
@@ -397,7 +400,7 @@ fn encoding_thread(
         // Frame source: convert BGRA8 → NV12
         || {
             nv12_converter
-                .convert(&frame_source, &nv12_staging)
+                .convert(frame_source, &nv12_staging)
                 .expect("BGRA8 \u{2192} NV12 conversion failed");
             nv12_staging.clone()
         },

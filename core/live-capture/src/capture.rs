@@ -31,7 +31,7 @@ impl CropBox {
     /// encoder.  When the rounded size exceeds the actual crop, the extra pixels
     /// appear as padding on the right / bottom edge (filled with the staging
     /// texture's clear colour).
-    pub fn output_size(&self) -> Size2D<u32> {
+    pub const fn output_size(&self) -> Size2D<u32> {
         let w = self.max_x - self.min_x;
         let h = self.max_y - self.min_y;
         Size2D::new((w + 15) & !15, (h + 15) & !15)
@@ -39,7 +39,7 @@ impl CropBox {
 
     /// Convert to a `D3D11_BOX` for `CopySubresourceRegion`, clamping to
     /// `source` so the box never reads out of bounds.
-    pub fn to_d3d11_box(&self, source: Size2D<u32>) -> D3D11_BOX {
+    pub fn to_d3d11_box(self, source: Size2D<u32>) -> D3D11_BOX {
         let left = self.min_x.min(source.width);
         let top  = self.min_y.min(source.height);
         let right  = self.max_x.min(source.width);

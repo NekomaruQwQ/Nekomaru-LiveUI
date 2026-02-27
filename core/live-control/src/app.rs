@@ -76,7 +76,7 @@ impl ControlApp {
             windows: Vec::new(),
             auto_status: None,
             strings: HashMap::new(),
-            last_poll: Instant::now() - POLL_INTERVAL, // trigger immediate first poll
+            last_poll: Instant::now().checked_sub(POLL_INTERVAL).unwrap(), // trigger immediate first poll
             config_include: Vec::new(),
             config_exclude: Vec::new(),
             config_dirty: false,
@@ -126,11 +126,10 @@ impl ControlApp {
         }
 
         // Only overwrite config from server when the user has no unsaved edits.
-        if !self.config_dirty {
-            if let Ok(config) = self.client.get_auto_config() {
-                self.config_include = config.include_list;
-                self.config_exclude = config.exclude_list;
-            }
+        if !self.config_dirty
+            && let Ok(config) = self.client.get_auto_config() {
+            self.config_include = config.include_list;
+            self.config_exclude = config.exclude_list;
         }
 
         if let Ok(s) = self.client.get_strings() {
@@ -164,7 +163,7 @@ impl ControlApp {
 
     // ── UI sections ─────────────────────────────────────────────────────
 
-    fn ui_streams(&mut self, ui: &mut egui::Ui) {
+    fn ui_streams(&self, ui: &mut egui::Ui) {
         ui.heading("Streams");
         ui.add_space(4.0);
 
@@ -196,22 +195,21 @@ impl ControlApp {
 
                     // Executable — extract filename from full path.
                     let exe = win
-                        .map(|w| w.executable_path.rsplit('\\').next().unwrap_or(&w.executable_path))
-                        .unwrap_or("?");
+                        .map_or("?", |w| w.executable_path.rsplit('\\').next().unwrap_or(&w.executable_path));
                     ui.label(exe);
 
                     ui.label(&stream.status);
 
                     // Window title last — clips at window width instead of overflowing.
                     let title = win
-                        .map(|w| if w.title.is_empty() { "<untitled>" } else { &w.title })
-                        .unwrap_or("?");
+                        .map_or("?", |w| if w.title.is_empty() { "<untitled>" } else { &w.title });
                     ui.add(egui::Label::new(title).truncate());
                     ui.end_row();
                 }
             });
     }
 
+    #[expect(clippy::too_many_lines, reason = "single UI section with include/exclude list editors; splitting would fragment the layout flow")]
     fn ui_auto_selector(&mut self, ui: &mut egui::Ui) {
         ui.heading("Auto-Selector");
         ui.add_space(4.0);
@@ -272,7 +270,7 @@ impl ControlApp {
                 ui.add(egui::TextEdit::singleline(&mut text)
                     .desired_width(ui.available_width() - 24.0)
                     .interactive(false));
-                if ui.small_button("×").clicked() {
+                if ui.small_button("\u{d7}").clicked() {
                     include_remove = Some(i);
                 }
             });
@@ -308,7 +306,7 @@ impl ControlApp {
                 ui.add(egui::TextEdit::singleline(&mut text)
                     .desired_width(ui.available_width() - 24.0)
                     .interactive(false));
-                if ui.small_button("×").clicked() {
+                if ui.small_button("\u{d7}").clicked() {
                     exclude_remove = Some(i);
                 }
             });
@@ -362,18 +360,18 @@ impl ControlApp {
 
         // Collect into sorted vec for stable display order.
         let mut entries: Vec<_> = self.strings.iter().collect();
-        entries.sort_by_key(|(k, _)| k.as_str());
+        entries.sort_by_key(|&(k, _)| k.as_str());
 
         let mut delete_key: Option<String> = None;
-        for (key, value) in &entries {
+        for &(key, value) in &entries {
             ui.horizontal(|ui| {
                 ui.label(format!("{key} ="));
-                let mut val = (*value).clone();
+                let mut val = value.clone();
                 ui.add(egui::TextEdit::singleline(&mut val)
                     .desired_width(ui.available_width() - 24.0)
                     .interactive(false));
-                if ui.small_button("×").clicked() {
-                    delete_key = Some((*key).clone());
+                if ui.small_button("\u{d7}").clicked() {
+                    delete_key = Some(key.clone());
                 }
             });
         }
@@ -412,10 +410,8 @@ impl ControlApp {
 
     fn ui_status_bar(&mut self, ui: &mut egui::Ui) {
         // Clear stale status messages after 5 seconds.
-        if let Some((_, when)) = &self.status {
-            if when.elapsed() > std::time::Duration::from_secs(5) {
-                self.status = None;
-            }
+        if self.status.as_ref().is_some_and(|&(_, ref when)| when.elapsed() > std::time::Duration::from_secs(5)) {
+            self.status = None;
         }
 
         if let Some((ref msg, _)) = self.status {
@@ -444,6 +440,7 @@ impl eframe::App for ControlApp {
                 self.ui_streams(ui);
                 ui.separator();
                 ui.columns(2, |cols| {
+                    assert!(cols.len() >= 2, "ui.columns(2, ...) must yield at least 2 columns");
                     self.ui_string_store(&mut cols[0]);
                     self.ui_auto_selector(&mut cols[1]);
                 });

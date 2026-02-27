@@ -117,8 +117,8 @@ fn enum_callback_internal(hwnd: HWND, out: &mut Vec<WindowInfo>) {
     }
 
     // Skip owned windows (popups, toolbars, etc.) — only want top-level.
-    // SAFETY: `hwnd` from `EnumWindows`; returns default HWND on failure.
     if !(
+        // SAFETY: `hwnd` from `EnumWindows`; returns default HWND on failure.
         unsafe { GetWindow(hwnd, GW_OWNER) }
             .unwrap_or_default()
             .is_invalid()) {

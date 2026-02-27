@@ -35,6 +35,7 @@ pub struct WindowInfo {
 #[derive(Debug, Clone, Deserialize)]
 pub struct AutoStatus {
     pub active: bool,
+    #[expect(dead_code, reason = "deserialization field; present in JSON but not read by app logic")]
     #[serde(rename = "currentStreamId")]
     pub current_stream_id: Option<String>,
     #[serde(rename = "currentHwnd")]

@@ -80,16 +80,16 @@ impl Resampler {
     /// The caller **must** set the viewport via `RSSetViewports` before calling
     /// this — the resampler does not set its own viewport.  This is by design:
     /// the viewport controls the aspect-ratio-preserving letterbox region.
-    // SAFETY: `ctx` is a valid device context; `source_srv`, `target_rtv`, and
-    // `self.{vs, ps, sampler}` are all valid D3D11 objects created from the same device.
-    // The draw call issues 6 vertices (two triangles) with no vertex buffer (procedural
-    // fullscreen quad generated in the vertex shader). Resources are unbound after draw.
     #[expect(clippy::multiple_unsafe_ops_per_block, reason = "Windows API calls")]
     pub fn resample(
         &self,
         ctx: &ID3D11DeviceContext,
         source_srv: &ID3D11ShaderResourceView,
         target_rtv: &ID3D11RenderTargetView) {
+        // SAFETY: `ctx` is a valid device context; `source_srv`, `target_rtv`, and
+        // `self.{vs, ps, sampler}` are all valid D3D11 objects created from the same device.
+        // The draw call issues 6 vertices (two triangles) with no vertex buffer (procedural
+        // fullscreen quad generated in the vertex shader). Resources are unbound after draw.
         unsafe {
             ctx.OMSetRenderTargets(Some(&[Some(target_rtv.clone())]), None);
             ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);

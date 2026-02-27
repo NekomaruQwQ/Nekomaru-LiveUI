@@ -40,7 +40,7 @@ impl Client {
         self.http
             .get(format!("{}/streams", self.server_url))
             .send()
-            .and_then(|r| r.json())
+            .and_then(reqwest::blocking::Response::json)
             .map_err(|e| format!("list streams: {e}"))
     }
 
@@ -49,11 +49,12 @@ impl Client {
         self.http
             .get(format!("{}/streams/windows", self.server_url))
             .send()
-            .and_then(|r| r.json())
+            .and_then(reqwest::blocking::Response::json)
             .map_err(|e| format!("list windows: {e}"))
     }
 
     /// `DELETE /streams/:id` — destroy a capture stream.
+    #[expect(dead_code, reason = "API method — will be wired to a UI button")]
     pub fn destroy_stream(&self, id: &str) -> Result<(), String> {
         self.http
             .delete(format!("{}/streams/{id}", self.server_url))
@@ -69,7 +70,7 @@ impl Client {
         self.http
             .get(format!("{}/streams/auto", self.server_url))
             .send()
-            .and_then(|r| r.json())
+            .and_then(reqwest::blocking::Response::json)
             .map_err(|e| format!("auto status: {e}"))
     }
 
@@ -78,7 +79,7 @@ impl Client {
         self.http
             .post(format!("{}/streams/auto", self.server_url))
             .send()
-            .and_then(|r| r.json())
+            .and_then(reqwest::blocking::Response::json)
             .map_err(|e| format!("start auto: {e}"))
     }
 
@@ -96,7 +97,7 @@ impl Client {
         self.http
             .get(format!("{}/streams/auto/config", self.server_url))
             .send()
-            .and_then(|r| r.json())
+            .and_then(reqwest::blocking::Response::json)
             .map_err(|e| format!("auto config: {e}"))
     }
 
@@ -117,7 +118,7 @@ impl Client {
         self.http
             .get(format!("{}/strings", self.server_url))
             .send()
-            .and_then(|r| r.json())
+            .and_then(reqwest::blocking::Response::json)
             .map_err(|e| format!("get strings: {e}"))
     }
 

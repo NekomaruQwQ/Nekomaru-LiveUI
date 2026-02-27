@@ -260,11 +260,13 @@ fn read_frame_payload(data: &[u8]) -> io::Result<FrameMessage> {
 
     let mut pos = 0;
 
-    let timestamp_us = u64::from_le_bytes(data[pos..pos + 8].try_into().unwrap());
+    let timestamp_us = u64::from_le_bytes(
+        data[pos..pos + 8].try_into().map_err(|_e| invalid())?);
     pos += 8;
     let is_keyframe = data[pos] != 0;
     pos += 1;
-    let num_nals = u32::from_le_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
+    let num_nals = u32::from_le_bytes(
+        data[pos..pos + 4].try_into().map_err(|_e| invalid())?) as usize;
     pos += 4;
 
     let mut nal_units = Vec::with_capacity(num_nals);
@@ -273,7 +275,8 @@ fn read_frame_payload(data: &[u8]) -> io::Result<FrameMessage> {
 
         let nal_type_byte = data[pos];
         pos += 1;
-        let nal_data_len = u32::from_le_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
+        let nal_data_len = u32::from_le_bytes(
+            data[pos..pos + 4].try_into().map_err(|_e| invalid())?) as usize;
         pos += 4;
 
         if pos + nal_data_len > data.len() { return Err(invalid()); }
