@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from "react";
 
 type GridProps = {
     gap?: number | string;
@@ -18,10 +18,10 @@ export default function Grid({
     children,
 }: GridProps) {
     const gridStyle: CSSProperties = {
-        display: 'grid',
+        display: "grid",
         // The defined axis uses the provided track list; the cross axis fills all space.
-        gridTemplateRows: rows ?? '1fr',
-        gridTemplateColumns: columns ?? '1fr',
+        gridTemplateRows: rows ?? "1fr",
+        gridTemplateColumns: columns ?? "1fr",
         ...style,
     };
 

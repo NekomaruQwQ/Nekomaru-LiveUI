@@ -1,8 +1,8 @@
-import { StreamRenderer } from '@/stream';
-import { useStreamStatus } from '@/streams';
-import { useStrings } from '@/strings';
-import Marquee from '@/components/marquee';
-import Grid from '@/components/grid';
+import { StreamRenderer } from "@/stream";
+import { useStreamStatus } from "@/streams";
+import { useStrings } from "@/strings";
+import Marquee from "@/components/marquee";
+import Grid from "@/components/grid";
 
 /// Pure viewer shell.  Stream lifecycle is fully server-managed — the
 /// frontend just renders two well-known stream IDs and polls for

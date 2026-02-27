@@ -7,10 +7,10 @@
  * # Usage in Code
  *
  * ```typescript
- * import { DEBUG } from './debug';
+ * import { DEBUG } from "./debug";
  *
  * if (DEBUG.decoder) {
- *     console.log('[Decoder] debug message');
+ *     console.log("[Decoder] debug message");
  * }
  * ```
  *
@@ -23,6 +23,7 @@
  * window.__DEBUG__.decoder = true;   // Enable decoder logs
  * window.__DEBUG__.renderer = true;  // Enable renderer logs
  * window.__DEBUG__.stream = true;    // Enable stream loop logs
+
  * ```
  */
 
