@@ -1,0 +1,60 @@
+/* ── Flowing mesh gradient background ─────────────────────────────────────────
+   Layered radial-gradient mesh — each blob is an One Dark color at low opacity
+   over a dark base.  Different background-size per layer means a single position
+   animation drifts them at different apparent speeds. */
+
+div#app {
+    background:
+        radial-gradient(circle at 20% 30%, oklch(0.70 0.15 240 / 0.30) 0%, transparent 70%),  /* blue   */
+        radial-gradient(circle at 75% 60%, oklch(0.70 0.15 320 / 0.30) 0%, transparent 70%),  /* purple */
+        radial-gradient(circle at 50% 80%, oklch(0.70 0.15 190 / 0.30) 0%, transparent 70%),  /* cyan   */
+        radial-gradient(circle at 80% 15%, oklch(0.70 0.15  65 / 0.30) 0%, transparent 70%),  /* orange */
+        linear-gradient(135deg, #1a1b1e, #222327);                                            /* dark base */
+
+    background-size: 200% 200%, 250% 250%, 300% 300%, 220% 220%, 100% 100%;
+    animation: mesh-drift 5s ease-in-out infinite alternate;
+}
+
+@keyframes mesh-drift {
+    0%   { background-position: 0% 0%,   100% 50%, 50% 100%, 80% 0%,   0% 0%; }
+    100% { background-position: 100% 100%, 0% 30%, 80% 0%,   20% 100%, 0% 0%; }
+}
+
+/* ── Animated border hue ─────────────────────────────────────────────────────
+   Register --border-hue so CSS can interpolate it between the four One Dark
+   palette hues used in the mesh gradient (blue 240, purple 320, cyan 190, orange 65). */
+
+@property --border-hue {
+    syntax: "<angle>";
+    initial-value: 240deg;
+    inherits: false;
+}
+
+/* ── Win11-style dark acrylic islands ────────────────────────────────────────
+   Semi-transparent surface with backdrop blur lets the mesh gradient show
+   through.  Border hue cycles through the four One Dark palette hues.
+   Noise grain (SVG feTurbulence) adds frosted material texture.
+   Inset top-edge highlight simulates light hitting frosted glass. */
+
+div.island {
+    --border-hue: 240deg;
+    border: 1.5px solid oklch(0.70 0.15 var(--border-hue) / 0.4);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.10),
+        0 1px 3px rgba(0, 0, 0, 0.3),
+        0 4px 12px rgba(0, 0, 0, 0.15);
+    background:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.06'/%3E%3C/svg%3E") 0 0 / 200px 200px,
+        rgba(43, 45, 48, 0.75);
+    backdrop-filter: blur(20px) saturate(1.4);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    animation: cycle-border-hue 8s ease-in-out infinite;
+}
+
+@keyframes cycle-border-hue {
+    0%   { --border-hue: 240deg; }  /* blue   */
+    25%  { --border-hue: 320deg; }  /* purple */
+    50%  { --border-hue: 190deg; }  /* cyan   */
+    75%  { --border-hue:  65deg; }  /* orange */
+    100% { --border-hue: 240deg; }  /* blue   */
+}

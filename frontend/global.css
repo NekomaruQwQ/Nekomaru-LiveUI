@@ -32,12 +32,14 @@ div#app {
     background: linear-gradient(135deg, #1a1b1e, #222327);
 }
 
-/* Shared island panel style — dark surface, subtle border, soft shadow. */
+div.grid {
+    /* Allow box shadows and border glows to overflow outside the grid container, for better effects layering. */
+    overflow: visible;
+}
+
+/* Shared island panel style — structural base (effects layered in global.effects.css). */
 div.island {
-    border: 1px solid #393b40;
     border-radius: 0.5rem;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.3), 0 4px 12px rgba(0,0,0,0.15);
-    background-color: #2b2d30;
 }
 
 div.marquee span {

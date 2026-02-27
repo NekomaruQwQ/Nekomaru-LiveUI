@@ -1,24 +1,38 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 /// Pixels per second — consistent reading speed regardless of text length.
 const MARQUEE_SPEED = 30;
 
 /// Seamlessly looping horizontal text scroll.  Two identical copies of the
-/// text sit side-by-side; the animation shifts by exactly one copy's width
-/// (−50%), so the loop reset is invisible.  Duration is derived from the
-/// rendered width so scroll speed stays constant for any text length.
+/// text sit side-by-side inside a `w-max` container; the animation shifts by
+/// exactly −50% (= one copy's width), so the loop reset is invisible.
+///
+/// Duration is derived from the rendered width of one text copy and written
+/// directly to the DOM (bypassing React state) so that ResizeObserver fires
+/// never restart the CSS animation mid-scroll.
 export default function Marquee({ text }: { text: string }) {
-    const ref = useRef<HTMLSpanElement>(null);
-    const [duration, setDuration] = useState(0);
+    const spanRef = useRef<HTMLSpanElement>(null);
+    const divRef = useRef<HTMLDivElement>(null);
 
-    // Derive animation duration from the rendered width of one text copy.
-    // ResizeObserver re-fires automatically when the text content changes.
+    // Measure one copy's rendered width → set animationDuration directly on
+    // the DOM element.  Avoids React re-renders that would restart the
+    // animation.  ResizeObserver re-fires when the text content changes.
     useEffect(() => {
-        const el = ref.current;
-        if (!el) return;
-        const measure = () => setDuration(el.offsetWidth / MARQUEE_SPEED);
+        const span = spanRef.current;
+        const div = divRef.current;
+        if (!span || !div) return;
+
+        let prevDuration = "";
+        const measure = () => {
+            const next = `${span.offsetWidth / MARQUEE_SPEED}s`;
+            if (next !== prevDuration) {
+                prevDuration = next;
+                div.style.animationDuration = next;
+            }
+        };
+
         const observer = new ResizeObserver(measure);
-        observer.observe(el);
+        observer.observe(span);
         measure();
         return () => observer.disconnect();
     }, []);
@@ -27,9 +41,9 @@ export default function Marquee({ text }: { text: string }) {
 
     return (
         <div
-            className="flex! overflow-visible! flex-1 flex-row marquee text-[#bcc0cc] text-sm animate-[marquee_linear_infinite]"
-            style={{ animationDuration: `${duration}s` }}>
-            <span ref={ref} className="shrink-0 min-w-auto">{item}</span>
+            ref={divRef}
+            className="flex! overflow-visible! w-max flex-row marquee text-[#bcc0cc] text-sm animate-[marquee_linear_infinite]">
+            <span ref={spanRef} className="shrink-0 min-w-auto">{item}</span>
             <span className="shrink-0 min-w-auto">{item}</span>
         </div>
     );

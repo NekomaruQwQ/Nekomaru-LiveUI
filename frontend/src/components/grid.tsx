@@ -26,7 +26,7 @@ export default function Grid({
     };
 
     return (
-        <div className={`gap-${gap} ${className}`} style={gridStyle}>
+        <div className={`grid gap-${gap} ${className}`} style={gridStyle}>
             {children}
         </div>
     );

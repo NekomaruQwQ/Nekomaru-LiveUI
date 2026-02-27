@@ -12,7 +12,7 @@ server:
 
 app *args:
     use .mod.nu run; \
-    run live-app app {{args}}
+    run live-app app -x 1280 -y 720 {{args}}
 control *args:
     use .mod.nu run; \
     run live-control app {{args}}
@@ -21,7 +21,7 @@ youtube-music *args:
     run live-app youtube-music \
         "https://music.youtube.com/" \
         -t "YouTube Music" \
-        -s 2 \
+        -x 1280 -y 720 -s 2 \
         {{args}}
 
 install: install-frontend install-server
