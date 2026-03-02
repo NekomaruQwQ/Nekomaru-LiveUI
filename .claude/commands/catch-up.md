@@ -1,1 +1,1 @@
-Read @docs/README.md to catch up.
+Read @docs/README.md to catch up. You do not need to check uncommitted changes for now.

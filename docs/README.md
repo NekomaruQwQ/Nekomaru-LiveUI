@@ -12,6 +12,7 @@
 
 - [Quick Start](#quick-start)
 - [Architecture Overview](#architecture-overview)
+- [Widget Design](#widget-design)
 - [IPC Wire Protocol](#ipc-wire-protocol)
 - [HTTP API](#http-api)
 - [Implementation Status](#implementation-status)
@@ -162,6 +163,48 @@ Each source file has a primary owner — **agent** (Claude) or **human** (Nekoma
 - **Human files**: Nekomaru hand-crafts with attention to visual style. Claude can work on them but changes are always reviewed and refactored.
 
 See [`FILE-OWNERSHIP.md`](../FILE-OWNERSHIP.md) for the full per-file breakdown.
+
+---
+
+## Widget Design
+
+The left column of the UI hosts **widgets** — small status indicators built from a shared `LiveWidget` component (`frontend/src/widgets.tsx`).
+
+### Layout
+
+Each widget has a consistent three-part structure:
+
+```
+┌─────────────────────┐
+│  [icon]  Label      │   ← icon (optional) + muted label (text-xs, 60% opacity)
+│          Content    │   ← prominent value (text-base, full opacity)
+└─────────────────────┘
+```
+
+The icon sits to the left of the label+content stack, vertically centered. When no icon is provided the widget collapses to just the two text rows.
+
+### Props
+
+| Prop | Type | Required | Description |
+|------|------|----------|-------------|
+| `name` | `string` | Yes | Static label displayed in the top row (smaller, muted). |
+| `icon` | `ReactNode` | No | Icon rendered in a fixed 20×20 slot to the left. The parent decides what to pass — SVG component, `<img>`, emoji, etc. |
+| `children` | `ReactNode` | Yes | Widget content (bottom row). Can be static text or dynamic values from the string store. |
+
+### Dynamic Content
+
+`LiveWidget` is purely presentational. For dynamic values, the parent component calls `useStrings()` to poll the server-managed string store and passes values as `children`:
+
+```tsx
+const strings = useStrings();
+<LiveWidget name="Microphone" icon={<MicIcon />}>
+    {strings.mic ?? "OFF"}
+</LiveWidget>
+```
+
+### Placement
+
+Widgets are rendered inside `SidePanel` (the left column island in `app.tsx`), which uses `flex-col gap-3` layout. Each widget is a flex item within that container — not its own island.
 
 ---
 
