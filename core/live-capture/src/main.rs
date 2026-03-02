@@ -51,7 +51,6 @@ use windows::Win32::UI::HiDpi::*;
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-const FRAME_RATE: u32 = 60;
 const BITRATE: u32 = 8_000_000; // 8 Mbps CBR
 
 // ── CLI ─────────────────────────────────────────────────────────────────────
@@ -114,6 +113,11 @@ struct CliArgs {
         requires_all = ["crop_min_x", "crop_min_y", "crop_max_x"],
         conflicts_with_all = ["width", "height"])]
     crop_max_y: Option<u32>,
+
+    /// Encoder frame rate (1–60). Lower values save GPU cycles for
+    /// near-static content like the YouTube Music playback bar.
+    #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u32).range(1..=60))]
+    fps: u32,
 }
 
 /// Resolved capture mode after CLI validation.
@@ -204,13 +208,13 @@ fn main() {
         }
     };
 
-    if let Err(e) = run(hwnd, mode) {
+    if let Err(e) = run(hwnd, mode, args.fps) {
         eprintln!("fatal: {e}");
         std::process::exit(1);
     }
 }
 
-fn run(hwnd: isize, mode: CaptureMode) -> anyhow::Result<()> {
+fn run(hwnd: isize, mode: CaptureMode, frame_rate: u32) -> anyhow::Result<()> {
     // SAFETY: Called once at the start of the main thread before any COM usage.
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
         .ok()
@@ -285,7 +289,7 @@ fn run(hwnd: isize, mode: CaptureMode) -> anyhow::Result<()> {
             let device = device.clone();
             let device_context = device_context.clone();
             let frame_source = staging_bgra8.clone();
-            move || encoding_thread(&device, &device_context, &frame_source, frame_size)
+            move || encoding_thread(&device, &device_context, &frame_source, frame_size, frame_rate)
         })
         .context("failed to spawn encoding thread")?;
 
@@ -365,7 +369,8 @@ fn encoding_thread(
     device: &ID3D11Device,
     device_context: &ID3D11DeviceContext,
     frame_source: &ID3D11Texture2D,
-    frame_size: Size2D<u32>) {
+    frame_size: Size2D<u32>,
+    frame_rate: u32) {
     log::info!("encoding thread started");
 
     // SAFETY: Called once at the start of the encoding thread before any COM usage.
@@ -392,7 +397,7 @@ fn encoding_thread(
 
     let encoder = H264Encoder::new(device, H264EncoderConfig {
         frame_size,
-        frame_rate: FRAME_RATE,
+        frame_rate,
         bitrate: BITRATE,
     }).expect("failed to create H.264 encoder");
 

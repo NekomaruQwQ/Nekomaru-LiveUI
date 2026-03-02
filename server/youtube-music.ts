@@ -100,7 +100,7 @@ class YouTubeMusicManager {
                     const minY = Math.max(0, ytm.height - barHeight - bottomMargin + titleBarHeight);
                     const maxY = Math.max(minY, ytm.height - bottomMargin + titleBarHeight);
                     proc.replaceCropStream(
-                        STREAM_ID, hwndStr, 0, minY, ytm.width - rightMargin, maxY);
+                        STREAM_ID, hwndStr, 0, minY, ytm.width - rightMargin, maxY, 1);
                     this.lastKnownHwnd = hwndStr;
                     console.log(`[ytm] capturing ${hwndStr} (${ytm.width}x${ytm.height})`);
                 }

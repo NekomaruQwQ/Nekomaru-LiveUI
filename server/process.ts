@@ -129,15 +129,19 @@ export function createStream(hwnd: string, width: number, height: number): Captu
 ///
 /// The bounding box is in source-pixel coordinates.  Non-16-aligned dimensions
 /// are accepted; the encoder output is padded to the next multiple of 16.
+/// `fps` overrides the encoder frame rate (default 60).
 export function createCropStream(
     hwnd: string,
     minX: number, minY: number,
-    maxX: number, maxY: number): CaptureStream {
+    maxX: number, maxY: number,
+    fps?: number): CaptureStream {
     const id = crypto.randomUUID().slice(0, 8);
-    return spawnCapture(id, hwnd,
-        [captureExePath, "--hwnd", hwnd,
-            "--crop-min-x", String(minX), "--crop-min-y", String(minY),
-            "--crop-max-x", String(maxX), "--crop-max-y", String(maxY)],
+    const args = [
+        captureExePath, "--hwnd", hwnd,
+        "--crop-min-x", String(minX), "--crop-min-y", String(minY),
+        "--crop-max-x", String(maxX), "--crop-max-y", String(maxY)];
+    if (fps !== undefined) args.push("--fps", String(fps));
+    return spawnCapture(id, hwnd, args,
         `hwnd=${hwnd}, crop (${minX},${minY})..(${maxX},${maxY})`);
 }
 
@@ -171,15 +175,18 @@ export function replaceStream(id: string, hwnd: string, width: number, height: n
 
 /// Replace a crop-mode stream behind a well-known stream ID.
 /// Same semantics as `replaceStream` but for crop mode.
+/// `fps` overrides the encoder frame rate (default 60).
 export function replaceCropStream(
     id: string,
     hwnd: string,
     minX: number, minY: number,
-    maxX: number, maxY: number): CaptureStream {
+    maxX: number, maxY: number,
+    fps?: number): CaptureStream {
     const args = [
         captureExePath, "--hwnd", hwnd,
         "--crop-min-x", String(minX), "--crop-min-y", String(minY),
         "--crop-max-x", String(maxX), "--crop-max-y", String(maxY)];
+    if (fps !== undefined) args.push("--fps", String(fps));
     const label = `hwnd=${hwnd}, crop (${minX},${minY})..(${maxX},${maxY})`;
 
     const existing = streams.get(id);
