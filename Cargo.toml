@@ -3,7 +3,6 @@ resolver = "3"
 members = [
     "core/live-app",
     "core/live-capture",
-    "core/live-control",
     "crates/enumerate-windows",
 ]
 
