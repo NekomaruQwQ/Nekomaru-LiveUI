@@ -95,8 +95,8 @@ class YouTubeMusicManager {
                     // Crop the bottom 96px of the window (playback bar).
                     const titleBarHeight = 48;
                     const barHeight = 112;
-                    const bottomMargin = 10;
-                    const rightMargin = 32;
+                    const bottomMargin = 12;
+                    const rightMargin = 96;
                     const minY = Math.max(0, ytm.height - barHeight - bottomMargin + titleBarHeight);
                     const maxY = Math.max(minY, ytm.height - bottomMargin + titleBarHeight);
                     proc.replaceCropStream(

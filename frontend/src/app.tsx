@@ -48,8 +48,8 @@ function SidePanel() {
         <div className="island p-2">
             <ClockWidget />
         </div>
-        <div className="island px-4 py-2 flex-1">
-            <pre className="font-sans">
+        <div className="island p-2 flex-1">
+            <pre className="font-sans font-light whitespace-pre-wrap wrap-break-word">
                 {strings.message}
             </pre>
         </div>

@@ -5,9 +5,9 @@ alias i := install
 list:
     just --list
 put key value:
-    curl -X PUT $'http://localhost:($env.LIVE_PORT)/strings/{{key}}' \
-        -H 'Content-Type: application/json' \
-        -d '{"value":"{{value}}"}'
+    http put $'http://localhost:($env.LIVE_PORT)/strings/{{key}}' \
+        --content-type application/json \
+        { value: "{{value}}" }
 
 server:
     use .mod.nu run; \

@@ -42,7 +42,7 @@ export default function Marquee({ text }: { text: string }) {
     return (
         <div
             ref={divRef}
-            className="flex! overflow-visible! w-max flex-row marquee text-[#bcc0cc] text-sm animate-[marquee_linear_infinite]">
+            className="flex! overflow-visible! w-max flex-row marquee text-sm animate-[marquee_linear_infinite]">
             <span ref={spanRef} className="shrink-0 min-w-auto">{item}</span>
             <span className="shrink-0 min-w-auto">{item}</span>
         </div>
