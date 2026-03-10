@@ -7,6 +7,11 @@
 // in-place (bumping its generation counter) instead of destroying and
 // recreating it.
 //
+// Each include/exclude entry is a pattern string in the format
+// `<exePath>@<windowTitle>`.  If no `@` is present, only the executable
+// path is matched (backward-compatible).  When both parts are given, both
+// must match (AND).  The title part is always compared case-insensitively.
+//
 // Include/exclude config is persisted to data/selector-config.json — loaded
 // on server start, written on every setConfig() call.  Falls back to
 // hardcoded defaults if the file is missing or corrupt.
@@ -159,7 +164,7 @@ class LiveWindowSelector {
         // Log foreground change (title masked for privacy, same as original).
         console.log(`[selector] foreground: *** (${info.executable_path})`);
 
-        if (!this.shouldCapture(info.executable_path)) return;
+        if (!this.shouldCapture(info.executable_path, info.title)) return;
 
         // Already capturing this window.
         if (hwndStr === this.lastCaptureHwnd) return;
@@ -172,16 +177,63 @@ class LiveWindowSelector {
         console.log(`[selector] capturing ${hwndStr} → stream ${STREAM_ID}`);
     }
 
-    /// Determines whether a window's executable path qualifies for capture.
-    /// Must match at least one include entry (substring) and must not match
-    /// any exclude entry (case-insensitive substring).
-    private shouldCapture(executablePath: string): boolean {
+    /// Determines whether a window qualifies for capture based on its
+    /// executable path and title.  Each config entry may optionally contain
+    /// a `@` separator: `<exePath>@<windowTitle>`.  Must match at least one
+    /// include entry and must not match any exclude entry.
+    private shouldCapture(executablePath: string, title: string): boolean {
         const included = this.includeList.some((pattern) =>
-            executablePath.includes(pattern));
+            matchesPattern(pattern, executablePath, title, false));
         const excluded = this.excludeList.some((pattern) =>
-            executablePath.toLowerCase().includes(pattern));
+            matchesPattern(pattern, executablePath, title, true));
         return included && !excluded;
     }
+}
+
+// ── Pattern matching ─────────────────────────────────────────────────────────
+
+/// A parsed config pattern with optional title filter.
+interface ParsedPattern {
+    exePath: string;
+    /// null when no `@` separator is present (plain exe-path-only pattern).
+    title: string | null;
+}
+
+/// Parse a config string in the format `<exePath>@<windowTitle>`.
+/// If no `@` is present, the entire string is the exe path and title is null.
+/// Splits on the *first* `@` so that window titles containing `@` are preserved.
+function parsePattern(pattern: string): ParsedPattern {
+    const idx = pattern.indexOf("@");
+    if (idx === -1) return { exePath: pattern, title: null };
+    return { exePath: pattern.slice(0, idx), title: pattern.slice(idx + 1) };
+}
+
+/// Test whether a window (exe path + title) matches a single config pattern.
+///
+/// - `caseInsensitive` controls exe-path comparison; title comparison is
+///   always case-insensitive regardless of this flag.
+/// - Both the exe-path part and the title part (when present and non-empty)
+///   must match (AND semantics).
+function matchesPattern(
+    pattern: string,
+    executablePath: string,
+    windowTitle: string,
+    caseInsensitive: boolean): boolean {
+    const { exePath, title } = parsePattern(pattern);
+
+    // Check exe-path part (skip if empty, e.g. "@SomeTitle").
+    if (exePath.length > 0) {
+        const haystack = caseInsensitive ? executablePath.toLowerCase() : executablePath;
+        const needle = caseInsensitive ? exePath.toLowerCase() : exePath;
+        if (!haystack.includes(needle)) return false;
+    }
+
+    // Check title part (skip if absent or empty, e.g. "foo.exe" or "foo.exe@").
+    if (title !== null && title.length > 0) {
+        if (!windowTitle.toLowerCase().includes(title.toLowerCase())) return false;
+    }
+
+    return true;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
