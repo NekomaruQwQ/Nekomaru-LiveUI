@@ -99,6 +99,25 @@ async function removeFromJson(key: string): Promise<void> {
 	await saveJson(stringsPath, json);
 }
 
+// ── Computed strings ─────────────────────────────────────────────────────────
+// Server-derived readonly strings, keyed by "$"-prefixed names (e.g.
+// "$captureWindowTitle").  Not backed by any storage — producers push values
+// directly via setComputed/clearComputed.  Kept in a separate map so that
+// reloadStore() (which clears the file-backed store) doesn't wipe them.
+
+const computedStore = new Map<string, string>();
+
+/// Push a computed string value.  Key must start with "$".
+export function setComputed(key: string, value: string): void {
+	if (!key.startsWith("$")) throw new Error(`computed key must start with "$": ${key}`);
+	computedStore.set(key, value);
+}
+
+/// Remove a computed string.
+export function clearComputed(key: string): void {
+	computedStore.delete(key);
+}
+
 // ── Store ────────────────────────────────────────────────────────────────────
 
 // Ensure data/strings/ exists before any reads or writes.
@@ -124,8 +143,11 @@ const store = new Map<string, string>();
 const api = new Hono()
 
 	/// Return all key-value pairs as a flat JSON object.
+	/// Computed strings (from computedStore) are merged on top of file-backed ones.
 	.get("/", (c) => {
-		return c.json(Object.fromEntries(store));
+		const result: Record<string, string> = Object.fromEntries(store);
+		for (const [key, value] of computedStore) result[key] = value;
+		return c.json(result);
 	})
 
 	/// Set a string value by key (idempotent).
@@ -135,6 +157,7 @@ const api = new Hono()
 		zValidator("json", z.object({ value: z.string() })),
 		async (c) => {
 			const key = c.req.param("key");
+			if (key.startsWith("$")) return c.json({ error: "computed strings are readonly" }, 403);
 			if (!isValidKey(key)) return c.json({ error: "invalid key" }, 400);
 
 			const { value } = c.req.valid("json");
@@ -158,6 +181,7 @@ const api = new Hono()
 	/// Delete a string by key.  Cleans up both JSON and file-based sources.
 	.delete("/:key", async (c) => {
 		const key = c.req.param("key");
+		if (key.startsWith("$")) return c.json({ error: "computed strings are readonly" }, 403);
 		if (!isValidKey(key)) return c.json({ error: "invalid key" }, 400);
 
 		store.delete(key);
