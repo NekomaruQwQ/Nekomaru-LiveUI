@@ -10,8 +10,9 @@
 //   GET  /auto          → auto-selector status
 //   POST /auto          → start auto-selector
 //   DELETE /auto        → stop auto-selector
-//   GET  /auto/config   → auto-selector include/exclude lists
-//   PUT  /auto/config   → replace include/exclude lists
+//   GET  /auto/config        → auto-selector preset config
+//   PUT  /auto/config        → replace full preset config
+//   PUT  /auto/config/preset → switch active preset
 //
 // Routes are method-chained so TypeScript infers the full route schema into
 // `typeof api`.  The frontend imports ApiType to create a typed Hono RPC client.
@@ -98,19 +99,35 @@ const api = new Hono()
         return c.json({ ok: true });
     })
 
-    /// Get the auto-selector's include/exclude pattern lists.
+    /// Get the auto-selector's full preset config (active preset + all presets).
     .get("/auto/config", (c) => {
         return c.json(selector.getConfig());
     })
 
-    /// Replace the auto-selector's include/exclude pattern lists.
+    /// Replace the auto-selector's full preset config.
     .put("/auto/config",
         zValidator("json", z.object({
-            includeList: z.array(z.string()),
-            excludeList: z.array(z.string()),
+            preset: z.string(),
+            presets: z.record(z.string(), z.object({
+                include: z.array(z.string()),
+                exclude: z.array(z.string()),
+            })),
         })),
         async (c) => {
             await selector.setConfig(c.req.valid("json"));
+            return c.json({ ok: true });
+        })
+
+    /// Switch the active preset by name.
+    .put("/auto/config/preset",
+        zValidator("json", z.object({ name: z.string() })),
+        async (c) => {
+            const { name } = c.req.valid("json");
+            try {
+                await selector.setPreset(name);
+            } catch {
+                return c.json({ error: `preset "${name}" not found` }, 404);
+            }
             return c.json({ ok: true });
         })
 

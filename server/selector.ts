@@ -20,25 +20,31 @@ import * as path from "node:path";
 import { captureExePath, dataDir } from "./common";
 import { loadJson, saveJson } from "./persist";
 import * as proc from "./process";
+import { setComputed, clearComputed } from "./strings";
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
-/// Default paths/substrings that qualify a window's executable for capture.
-const DEFAULT_INCLUDE_LIST: string[] = [
-    "devenv.exe",
-    "C:\\Program Files\\Microsoft Visual Studio Code\\Code.exe",
-    "C:\\Program Files\\JetBrains\\",
-    "D:\\7-Games\\",
-    "D:\\7-Games.Steam\\steamapps\\common\\",
-    "E:\\Nekomaru.Games\\",
-    "E:\\SteamLibrary\\steamapps\\common\\",
-];
+/// Default preset name used when no config file exists or when loading legacy format.
+const DEFAULT_PRESET_NAME = "default";
 
-/// Default paths/substrings that disqualify a window (checked case-insensitively).
-const DEFAULT_EXCLUDE_LIST: string[] = [
-    "gogh.exe",
-    "vtube studio.exe",
-];
+/// Default presets map.  Contains a single "default" preset with hardcoded patterns.
+const DEFAULT_PRESETS: Record<string, SelectorConfig> = {
+    [DEFAULT_PRESET_NAME]: {
+        include: [
+            "devenv.exe",
+            "C:\\Program Files\\Microsoft Visual Studio Code\\Code.exe",
+            "C:\\Program Files\\JetBrains\\",
+            "D:\\7-Games\\",
+            "D:\\7-Games.Steam\\steamapps\\common\\",
+            "E:\\Nekomaru.Games\\",
+            "E:\\SteamLibrary\\steamapps\\common\\",
+        ],
+        exclude: [
+            "gogh.exe",
+            "vtube studio.exe",
+        ],
+    },
+};
 
 /// Persistence path for the include/exclude config.
 const configPath = path.join(dataDir, "selector-config.json");
@@ -67,11 +73,19 @@ export interface SelectorStatus {
     active: boolean;
     currentStreamId: string | null;
     currentHwnd: string | null;
+    currentTitle: string | null;
 }
 
 export interface SelectorConfig {
-    includeList: string[];
-    excludeList: string[];
+    include: string[];
+    exclude: string[];
+}
+
+/// Top-level config shape persisted to disk.  Contains a named active preset
+/// and a map of all available presets.
+export interface PresetConfig {
+    preset: string;
+    presets: Record<string, SelectorConfig>;
 }
 
 // ── Selector ─────────────────────────────────────────────────────────────────
@@ -88,9 +102,13 @@ class LiveWindowSelector {
     /// windows to decide whether to switch.
     private lastCaptureHwnd: string | null = null;
 
-    /// Mutable include/exclude lists — editable at runtime via the API.
-    private includeList: string[] = [...DEFAULT_INCLUDE_LIST];
-    private excludeList: string[] = [...DEFAULT_EXCLUDE_LIST];
+    /// Title of the window we are currently capturing, captured at switch time.
+    /// Pushed to the computed string store as "$captureWindowTitle".
+    private lastCaptureTitle: string | null = null;
+
+    /// Active preset name and all available presets — editable at runtime via the API.
+    private preset: string = DEFAULT_PRESET_NAME;
+    private presets: Record<string, SelectorConfig> = structuredClone(DEFAULT_PRESETS);
 
     get active(): boolean {
         return this.timer !== null;
@@ -113,6 +131,8 @@ class LiveWindowSelector {
 
         this.lastForegroundHwnd = null;
         this.lastCaptureHwnd = null;
+        this.lastCaptureTitle = null;
+        clearComputed("$captureWindowTitle");
         console.log("[selector] stopped");
     }
 
@@ -121,32 +141,44 @@ class LiveWindowSelector {
             active: this.active,
             currentStreamId: this.active ? STREAM_ID : null,
             currentHwnd: this.lastCaptureHwnd,
+            currentTitle: this.lastCaptureTitle,
         };
     }
 
-    getConfig(): SelectorConfig {
-        return {
-            includeList: [...this.includeList],
-            excludeList: [...this.excludeList],
-        };
+    getConfig(): PresetConfig {
+        return { preset: this.preset, presets: structuredClone(this.presets) };
     }
 
-    /// Replace include/exclude lists and persist to disk.
-    async setConfig(config: SelectorConfig): Promise<void> {
-        this.includeList = [...config.includeList];
-        this.excludeList = [...config.excludeList];
-        await saveJson(configPath, { includeList: this.includeList, excludeList: this.excludeList });
-        console.log(`[selector] config updated: ${this.includeList.length} include, ${this.excludeList.length} exclude`);
+    /// Replace the full preset config and persist to disk.
+    async setConfig(config: PresetConfig): Promise<void> {
+        this.preset = config.preset;
+        this.presets = structuredClone(config.presets);
+        await this.persist();
+        console.log(`[selector] config updated: preset="${this.preset}", ${Object.keys(this.presets).length} preset(s)`);
+    }
+
+    /// Switch the active preset by name.  Throws if the preset doesn't exist.
+    async setPreset(name: string): Promise<void> {
+        if (!(name in this.presets)) throw new Error(`preset "${name}" not found`);
+        this.preset = name;
+        await this.persist();
+        console.log(`[selector] switched to preset "${name}"`);
     }
 
     /// Load persisted config from disk, replacing the hardcoded defaults.
     /// Falls back silently to defaults if the file is missing or corrupt.
     async loadPersistedConfig(): Promise<void> {
-        const saved = await loadJson<SelectorConfig | null>(configPath, null);
-        if (!saved) return;
-        this.includeList = [...saved.includeList];
-        this.excludeList = [...saved.excludeList];
-        console.log(`[selector] loaded config from disk: ${this.includeList.length} include, ${this.excludeList.length} exclude`);
+        const saved = await loadJson<PresetConfig | null>(configPath, null);
+        if (!saved || !saved.presets) return;
+
+        this.preset = saved.preset ?? DEFAULT_PRESET_NAME;
+        this.presets = saved.presets;
+        console.log(`[selector] loaded config from disk: preset="${this.preset}", ${Object.keys(this.presets).length} preset(s)`);
+    }
+
+    /// Persist the current preset config to disk.
+    private async persist(): Promise<void> {
+        await saveJson(configPath, { preset: this.preset, presets: this.presets });
     }
 
     // ── Poll logic ───────────────────────────────────────────────────────
@@ -174,17 +206,22 @@ class LiveWindowSelector {
         // doesn't exist, or kills the old process + bumps generation.
         proc.replaceStream(STREAM_ID, hwndStr, DEFAULT_WIDTH, DEFAULT_HEIGHT);
         this.lastCaptureHwnd = hwndStr;
+        this.lastCaptureTitle = info.title;
+        setComputed("$captureWindowTitle", info.title);
         console.log(`[selector] capturing ${hwndStr} → stream ${STREAM_ID}`);
     }
 
     /// Determines whether a window qualifies for capture based on its
-    /// executable path and title.  Each config entry may optionally contain
-    /// a `@` separator: `<exePath>@<windowTitle>`.  Must match at least one
-    /// include entry and must not match any exclude entry.
+    /// executable path and title, using the active preset's pattern lists.
+    /// Each config entry may optionally contain a `@` separator:
+    /// `<exePath>@<windowTitle>`.  Must match at least one include entry
+    /// and must not match any exclude entry.
     private shouldCapture(executablePath: string, title: string): boolean {
-        const included = this.includeList.some((pattern) =>
+        const active = this.preset ? this.presets[this.preset]: null;
+        if (!active) return false;
+        const included = active.include.some((pattern) =>
             matchesPattern(pattern, executablePath, title, false));
-        const excluded = this.excludeList.some((pattern) =>
+        const excluded = active.exclude.some((pattern) =>
             matchesPattern(pattern, executablePath, title, true));
         return included && !excluded;
     }
