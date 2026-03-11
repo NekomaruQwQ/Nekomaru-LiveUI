@@ -2,8 +2,8 @@
 
 **Low-latency (<100ms) screen capture streaming from DirectX 11 to the browser**
 
-**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | Frontend Integrated | UI Redesigned (JetBrains Islands) | Auto Window Selector Integrated | Frontend Refactored (stream/ + capture hook) | Crop Mode Added | Crop Mode Refactored (Absolute Box Coordinates) | YouTube Music Island Added | Control Panel Rewritten (stream overview, auto-config editor, string store editor) | Server-Managed Streams with Well-Known IDs | String Store Added | Marquee Banner Added | Control Panel CJK Font (Microsoft YaHei UI) | File Persistence (Strings + Selector Config) | Window Dimensions in Enumeration | Per-Monitor DPI Awareness | Refresh Endpoint
-**Last Updated**: 2026-03-03
+**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | Frontend Integrated | UI Redesigned (JetBrains Islands) | Auto Window Selector Integrated | Frontend Refactored (stream/ + capture hook) | Crop Mode Added | Crop Mode Refactored (Absolute Box Coordinates) | YouTube Music Island Added | Control Panel Rewritten (stream overview, auto-config editor, string store editor) | Server-Managed Streams with Well-Known IDs | String Store Added | Marquee Banner Added | Control Panel CJK Font (Microsoft YaHei UI) | File Persistence (Strings + Selector Config) | Window Dimensions in Enumeration | Per-Monitor DPI Awareness | Refresh Endpoint | Window Title Matching in Selector Config | Multi-Preset Selector Config | Computed Strings (Server-Derived, Readonly)
+**Last Updated**: 2026-03-11
 **Hardware**: RTX 5090 | Windows 11
 
 ---
@@ -96,18 +96,19 @@ The project is split into four independently running components. The hard work (
 │  Auto Selector + YouTube Music Manager                           │
 │    - Auto-starts on server boot                                  │
 │    - Selector: polls foreground, replaces "main" stream          │
-│    - Selector config persisted to data/ (survives restarts)      │
+│    - Selector config: named presets, persisted to data/          │
 │    - YTM: polls window list, manages "youtube-music" stream      │
 │                                                                  │
 │  String Store                                                    │
 │    - Key-value Map<string, string>, persisted to data/           │
+│    - Computed strings ("$"-prefixed): server-derived, readonly   │
 │    - Well-known IDs map to frontend display locations             │
 │    - Control panel or curl writes, frontend polls                 │
 │                                                                  │
 │  HTTP API (all under /api/v1)                                    │
 │    - /streams             → list / create / delete captures      │
 │    - /streams/auto        → start / stop / status auto-selector  │
-│    - /streams/auto/config → get / set include/exclude patterns   │
+│    - /streams/auto/config → get / set preset config (multi-preset)│
 │    - /streams/:id/init    → codec params (SPS, PPS, resolution)  │
 │    - /streams/:id/frames  → encoded frames + generation (poll)   │
 │    - /strings             → get / set / delete strings           │
@@ -355,30 +356,54 @@ The `generation` field increments each time the underlying capture process is re
 **`GET /api/v1/streams/auto`** — Get auto-selector status.
 
 ```json
-{ "active": true, "currentStreamId": "main", "currentHwnd": "0x1A2B3C" }
+{ "active": true, "currentStreamId": "main", "currentHwnd": "0x1A2B3C", "currentTitle": "MyApp — Window Title" }
 ```
 
 **`POST /api/v1/streams/auto`** — Start the auto-selector (idempotent). Polls the foreground window every 2 seconds and automatically switches captures when the foreground matches the include list. The managed stream always has ID `"main"`.
 
 **`DELETE /api/v1/streams/auto`** — Stop the auto-selector and destroy the `"main"` stream.
 
-**`GET /api/v1/streams/auto/config`** — Get the auto-selector's include/exclude pattern lists.
+**`GET /api/v1/streams/auto/config`** — Get the auto-selector's full preset config.
 
 ```json
 {
-    "includeList": ["devenv.exe", "C:\\Program Files\\JetBrains\\", "D:\\7-Games\\"],
-    "excludeList": ["gogh.exe", "vtube studio.exe"]
+    "preset": "default",
+    "presets": {
+        "default": {
+            "include": ["devenv.exe", "C:\\Program Files\\JetBrains\\", "D:\\7-Games\\"],
+            "exclude": ["gogh.exe", "vtube studio.exe"]
+        },
+        "gaming": {
+            "include": ["D:\\7-Games\\"],
+            "exclude": []
+        }
+    }
 }
 ```
 
-**`PUT /api/v1/streams/auto/config`** — Replace the include/exclude pattern lists. Include patterns use substring matching on the executable path. Exclude patterns use case-insensitive substring matching.
+**`PUT /api/v1/streams/auto/config`** — Replace the full preset config. Each pattern is a string in the format `<exePath>@<windowTitle>`. If no `@` is present, only the executable path is matched. When both parts are given, both must match (AND). The title part is always compared case-insensitively. Exclude patterns also compare the exe path case-insensitively.
 
 ```json
 // Request body
 {
-    "includeList": ["devenv.exe", "C:\\Program Files\\JetBrains\\"],
-    "excludeList": ["gogh.exe"]
+    "preset": "default",
+    "presets": {
+        "default": {
+            "include": ["devenv.exe", "Code.exe@LiveUI"],
+            "exclude": ["gogh.exe"]
+        }
+    }
 }
+
+// Response
+{ "ok": true }
+```
+
+**`PUT /api/v1/streams/auto/config/preset`** — Switch the active preset by name. Returns 404 if the preset doesn't exist.
+
+```json
+// Request body
+{ "name": "gaming" }
 
 // Response
 { "ok": true }
@@ -388,13 +413,21 @@ The `generation` field increments each time the underlying capture process is re
 
 Server-managed key-value string store. The control panel (or curl) writes values; the frontend polls and displays them at designated locations by well-known ID.
 
-**`GET /api/v1/strings`** — Get all key-value pairs.
+Keys prefixed with `$` are **computed strings** — readonly values derived from live server state, not backed by any storage. They appear in GET responses alongside regular strings but cannot be written or deleted via the API (returns 403). Producers push values directly via `setComputed()` / `clearComputed()` in `server/strings.ts`.
+
+**Current computed strings:**
+
+| Key | Source | Description |
+|-----|--------|-------------|
+| `$captureWindowTitle` | Auto selector | Title of the window currently being captured on the "main" stream. Set at capture-switch time. |
+
+**`GET /api/v1/strings`** — Get all key-value pairs (including computed strings).
 
 ```json
-{ "test": "Hello World", "banner": "Live now!" }
+{ "test": "Hello World", "banner": "Live now!", "$captureWindowTitle": "MyApp — Window Title" }
 ```
 
-**`PUT /api/v1/strings/:key`** — Set a string value (idempotent).
+**`PUT /api/v1/strings/:key`** — Set a string value (idempotent). Returns 403 for `$`-prefixed keys.
 
 ```json
 // Request body
@@ -404,7 +437,7 @@ Server-managed key-value string store. The control panel (or curl) writes values
 { "ok": true }
 ```
 
-**`DELETE /api/v1/strings/:key`** — Delete a string.
+**`DELETE /api/v1/strings/:key`** — Delete a string. Returns 403 for `$`-prefixed keys.
 
 ```json
 { "ok": true }
@@ -464,15 +497,15 @@ Server-managed key-value string store. The control panel (or curl) writes values
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
 | **Entry Point** | `server/index.ts` | Done | Hono app + Vite dev server (middleware mode) on single `node:http` port. Routes `/api/v1/*` → Hono, everything else → Vite. Auto-starts selector and YTM manager on boot. SIGINT/SIGTERM cleanup. |
-| **Stream API** | `server/api.ts` | Done | Hono sub-router mounted at `/api/v1/streams`. Routes: `GET/POST/DELETE /`, `GET/POST/DELETE /auto`, `GET/PUT /auto/config`, `GET /:id/init`, `GET /:id/frames?after=N`, `GET /windows`. POST accepts resample or crop mode (Zod union — crop uses absolute bounding box). `generation` field in list and frames responses. |
+| **Stream API** | `server/api.ts` | Done | Hono sub-router mounted at `/api/v1/streams`. Routes: `GET/POST/DELETE /`, `GET/POST/DELETE /auto`, `GET/PUT /auto/config`, `PUT /auto/config/preset`, `GET /:id/init`, `GET /:id/frames?after=N`, `GET /windows`. POST accepts resample or crop mode (Zod union — crop uses absolute bounding box). `generation` field in list and frames responses. |
 | **Process Manager** | `server/process.ts` | Done | `CaptureStream` with `generation` counter. `spawnAndWire()` helper shared by create and replace paths. `createStream()`/`createCropStream()` for manual use (random IDs). `replaceStream()`/`replaceCropStream()` for well-known IDs — kills old process, resets buffer, bumps generation in-place (idempotent: creates if missing). Crop streams use absolute bounding box (minX/Y, maxX/Y). |
 | **Protocol Parser** | `server/protocol.ts` | Done | Push-based incremental binary parser. Handles partial reads, greedy parse loop. Mirrors Rust wire format exactly. |
 | **Frame Buffer** | `server/buffer.ts` | Done | Per-stream circular buffer (60 frames). Multi-viewer safe (no drain). Pre-serializes frames on push. Skips to first keyframe for new clients. `reset()` clears all state on stream replacement. |
 | **Constants** | `server/common.ts` | Done | Port (`LIVE_PORT` env or 3000), exe path, buffer capacity, data directory path. |
-| **Auto Selector** | `server/selector.ts` | Done | `LiveWindowSelector` class. Polls foreground window every 2s via `live-capture.exe --foreground-window`. Mutable include/exclude lists (editable at runtime via `GET/PUT /auto/config`). Config persisted to `data/selector-config.json` — loaded on startup, written on every change. Uses `replaceStream("main", ...)` — stream ID is always `"main"`, generation bumps on each switch. |
+| **Auto Selector** | `server/selector.ts` | Done | `LiveWindowSelector` class. Polls foreground window every 2s via `live-capture.exe --foreground-window`. Multi-preset config: named presets with include/exclude lists, switchable at runtime via `PUT /auto/config/preset`. Pattern format: `<exePath>@<windowTitle>` — exe-only patterns are backward-compatible; title part is always case-insensitive. Config persisted to `data/selector-config.json` — loaded on startup (supports legacy flat format), written on every change. Uses `replaceStream("main", ...)` — stream ID is always `"main"`, generation bumps on each switch. Pushes `$captureWindowTitle` computed string on capture switch. |
 | **YouTube Music Manager** | `server/youtube-music.ts` | Done | `YouTubeMusicManager` class. Polls `enumerateWindows()` every 5s, finds window by `"YouTube Music"` title prefix. Creates/replaces `"youtube-music"` crop stream (bottom 96px computed from window dimensions). Destroys stream when window disappears. |
 | **Persistence** | `server/persist.ts` | Done | Thin JSON file persistence utility. `loadJson(path, fallback)` / `saveJson(path, data)` using Bun APIs. Creates `data/` directory on module load. |
-| **String Store** | `server/strings.ts` | Done | `Map<string, string>` persisted to `data/strings.json`. Hono routes: `GET /` (all pairs), `PUT /:key` (set + save), `DELETE /:key` (delete + save). Loaded from disk on startup, falls back to empty. Exports `StringsApiType` for frontend RPC. Mounted at `/api/v1/strings` in `index.ts`. |
+| **String Store** | `server/strings.ts` | Done | `Map<string, string>` persisted to `data/strings.json`. Hono routes: `GET /` (all pairs, merged with computed strings), `PUT /:key` (set + save, rejects `$` prefix with 403), `DELETE /:key` (delete + save, rejects `$` prefix with 403). Separate `computedStore` map for server-derived readonly strings — producers push via `setComputed()`/`clearComputed()`. Loaded from disk on startup, falls back to empty. Exports `StringsApiType` for frontend RPC. Mounted at `/api/v1/strings` in `index.ts`. |
 
 ### Completed (Frontend — React + Hono RPC)
 
@@ -649,7 +682,7 @@ Nekomaru-LiveUI-v2/
     ├── package.json
     ├── tsconfig.json
     ├── vite.config.ts               # Vite root = ., aliases: @→src
-    ├── biome.json                   # Biome formatter/linter config
+    ���── biome.json                   # Biome formatter/linter config
     ├── index.html
     ├── index.tsx                    # Entry point (React 19 createRoot)
     ├── global.css                   # CSS vars, dark gradient background, layout

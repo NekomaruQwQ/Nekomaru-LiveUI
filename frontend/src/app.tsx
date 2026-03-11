@@ -45,7 +45,7 @@ export function App() {
 function SidePanel() {
     const strings = useStrings();
     return <div className="flex! w-full h-full flex-col gap-2">
-        <div className="island p-2">
+        <div className="island px-2 py-1">
             <ClockWidget />
         </div>
         <div className="island p-2 flex-1">
