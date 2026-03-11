@@ -18,9 +18,17 @@
 
 import * as path from "node:path";
 import { captureExePath, dataDir } from "./common";
+import { createLogger, createStreamLogger } from "./log";
 import { loadJson, saveJson } from "./persist";
 import * as proc from "./process";
 import { setComputed, clearComputed } from "./strings";
+
+/// Well-known stream ID managed by the selector.
+const STREAM_ID = "main";
+
+const MODULE = "server::selector";
+const log = createLogger(MODULE);
+const streamLog = createStreamLogger(STREAM_ID, MODULE);
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
@@ -55,9 +63,6 @@ const POLL_INTERVAL_MS = 2000;
 /// Default capture resolution when auto-selecting a window.
 const DEFAULT_WIDTH = 1920;
 const DEFAULT_HEIGHT = 1200;
-
-/// Well-known stream ID managed by the selector.
-const STREAM_ID = "main";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -116,7 +121,7 @@ class LiveWindowSelector {
 
     start(): void {
         if (this.timer) return; // already running
-        console.log("[selector] started");
+        log.info("started");
         this.timer = setInterval(() => this.poll(), POLL_INTERVAL_MS);
     }
 
@@ -127,13 +132,13 @@ class LiveWindowSelector {
 
         // Kill the stream we were managing.
         proc.destroyStream(STREAM_ID);
-        console.log(`[selector] destroyed stream ${STREAM_ID}`);
+        streamLog.info("destroyed stream");
 
         this.lastForegroundHwnd = null;
         this.lastCaptureHwnd = null;
         this.lastCaptureTitle = null;
         clearComputed("$captureWindowTitle");
-        console.log("[selector] stopped");
+        log.info("stopped");
     }
 
     status(): SelectorStatus {
@@ -154,7 +159,7 @@ class LiveWindowSelector {
         this.preset = config.preset;
         this.presets = structuredClone(config.presets);
         await this.persist();
-        console.log(`[selector] config updated: preset="${this.preset}", ${Object.keys(this.presets).length} preset(s)`);
+        log.info(`config updated: preset="${this.preset}", ${Object.keys(this.presets).length} preset(s)`);
     }
 
     /// Switch the active preset by name.  Throws if the preset doesn't exist.
@@ -162,7 +167,7 @@ class LiveWindowSelector {
         if (!(name in this.presets)) throw new Error(`preset "${name}" not found`);
         this.preset = name;
         await this.persist();
-        console.log(`[selector] switched to preset "${name}"`);
+        log.info(`switched to preset "${name}"`);
     }
 
     /// Load persisted config from disk, replacing the hardcoded defaults.
@@ -173,7 +178,7 @@ class LiveWindowSelector {
 
         this.preset = saved.preset ?? DEFAULT_PRESET_NAME;
         this.presets = saved.presets;
-        console.log(`[selector] loaded config from disk: preset="${this.preset}", ${Object.keys(this.presets).length} preset(s)`);
+        log.info(`loaded config from disk: preset="${this.preset}", ${Object.keys(this.presets).length} preset(s)`);
     }
 
     /// Persist the current preset config to disk.
@@ -194,7 +199,7 @@ class LiveWindowSelector {
         this.lastForegroundHwnd = hwndStr;
 
         // Log foreground change (title masked for privacy, same as original).
-        console.log(`[selector] foreground: *** (${info.executable_path})`);
+        log.info(`foreground: *** (${info.executable_path})`);
 
         if (!this.shouldCapture(info.executable_path, info.title)) return;
 
@@ -208,7 +213,7 @@ class LiveWindowSelector {
         this.lastCaptureHwnd = hwndStr;
         this.lastCaptureTitle = info.title;
         setComputed("$captureWindowTitle", info.title);
-        console.log(`[selector] capturing ${hwndStr} → stream ${STREAM_ID}`);
+        streamLog.info(`capturing ${hwndStr}`);
     }
 
     /// Determines whether a window qualifies for capture based on its
@@ -291,7 +296,7 @@ async function getForegroundWindow(): Promise<ForegroundWindowInfo | null> {
         // live-capture outputs JSON `null` when no foreground window exists.
         return parsed as ForegroundWindowInfo | null;
     } catch (e) {
-        console.error("[selector] failed to get foreground window:", e);
+        log.error(`failed to get foreground window: ${e}`);
         return null;
     }
 }

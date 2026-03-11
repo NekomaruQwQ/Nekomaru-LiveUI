@@ -19,11 +19,14 @@ import * as vite from "vite";
 import * as hono from "@hono/node-server";
 
 import { serverPort, baseUrl } from "./common";
+import { createLogger } from "./log";
 import { destroyAll } from "./process";
 import { selector } from "./selector";
 import { ytmManager } from "./youtube-music";
 import api from "./api";
 import stringsApi, { reloadStore } from "./strings";
+
+const log = createLogger("server::server");
 
 // ── Hono app ─────────────────────────────────────────────────────────────────
 
@@ -64,7 +67,7 @@ const httpServer =
     });
 
 httpServer.listen(serverPort, () => {
-    console.log(`LiveServer running at ${baseUrl}`);
+    log.info(`LiveServer running at ${baseUrl}`);
 
     // Auto-start the window selector and YouTube Music manager once the
     // HTTP server is listening, so streams are created before any client

@@ -8,7 +8,13 @@ import type { Subprocess } from "bun";
 
 import { StreamBuffer } from "./buffer";
 import { captureExePath, frameBufferCapacity } from "./common";
+import { createStreamLogger, isCaptureLogHead, writeCaptureGroup } from "./log";
 import { ProtocolParser } from "./protocol";
+
+const MODULE = "server::process";
+
+/// Create a stream-scoped logger for the given stream ID.
+function slog(id: string) { return createStreamLogger(id, MODULE); }
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -69,20 +75,20 @@ function spawnAndWire(stream: CaptureStream, args: string[], label: string): voi
     stream.process = proc;
 
     // Wire stdout → ProtocolParser → StreamBuffer
-    const parser = new ProtocolParser((msg) => {
+    const parser = new ProtocolParser(id, (msg) => {
         switch (msg.type) {
             case "codec_params":
                 stream.buffer.setCodecParams(msg.params);
                 if (stream.status === "starting") {
                     stream.status = "running";
-                    console.log(`[stream:${id}] running (codec params received)`);
+                    slog(id).info("running (codec params received)");
                 }
                 break;
             case "frame":
                 stream.buffer.pushFrame(msg.frame);
                 break;
             case "error":
-                console.error(`[stream:${id}] capture error: ${msg.message}`);
+                slog(id).error(`capture error: ${msg.message}`);
                 break;
         }
     });
@@ -91,11 +97,11 @@ function spawnAndWire(stream: CaptureStream, args: string[], label: string): voi
     pipeStderr(id, proc);
 
     proc.exited.then((code) => {
-        console.log(`[stream:${id}] process exited with code ${code}`);
+        slog(id).info(`process exited with code ${code}`);
         stream.status = "stopped";
     });
 
-    console.log(`[stream:${id}] spawned (${label})`);
+    slog(id).info(`spawned (${label})`);
 }
 
 /// Create a brand-new stream with a random ID and register it.
@@ -169,7 +175,7 @@ export function replaceStream(id: string, hwnd: string, width: number, height: n
     existing.generation++;
 
     spawnAndWire(existing, args, label);
-    console.log(`[stream:${id}] replaced (gen ${existing.generation})`);
+    slog(id).info(`replaced (gen ${existing.generation})`);
     return existing;
 }
 
@@ -202,7 +208,7 @@ export function replaceCropStream(
     existing.generation++;
 
     spawnAndWire(existing, args, label);
-    console.log(`[stream:${id}] replaced (gen ${existing.generation})`);
+    slog(id).info(`replaced (gen ${existing.generation})`);
     return existing;
 }
 
@@ -217,7 +223,7 @@ export function destroyStream(id: string): void {
     }
 
     streams.delete(id);
-    console.log(`[stream:${id}] destroyed`);
+    slog(id).info("destroyed");
 }
 
 /// Kill all child processes.  Called on server shutdown.
@@ -238,23 +244,68 @@ async function pipeStdout(id: string, proc: Subprocess, parser: ProtocolParser):
             if (done) break;
             parser.feed(value);
         }
-    } catch (e) {
+    } catch {
         // Expected when the process is killed — the stream closes.
-        console.log(`[stream:${id}] stdout closed`);
+        slog(id).info("stdout closed");
     }
 }
 
-/// Forward stderr lines with a prefix for easy identification in the console.
+/// Forward stderr lines from the Rust child process, parsing env_logger
+/// format and colorizing by level.  A line buffer is used because stderr
+/// chunks may not align with newline boundaries.
+///
+/// Lines are grouped into logical log entries: a head line matching
+/// `[LEVEL target] message` plus any continuation lines that follow
+/// (backtrace, etc.).  A short timer (10 ms) flushes the group if no
+/// continuation arrives — long enough to catch lines from the same
+/// event-loop tick, short enough to feel instant for single-line logs.
 async function pipeStderr(id: string, proc: Subprocess): Promise<void> {
+    /// Lines buffered for the current log group.
+    let group: string[] = [];
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+    /// How long to wait for continuation lines before flushing (ms).
+    const FLUSH_DELAY_MS = 10;
+
+    function flush(): void {
+        if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+        if (group.length > 0) {
+            writeCaptureGroup(id, group);
+            group = [];
+        }
+    }
+
+    function pushLine(line: string): void {
+        if (isCaptureLogHead(line)) {
+            // New log entry — flush the previous group first.
+            flush();
+        }
+        group.push(line);
+        // (Re)start the flush timer after every line.
+        if (flushTimer) clearTimeout(flushTimer);
+        flushTimer = setTimeout(flush, FLUSH_DELAY_MS);
+    }
+
     try {
         const reader = proc.stderr.getReader();
         const decoder = new TextDecoder();
+        let pending = "";
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            process.stderr.write(`[capture:${id}] ${decoder.decode(value)}`);
+            pending += decoder.decode(value, { stream: true });
+            // Flush all complete lines, keep the incomplete tail.
+            for (let nl = pending.indexOf("\n"); nl !== -1; nl = pending.indexOf("\n")) {
+                const line = pending.slice(0, nl);
+                pending = pending.slice(nl + 1);
+                if (line.length > 0) pushLine(line);
+            }
         }
+        // Flush any remaining text after EOF.
+        if (pending.length > 0) pushLine(pending);
+        flush();
     } catch {
         // Expected on process kill.
+        flush();
     }
 }

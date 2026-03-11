@@ -9,7 +9,11 @@
 // Structurally parallel to `LiveWindowSelector` in selector.ts, but manages
 // the "youtube-music" stream instead of "main".
 
+import { createLogger, createStreamLogger } from "./log";
 import * as proc from "./process";
+
+const MODULE = "server::youtube_music";
+const log = createLogger(MODULE);
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
@@ -19,6 +23,7 @@ const POLL_INTERVAL_MS = 5000;
 
 /// Well-known stream ID for the YouTube Music playback bar.
 const STREAM_ID = "youtube-music";
+const streamLog = createStreamLogger(STREAM_ID, MODULE);
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -51,7 +56,7 @@ class YouTubeMusicManager {
 
     start(): void {
         if (this.timer) return;
-        console.log("[ytm] started");
+        log.info("started");
         // Run an immediate poll so we don't wait a full interval on startup.
         this.poll();
         this.timer = setInterval(() => this.poll(), POLL_INTERVAL_MS);
@@ -64,7 +69,7 @@ class YouTubeMusicManager {
 
         proc.destroyStream(STREAM_ID);
         this.lastKnownHwnd = null;
-        console.log("[ytm] stopped");
+        log.info("stopped");
     }
 
     status(): YouTubeMusicStatus {
@@ -86,7 +91,7 @@ class YouTubeMusicManager {
                 const hwndStr = formatHwnd(ytm.hwnd);
 
                 if (hwndStr !== this.lastKnownHwnd) {
-                    console.log(`[capture:youtube-music] window detected: ${hwndStr} (${ytm.width}x${ytm.height})`);
+                    streamLog.info(`window detected: ${hwndStr} (${ytm.width}x${ytm.height})`);
                     // Window appeared or was restarted (new hwnd) —
                     // replaceCropStream is idempotent (creates or replaces).
                     // Crop the bottom 96px of the window (playback bar).
@@ -104,16 +109,16 @@ class YouTubeMusicManager {
                     proc.replaceCropStream(
                         STREAM_ID, hwndStr, 0, minY, maxX, maxY, 2);
                     this.lastKnownHwnd = hwndStr;
-                    console.log(`[ytm] capturing ${hwndStr} (${ytm.width}x${ytm.height})`);
+                    streamLog.info(`capturing ${hwndStr} (${ytm.width}x${ytm.height})`);
                 }
             } else if (this.lastKnownHwnd) {
                 // YouTube Music window disappeared — tear down the stream.
                 proc.destroyStream(STREAM_ID);
                 this.lastKnownHwnd = null;
-                console.log("[ytm] window disappeared, stream destroyed");
+                streamLog.info("window disappeared, stream destroyed");
             }
         } catch (e) {
-            console.error("[ytm] poll failed:", e);
+            log.error(`poll failed: ${e}`);
         }
     }
 }

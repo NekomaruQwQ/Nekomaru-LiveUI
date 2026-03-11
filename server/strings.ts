@@ -29,7 +29,10 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
 import { dataDir } from "./common";
+import { createLogger } from "./log";
 import { loadJson, saveJson } from "./persist";
+
+const log = createLogger("server::strings");
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -78,11 +81,11 @@ async function loadFileStrings(): Promise<Map<string, string>> {
 			const content = await Bun.file(path.join(stringsDirPath, entry)).text();
 			result.set(key, content);
 		} catch (err) {
-			console.warn(`[strings] failed to read ${entry}:`, err);
+			log.warn(`failed to read ${entry}: ${err}`);
 		}
 	}
 
-	console.log(`[strings] scanned ${result.size} file-based entries from data/strings/`);
+	log.info(`scanned ${result.size} file-based entries from data/strings/`);
 	return result;
 }
 
@@ -135,7 +138,7 @@ const store = new Map<string, string>();
 	const fileStrings = await loadFileStrings();
 	for (const [k, v] of fileStrings) store.set(k, v);
 
-	console.log(`[strings] loaded ${store.size} entries on startup`);
+	log.info(`loaded ${store.size} entries on startup`);
 }
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -207,7 +210,7 @@ export async function reloadStore(): Promise<void> {
 	const fileStrings = await loadFileStrings();
 	for (const [k, v] of fileStrings) store.set(k, v);
 
-	console.log(`[strings] reloaded ${store.size} total entries`);
+	log.info(`reloaded ${store.size} total entries`);
 }
 
 export default api;

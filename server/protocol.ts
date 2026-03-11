@@ -57,6 +57,8 @@ export type IpcMessage =
 
 // ── Message type discriminants ───────────────────────────────────────────────
 
+import { createStreamLogger } from "./log";
+
 const MSG_CODEC_PARAMS = 0x01;
 const MSG_FRAME        = 0x02;
 const MSG_ERROR        = 0xFF;
@@ -75,8 +77,10 @@ export class ProtocolParser {
     /// complete messages are consumed.
     private buffer = new Uint8Array(0);
     private callback: (msg: IpcMessage) => void;
+    private streamId: string;
 
-    constructor(callback: (msg: IpcMessage) => void) {
+    constructor(streamId: string, callback: (msg: IpcMessage) => void) {
+        this.streamId = streamId;
         this.callback = callback;
     }
 
@@ -107,7 +111,7 @@ export class ProtocolParser {
             // Advance past the consumed message.
             this.buffer = this.buffer.subarray(totalLength);
 
-            const msg = parsePayload(messageType, payload);
+            const msg = parsePayload(this.streamId, messageType, payload);
             if (msg) this.callback(msg);
         }
     }
@@ -115,13 +119,13 @@ export class ProtocolParser {
 
 // ── Payload parsers ──────────────────────────────────────────────────────────
 
-function parsePayload(type: number, payload: Uint8Array): IpcMessage | null {
+function parsePayload(streamId: string, type: number, payload: Uint8Array): IpcMessage | null {
     switch (type) {
         case MSG_CODEC_PARAMS: return parseCodecParams(payload);
         case MSG_FRAME:        return parseFrame(payload);
         case MSG_ERROR:        return parseError(payload);
         default:
-            console.error(`protocol: unknown message type 0x${type.toString(16)}`);
+            createStreamLogger(streamId, "server::protocol").error(`unknown message type 0x${type.toString(16)}`);
             return null;
     }
 }
