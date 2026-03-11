@@ -162,8 +162,12 @@ const api = new Hono()
         });
     })
 
-    /// Return encoded frames after a given sequence number.
+    /// Return encoded frames after a given sequence number as a binary blob.
     /// The frontend polls this endpoint at ~60fps with ?after=lastSequence.
+    ///
+    /// Binary layout (all little-endian):
+    ///   [u32: generation][u32: num_frames]
+    ///   per frame: [u32: sequence][u32: payload_length][payload bytes]
     .get("/:id/frames",
         zValidator("query", z.object({ after: z.string().optional() })),
         (c) => {
@@ -173,13 +177,26 @@ const api = new Hono()
             const after = parseInt(c.req.valid("query").after ?? "0", 10) || 0;
             const frames = stream.buffer.getFramesAfter(after);
 
-            return c.json({
-                generation: stream.generation,
-                frames: frames.map((f) => ({
-                    sequence: f.sequence,
-                    data: uint8ToBase64(f.payload),
-                })),
-            });
+            // Pre-compute total size: 8-byte header + (8 + payload) per frame.
+            let totalSize = 8;
+            for (const f of frames) totalSize += 8 + f.payload.length;
+
+            const buf = new Uint8Array(totalSize);
+            const view = new DataView(buf.buffer);
+            let pos = 0;
+
+            // Header: generation + frame count.
+            view.setUint32(pos, stream.generation, true); pos += 4;
+            view.setUint32(pos, frames.length, true);     pos += 4;
+
+            // Each frame: sequence + payload length + raw payload bytes.
+            for (const f of frames) {
+                view.setUint32(pos, f.sequence, true);       pos += 4;
+                view.setUint32(pos, f.payload.length, true); pos += 4;
+                buf.set(f.payload, pos);                     pos += f.payload.length;
+            }
+
+            return c.body(buf, 200, { "Content-Type": "application/octet-stream" });
         });
 
 /// Route type for Hono RPC — the frontend imports this to create a typed

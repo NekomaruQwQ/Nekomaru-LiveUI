@@ -2,7 +2,7 @@
 
 **Low-latency (<100ms) screen capture streaming from DirectX 11 to the browser**
 
-**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | Frontend Integrated | UI Redesigned (JetBrains Islands) | Auto Window Selector Integrated | Frontend Refactored (stream/ + capture hook) | Crop Mode Added | Crop Mode Refactored (Absolute Box Coordinates) | YouTube Music Island Added | Control Panel Rewritten (stream overview, auto-config editor, string store editor) | Server-Managed Streams with Well-Known IDs | String Store Added | Marquee Banner Added | Control Panel CJK Font (Microsoft YaHei UI) | File Persistence (Strings + Selector Config) | Window Dimensions in Enumeration | Per-Monitor DPI Awareness | Refresh Endpoint | Window Title Matching in Selector Config | Multi-Preset Selector Config | Computed Strings (Server-Derived, Readonly)
+**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | Frontend Integrated | UI Redesigned (JetBrains Islands) | Auto Window Selector Integrated | Frontend Refactored (stream/ + capture hook) | Crop Mode Added | Crop Mode Refactored (Absolute Box Coordinates) | YouTube Music Island Added | Control Panel Rewritten (stream overview, auto-config editor, string store editor) | Server-Managed Streams with Well-Known IDs | String Store Added | Marquee Banner Added | Control Panel CJK Font (Microsoft YaHei UI) | File Persistence (Strings + Selector Config) | Window Dimensions in Enumeration | Per-Monitor DPI Awareness | Refresh Endpoint | Window Title Matching in Selector Config | Multi-Preset Selector Config | Computed Strings (Server-Derived, Readonly) | Binary Frame Wire Format
 **Last Updated**: 2026-03-11
 **Hardware**: RTX 5090 | Windows 11
 
@@ -335,19 +335,19 @@ Served by LiveServer (Hono on Bun). Port is preconfigured via environment variab
 }
 ```
 
-**`GET /api/v1/streams/:id/frames?after=N`** — Encoded frames after sequence number N.
+**`GET /api/v1/streams/:id/frames?after=N`** — Encoded frames after sequence number N. Returns `application/octet-stream` (binary, not JSON).
 
-```json
-{
-    "generation": 3,
-    "frames": [
-        { "sequence": 123, "data": "<base64>" },
-        { "sequence": 124, "data": "<base64>" }
-    ]
-}
+```
+Binary layout (all little-endian):
+[u32: generation]
+[u32: num_frames]
+per frame:
+    [u32: sequence]
+    [u32: payload_length]
+    [payload_length bytes: pre-serialized frame payload]
 ```
 
-The `generation` field increments each time the underlying capture process is replaced (e.g. window switch). The frontend uses this to detect replacements and reinitialize its decoder. The base64 `data` field contains a pre-serialized binary payload (timestamp + NAL units). Keyframe status is inferred from NAL unit types on the frontend.
+The `generation` field increments each time the underlying capture process is replaced (e.g. window switch). The frontend uses this to detect replacements and reinitialize its decoder. Each frame's payload contains the pre-serialized binary data (timestamp + NAL units) — same format as the IPC wire protocol's frame payload. Keyframe status is inferred from NAL unit types on the frontend. Returns JSON `{ "error": "..." }` with 404 status if the stream doesn't exist.
 
 **`GET /api/v1/streams/windows`** — List capturable windows (one-shot spawn of `live-capture.exe --enumerate-windows`).
 
@@ -475,7 +475,7 @@ Keys prefixed with `$` are **computed strings** — readonly values derived from
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
 | **Decoder** | `frontend/src/stream/decoder.ts` | Done | H264Decoder with WebCodecs, avcC descriptor. `fetchInit()` retries on 503 (starting) and 404 (stream not yet created). |
-| **Renderer** | `frontend/src/stream/index.tsx` | Done | `<StreamRenderer>` component. Canvas rendering, ~60fps polling loop. Generation-aware: reinitializes decoder when the server replaces the underlying capture process. Owns full decoder lifecycle via `startStreamLoop()`. 404 treated as retriable. |
+| **Renderer** | `frontend/src/stream/index.tsx` | Done | `<StreamRenderer>` component. Canvas rendering, ~60fps polling loop. Generation-aware: reinitializes decoder when the server replaces the underlying capture process. Owns full decoder lifecycle via `startStreamLoop()`. 404 treated as retriable. Parses binary frame responses directly (`parseBinaryFrameResponse()` — zero-copy `subarray` slices). |
 
 ### Completed (Control Panel — `core/live-control/`)
 
@@ -497,7 +497,7 @@ Keys prefixed with `$` are **computed strings** — readonly values derived from
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
 | **Entry Point** | `server/index.ts` | Done | Hono app + Vite dev server (middleware mode) on single `node:http` port. Routes `/api/v1/*` → Hono, everything else → Vite. Auto-starts selector and YTM manager on boot. SIGINT/SIGTERM cleanup. |
-| **Stream API** | `server/api.ts` | Done | Hono sub-router mounted at `/api/v1/streams`. Routes: `GET/POST/DELETE /`, `GET/POST/DELETE /auto`, `GET/PUT /auto/config`, `PUT /auto/config/preset`, `GET /:id/init`, `GET /:id/frames?after=N`, `GET /windows`. POST accepts resample or crop mode (Zod union — crop uses absolute bounding box). `generation` field in list and frames responses. |
+| **Stream API** | `server/api.ts` | Done | Hono sub-router mounted at `/api/v1/streams`. Routes: `GET/POST/DELETE /`, `GET/POST/DELETE /auto`, `GET/PUT /auto/config`, `PUT /auto/config/preset`, `GET /:id/init`, `GET /:id/frames?after=N`, `GET /windows`. POST accepts resample or crop mode (Zod union — crop uses absolute bounding box). `generation` field in list and frames responses. Frames endpoint returns binary (`application/octet-stream`) — no JSON/base64 overhead. |
 | **Process Manager** | `server/process.ts` | Done | `CaptureStream` with `generation` counter. `spawnAndWire()` helper shared by create and replace paths. `createStream()`/`createCropStream()` for manual use (random IDs). `replaceStream()`/`replaceCropStream()` for well-known IDs — kills old process, resets buffer, bumps generation in-place (idempotent: creates if missing). Crop streams use absolute bounding box (minX/Y, maxX/Y). |
 | **Protocol Parser** | `server/protocol.ts` | Done | Push-based incremental binary parser. Handles partial reads, greedy parse loop. Mirrors Rust wire format exactly. |
 | **Frame Buffer** | `server/buffer.ts` | Done | Per-stream circular buffer (60 frames). Multi-viewer safe (no drain). Pre-serializes frames on push. Skips to first keyframe for new clients. `reset()` clears all state on stream replacement. |

@@ -183,27 +183,24 @@ async function startStreamLoop(
 
             consecutiveErrors = 0;
 
-            // Narrow from the response union to the success case (confirmed by res.ok).
-            const data = await res.json() as {
-                generation: number;
-                frames: { sequence: number; data: string }[];
-            };
+            // Parse the binary frame response (see server/api.ts for layout).
+            const { generation, frames } = parseBinaryFrameResponse(
+                new Uint8Array(await res.arrayBuffer()));
 
             // ── Generation change: reinitialize decoder ──────────────────
-            if (currentGeneration !== null && data.generation !== currentGeneration) {
+            if (currentGeneration !== null && generation !== currentGeneration) {
                 console.log("StreamLoop: Generation changed %d → %d, reinitializing decoder",
-                    currentGeneration, data.generation);
+                    currentGeneration, generation);
                 decoder.close();
                 decoder = new H264Decoder(streamId, onFrame);
                 await decoder.init();
                 lastSequence = 0;
             }
-            currentGeneration = data.generation;
+            currentGeneration = generation;
 
-            for (const frameInfo of data.frames) {
-                lastSequence = Math.max(lastSequence, frameInfo.sequence);
-                const frameDat = Uint8Array.fromBase64(frameInfo.data);
-                const frame = parseStreamFrame(frameDat);
+            for (const { sequence, payload } of frames) {
+                lastSequence = Math.max(lastSequence, sequence);
+                const frame = parseStreamFrame(payload);
                 decoder.decodeFrame(frame);
             }
             await sleep(pollMs);
@@ -227,4 +224,35 @@ async function startStreamLoop(
 
 function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ── Binary frame response parser ─────────────────────────────────────────
+
+interface BinaryFrameResponse {
+    generation: number;
+    frames: { sequence: number; payload: Uint8Array }[];
+}
+
+/// Parse the binary blob returned by GET /:id/frames.
+///
+/// Layout (all little-endian):
+///   [u32: generation][u32: num_frames]
+///   per frame: [u32: sequence][u32: payload_length][payload bytes]
+function parseBinaryFrameResponse(buf: Uint8Array): BinaryFrameResponse {
+    const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    let pos = 0;
+
+    const generation = view.getUint32(pos, true); pos += 4;
+    const numFrames = view.getUint32(pos, true);  pos += 4;
+
+    const frames: BinaryFrameResponse["frames"] = [];
+    for (let i = 0; i < numFrames; i++) {
+        const sequence = view.getUint32(pos, true);      pos += 4;
+        const payloadLen = view.getUint32(pos, true);     pos += 4;
+        // subarray: zero-copy view into the same ArrayBuffer.
+        const payload = buf.subarray(pos, pos + payloadLen); pos += payloadLen;
+        frames.push({ sequence, payload });
+    }
+
+    return { generation, frames };
 }
