@@ -24,7 +24,7 @@ import { destroyAll } from "./process";
 import { selector } from "./selector";
 import { ytmManager } from "./youtube-music";
 import api from "./api";
-import stringsApi, { reloadStore } from "./strings";
+import stringsApi, { reloadStore, setComputed } from "./strings";
 
 const log = createLogger("server::server");
 
@@ -71,7 +71,7 @@ const httpServer =
         }
     });
 
-httpServer.listen(serverPort, () => {
+httpServer.listen(serverPort, async () => {
     log.info(`LiveServer running at ${baseUrl}`);
 
     // Auto-start the window selector and YouTube Music manager once the
@@ -79,6 +79,18 @@ httpServer.listen(serverPort, () => {
     // connects.
     selector.start();
     ytmManager.start();
+
+    // Push the parent revision's timestamp as a computed string for the
+    // About widget.  Falls back silently if jj is unavailable.
+    try {
+        const jj = Bun.spawn(
+            ["jj", "log", "-r", "@-", "--no-graph", "-T", "committer.timestamp()"],
+            { stdout: "pipe", stderr: "pipe" });
+        const timestamp = (await new Response(jj.stdout).text()).trim();
+        if (timestamp) setComputed("$timestamp", timestamp);
+    } catch {
+        log.warn("failed to read jj revision timestamp");
+    }
 });
 
 // ── Cleanup ──────────────────────────────────────────────────────────────────

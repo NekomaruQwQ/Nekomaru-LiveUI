@@ -3,7 +3,7 @@ import { useStreamStatus } from "@/streams";
 import { useStrings } from "@/strings";
 import Marquee from "@/components/marquee";
 import Grid from "@/components/grid";
-import { ClockWidget } from "./widgets/clock";
+import { ClockWidget, StatusWidget, CaptureWidget, AboutWidget } from "./widgets";
 
 /// Pure viewer shell.  Stream lifecycle is fully server-managed — the
 /// frontend just renders two well-known stream IDs and polls for
@@ -45,13 +45,20 @@ export function App() {
 function SidePanel() {
     const strings = useStrings();
     return <div className="flex! w-full h-full flex-col gap-2">
-        <div className="island px-2 py-1">
+        <div className="island px-2 py-1.5">
             <ClockWidget />
         </div>
-        <div className="island p-2 flex-1">
+        <div className="island px-2 py-1.5">
+            <StatusWidget strings={strings} />
+            <CaptureWidget strings={strings} />
+        </div>
+        <div className="island px-3 py-2 flex-1">
             <pre className="font-sans font-light whitespace-pre-wrap wrap-break-word">
                 {strings.message}
             </pre>
+        </div>
+        <div className="island px-2 py-1.5">
+            <AboutWidget strings={strings} />
         </div>
     </div>;
 }

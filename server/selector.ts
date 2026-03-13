@@ -122,6 +122,7 @@ class LiveWindowSelector {
     start(): void {
         if (this.timer) return; // already running
         log.info("started");
+        setComputed("$captureMode", "auto");
         this.timer = setInterval(() => this.poll(), POLL_INTERVAL_MS);
     }
 
@@ -138,6 +139,7 @@ class LiveWindowSelector {
         this.lastCaptureHwnd = null;
         this.lastCaptureTitle = null;
         clearComputed("$captureWindowTitle");
+        clearComputed("$captureMode");
         log.info("stopped");
     }
 
