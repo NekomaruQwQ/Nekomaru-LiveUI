@@ -211,8 +211,15 @@ class LiveWindowSelector {
 
         const hwndStr = formatHwnd(info.hwnd);
 
-        // No change in foreground window — nothing to do.
-        if (hwndStr === this.lastForegroundHwnd) return;
+        // Same foreground window as last poll — check for title change on our capture target.
+        if (hwndStr === this.lastForegroundHwnd) {
+            if (hwndStr === this.lastCaptureHwnd && info.title !== this.lastCaptureTitle) {
+                this.lastCaptureTitle = info.title;
+                setComputed("$captureWindowTitle", info.title);
+                streamLog.info("title updated");
+            }
+            return;
+        }
         this.lastForegroundHwnd = hwndStr;
 
         // Log foreground change (title masked for privacy, same as original).

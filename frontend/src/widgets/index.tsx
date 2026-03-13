@@ -87,7 +87,7 @@ export function CaptureWidget({ strings }: { strings: Record<string, string> }) 
     const captureMode =
         strings.$captureMode?.toUpperCase() ?? "—";
     const windowTitle =
-        strings.$captureWindowTitle?.split("-").slice(-1)[0]?.trim() ?? "";
+        strings.$captureWindowTitle ?? "";
 
     return <LiveWidget
         name={`Capture Mode - ${captureMode}`}
