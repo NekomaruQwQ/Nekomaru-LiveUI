@@ -17,14 +17,13 @@ if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
 
 // ── API ──────────────────────────────────────────────────────────────────────
 
-/// Read and parse a JSON file, returning `fallback` on any error
-/// (missing file, permission error, malformed JSON).
+/// Read and parse a JSON file, returning `fallback` if the file doesn't exist.
+/// Parse errors propagate — a corrupt file crashes the server.
 export async function loadJson<T>(filePath: string, fallback: T): Promise<T> {
-	try {
-		return await Bun.file(filePath).json() as T;
-	} catch {
-		return fallback;
-	}
+	const file = Bun.file(filePath);
+	if (!await file.exists()) return fallback;
+	// File exists — parse errors propagate (crash on corrupt config).
+	return await file.json() as T;
 }
 
 /// Write `data` as pretty-printed JSON (tab-indented).

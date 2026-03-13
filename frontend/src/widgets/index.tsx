@@ -54,6 +54,7 @@ export function StatusWidget({ strings }: { strings: Record<string, string> }) {
     const MODE_MAP = {
         unknown: { label: "—", icon: "activity" },
         code: { label: "Coding", icon: "code" },
+        game: { label: "Gaming", icon: "gamepad" },
         sing: { label: "Singing", icon: "music" },
         chat: { label: "Chatting", icon: "message-circle" },
         brb: { label: "BRB", icon: "coffee" },
