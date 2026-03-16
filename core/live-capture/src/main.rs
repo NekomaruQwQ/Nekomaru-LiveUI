@@ -207,13 +207,13 @@ fn init_logger(capture_mode: bool) {
             // log::Level ordering: Error < Warn < Info < Debug < Trace.
             // >= Info captures diagnostic messages; Warn/Error fall through to stderr.
             let is_diagnostic = record.level() >= log::Level::Info;
-            if is_encoder && is_diagnostic {
-                if let Some(ref file) = encoder_log_file {
+            if is_encoder && is_diagnostic
+                && let Some(ref file) = encoder_log_file {
                     let mut f = file.lock().unwrap();
                     writeln!(f, "[{} {}] {}", record.level(), record.target(), record.args())?;
+                    drop(f); // release lock before writing to stderr
                     return Ok(());
                 }
-            }
             writeln!(buf, "[{} {}] {}", record.level(), record.target(), record.args())
         })
         .init();
@@ -261,6 +261,7 @@ fn main() {
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "main capture loop and encoding thread are necessarily long and complex")]
 fn run(hwnd: isize, mode: CaptureMode, frame_rate: u32) -> anyhow::Result<()> {
     // SAFETY: Called once at the start of the main thread before any COM usage.
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
@@ -326,7 +327,6 @@ fn run(hwnd: isize, mode: CaptureMode, frame_rate: u32) -> anyhow::Result<()> {
     // into atomic command lists.  ExecuteCommandList on the immediate context
     // is a single API call, serialized by ID3D11Multithread protection — the
     // encoding thread's NV12 convert cannot interleave mid-batch.
-    // SAFETY: `device` is a valid D3D11 device; flags = 0 (no special options).
     let deferred_context: ID3D11DeviceContext = {
         let mut ctx = None;
         // SAFETY: `device` is a valid D3D11 device; `ctx` is a stack-local out-param.
@@ -418,8 +418,6 @@ fn run(hwnd: isize, mode: CaptureMode, frame_rate: u32) -> anyhow::Result<()> {
                 // on the immediate context.  ExecuteCommandList is a single
                 // API call, serialized by ID3D11Multithread protection — the
                 // encoding thread cannot interleave its NV12 convert mid-batch.
-                // SAFETY: `deferred_context` has recorded valid GPU commands above.
-                // `false` = do not restore deferred context state (we re-record each frame).
                 let command_list = {
                     let mut list = None;
                     // SAFETY: `deferred_context` has recorded valid GPU commands above.
@@ -434,6 +432,9 @@ fn run(hwnd: isize, mode: CaptureMode, frame_rate: u32) -> anyhow::Result<()> {
                 // the encoding thread's pipeline state.
                 unsafe {
                     device_context.ExecuteCommandList(&command_list, true);
+                }
+                // SAFETY: Same reasoning as above.
+                unsafe {
                     device_context.Flush();
                 }
                 thread::sleep(Duration::from_millis(5));
