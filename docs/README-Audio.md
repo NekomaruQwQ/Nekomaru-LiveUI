@@ -1,6 +1,6 @@
 # Audio Streaming Subsystem
 
-**Low-latency raw PCM audio capture from WASAPI → HTTP polling → browser AudioWorklet playback.**
+**Low-latency raw PCM audio capture from WASAPI → HTTP polling → browser AudioWorklet playback, with delta + gzip compression on the wire.**
 
 **Last Updated**: 2026-03-16
 
@@ -49,12 +49,12 @@ Three layers, mirroring the video pipeline:
 ┌──────────────────────▼───────────────────────────────────────────────┐
 │  Server: AudioManager (Bun/TypeScript)                               │
 │  AudioProtocolParser → AudioBuffer (circular, 100 chunks)            │
-│  HTTP API: GET /init, GET /chunks?after=N                            │
+│  HTTP API: GET /init, GET /chunks?after=N (delta+gzip compressed)    │
 └──────────────────────┬───────────────────────────────────────────────┘
                        │ HTTP polling (~16ms interval)
 ┌──────────────────────▼───────────────────────────────────────────────┐
 │  Frontend: <AudioStream /> (React)                                   │
-│  Fetch chunks → AudioWorklet (ring buffer → output)                  │
+│  Fetch chunks → delta-decode → AudioWorklet (ring buffer → output)   │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -63,7 +63,7 @@ Three layers, mirroring the video pipeline:
 | Aspect | Video | Audio |
 |--------|-------|-------|
 | Scope | Per-window (stream ID) | Global (one device) |
-| Encoding | H.264 via NVENC | None (raw PCM s16le) |
+| Encoding | H.264 via NVENC | None (raw PCM s16le, delta+gzip on HTTP) |
 | Keyframe gating | Yes (IDR required to start) | No (all chunks independent) |
 | Buffer capacity | 60 frames (~1s at 60fps) | 100 chunks (~1s at 10ms/chunk) |
 | Generation counter | Yes (stream replacement) | No (single process) |
@@ -97,8 +97,9 @@ Three layers, mirroring the video pipeline:
 2. Creates an `AudioContext` at the device's native sample rate
 3. Loads the `PcmWorkletProcessor` module via `audioWorklet.addModule()`
 4. Polls `GET /api/v1/audio/chunks?after=N` with adaptive timing (16ms normal, 4ms fast retry when empty)
-5. Posts all received chunks to the worklet immediately (no A/V sync gating)
-6. The worklet converts s16le → f32, writes to a ring buffer, and outputs via `process()`
+5. Browser auto-decompresses gzip (`Content-Encoding`); parser delta-decodes each chunk's PCM via prefix sum
+6. Posts all received chunks to the worklet immediately (no A/V sync gating)
+7. The worklet converts s16le → f32, writes to a ring buffer, and outputs via `process()`
 
 ## IPC Wire Protocol
 
@@ -161,9 +162,10 @@ Returns audio format parameters as JSON.
 
 ### `GET /chunks?after=N`
 
-Returns audio chunks with sequence number > N as a binary blob.
+Returns audio chunks with sequence number > N as a gzip-compressed binary blob
+(`Content-Encoding: gzip` — the browser decompresses transparently).
 
-**Binary layout** (all little-endian):
+**Binary layout** (all little-endian, after gzip decompression):
 ```
 [u32: num_chunks]
 per chunk:
@@ -172,9 +174,16 @@ per chunk:
   [payload_length bytes: payload]
 ```
 
-Each chunk's payload is the pre-serialized `[u64 LE: timestamp_us][PCM bytes]`.
+Each chunk's payload is `[u64 LE: timestamp_us][delta-encoded s16le PCM bytes]`.
 
-The frontend extracts `timestamp_us` from the first 8 bytes (currently unused — retained for future sync if needed), then posts the remaining PCM bytes to the AudioWorklet.
+**Delta encoding**: the first sample in each chunk is stored as-is; every
+subsequent sample is the difference from the previous sample (`current - prev`).
+Resets per chunk — no cross-chunk state.  The frontend reconstructs original
+samples via prefix sum (`samples[i] += samples[i-1]`).
+
+Delta encoding clusters sample values near zero, which makes the data highly
+compressible with gzip.  Together they reduce audio HTTP bandwidth by ~60–80%
+compared to raw PCM.
 
 ## Frontend Audio Pipeline
 
@@ -244,7 +253,7 @@ live-audio.exe --list-devices
 | `audio-protocol.ts` | Push-based incremental binary parser for `0x10`/`0x11` audio IPC messages |
 | `audio-buffer.ts` | Circular buffer (100 chunks), pre-serializes on push, no keyframe gating |
 | `audio.ts` | Singleton `AudioManager`: spawns process, wires stdout/stderr, lifecycle |
-| `audio-api.ts` | Hono sub-router: `GET /init` (JSON) + `GET /chunks?after=N` (binary) |
+| `audio-api.ts` | Hono sub-router: `GET /init` (JSON) + `GET /chunks?after=N` (delta-encoded, gzip-compressed binary) |
 | `common.ts` | `audioExePath` and `audioDeviceName` constants (edited, not new) |
 | `index.ts` | Mounts audio API, starts/stops manager in lifecycle hooks (edited, not new) |
 
@@ -253,7 +262,7 @@ live-audio.exe --list-devices
 | File | Purpose |
 |------|---------|
 | `worklet.ts` | AudioWorklet processor: 200ms ring buffer, s16le→f32, silence on underrun |
-| `index.tsx` | `<AudioStream />` component: init fetch, adaptive chunk polling, worklet wiring |
+| `index.tsx` | `<AudioStream />` component: init fetch, adaptive chunk polling, delta decoding, worklet wiring |
 
 ### Frontend (edited)
 
@@ -265,14 +274,20 @@ live-audio.exe --list-devices
 
 ### Bandwidth
 
+Raw PCM (before compression):
 ```
 48000 Hz × 2 channels × 16 bits × 10ms chunks
 = 48000 × 2 × 2 bytes = 192,000 bytes/sec
 = 1.536 Mbit/s
 ```
 
-For comparison, video is ~8 Mbit/s (CBR H.264). Audio adds ~19% to the total
-bandwidth — acceptable for WLAN streaming.
+With delta encoding + gzip (~60–80% reduction):
+```
+~0.3–0.6 Mbit/s (content-dependent)
+```
+
+For comparison, video is ~8 Mbit/s (CBR H.264). Compressed audio adds ~4–8%
+to the total bandwidth.
 
 ### Latency breakdown (approximate)
 
@@ -313,8 +328,8 @@ cd server && bun run index.ts
 # Check audio params (should return JSON after ~1 second)
 curl http://localhost:3000/api/v1/audio/init
 
-# Check chunk flow (should return >4 bytes)
-curl -s http://localhost:3000/api/v1/audio/chunks?after=0 | wc -c
+# Check chunk flow (--compressed to auto-decompress gzip; should return >4 bytes)
+curl -s --compressed http://localhost:3000/api/v1/audio/chunks?after=0 | wc -c
 ```
 
 ### 3. Frontend playback (on remote PC)

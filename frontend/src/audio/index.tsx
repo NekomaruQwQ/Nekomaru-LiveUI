@@ -174,7 +174,10 @@ interface ParsedChunk {
 ///   [u32: num_chunks]
 ///   per chunk: [u32: sequence][u32: payload_length][payload bytes]
 ///
-/// Payload per chunk: [u64 LE: timestamp_us][raw PCM bytes]
+/// Payload per chunk: [u64 LE: timestamp_us][delta-encoded s16le PCM bytes]
+///
+/// Delta decoding: first sample is literal, each subsequent sample is
+/// accumulated (prefix sum) to reconstruct the original PCM.
 function parseBinaryChunkResponse(buf: Uint8Array): ParsedChunk[] {
     const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
     let pos = 0;
@@ -188,13 +191,28 @@ function parseBinaryChunkResponse(buf: Uint8Array): ParsedChunk[] {
 
         // First 8 bytes of payload = timestamp_us (u64 LE).
         const timestampUs = view.getBigUint64(pos, true);
+        // slice() creates an owned copy — safe to mutate in-place.
         const pcmData = buf.slice(pos + 8, pos + payloadLen);
         pos += payloadLen;
 
+        deltaDecodePcm(pcmData);
         chunks.push({ sequence, timestampUs, pcmData });
     }
 
     return chunks;
+}
+
+/// Decode delta-encoded s16le PCM samples in-place.
+/// First sample is literal; each subsequent sample accumulates the delta.
+function deltaDecodePcm(pcmData: Uint8Array): void {
+    const view = new DataView(pcmData.buffer, pcmData.byteOffset, pcmData.byteLength);
+    const sampleCount = pcmData.byteLength >>> 1;
+    for (let i = 1; i < sampleCount; i++) {
+        const off = i * 2;
+        const prev = view.getInt16(off - 2, true);
+        const delta = view.getInt16(off, true);
+        view.setInt16(off, (prev + delta) | 0, true);
+    }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
