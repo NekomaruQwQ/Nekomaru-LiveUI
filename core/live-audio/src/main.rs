@@ -294,7 +294,7 @@ unsafe fn capture_loop(device: &IMMDevice) -> Result<(), String> {
             &raw mut task_index)
     };
     if mmcss_handle.is_err() {
-        log::warn!("MMCSS registration failed — audio may be choppy under CPU load");
+        log::warn!("MMCSS registration failed - audio may be choppy under CPU load");
     } else {
         log::info!("MMCSS: registered as \"Pro Audio\"");
     }

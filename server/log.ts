@@ -397,18 +397,21 @@ export function isCaptureLogHead(line: string): boolean {
 /// - **Multiple lines**: marker on its own line, each content line indented +4.
 ///
 /// The first line is parsed with `ENV_LOG_RE` to extract the level and target
-/// for the marker.  Remaining lines are continuation text (backtrace, etc.).
+/// for the marker.  If the line doesn't match the env_logger format (e.g.
+/// `pretty_env_logger` uses `LEVEL target > msg`), `defaultTarget` is used
+/// as the module ID in the marker.
+///
 /// If any line matches the panic pattern, the entire group is styled as error.
-export function writeCaptureGroup(streamId: string, lines: string[]): void {
+export function writeCaptureGroup(streamId: string, lines: string[], defaultTarget: string): void {
     if (lines.length === 0) return;
 
     const targetWidth = BASE_PAD_WIDTH + streamId.length + 2;
     const head = lines[0] ?? "";
     const m = ENV_LOG_RE.exec(head);
 
-    // Build the marker from the first line (or fall back to bare `live_capture`).
+    // Build the marker from the first line (or fall back to caller-provided default).
     const level = m ? parseRustLevel(m[1] ?? "") : "info";
-    const target = m ? normalizeRustTarget(m[2] ?? "live_capture") : "live_capture";
+    const target = m ? normalizeRustTarget(m[2] ?? defaultTarget) : defaultTarget;
     const message = m ? (m[3] ?? "") : head;
     const marker = streamMarker(streamId, target);
     const padded = padMarker(marker.text, marker.visibleLen, targetWidth);

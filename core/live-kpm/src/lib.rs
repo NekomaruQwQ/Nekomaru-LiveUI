@@ -37,7 +37,7 @@ pub struct Batch {
 /// Write a `Batch` as a JSON line (newline-terminated).
 pub fn write_batch(w: &mut impl Write, batch: &Batch) -> io::Result<()> {
     serde_json::to_writer(&mut *w, batch)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        .map_err(io::Error::other)?;
     w.write_all(b"\n")?;
     w.flush()
 }

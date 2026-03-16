@@ -111,7 +111,7 @@ async function pipeStderr(proc: Subprocess): Promise<void> {
     function flush(): void {
         if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
         if (group.length > 0) {
-            writeCaptureGroup(LOG_STREAM_ID, group);
+            writeCaptureGroup(LOG_STREAM_ID, group, "live_audio");
             group = [];
         }
     }

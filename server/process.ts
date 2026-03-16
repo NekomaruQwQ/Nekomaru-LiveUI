@@ -270,7 +270,7 @@ async function pipeStderr(id: string, proc: Subprocess): Promise<void> {
     function flush(): void {
         if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
         if (group.length > 0) {
-            writeCaptureGroup(id, group);
+            writeCaptureGroup(id, group, "live_capture");
             group = [];
         }
     }
