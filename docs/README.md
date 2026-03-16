@@ -2,8 +2,8 @@
 
 **Low-latency (<100ms) screen capture streaming from DirectX 11 to the browser**
 
-**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | Frontend Integrated | UI Redesigned (JetBrains Islands) | Auto Window Selector Integrated | Frontend Refactored (stream/ + capture hook) | Crop Mode Added | Crop Mode Refactored (Absolute Box Coordinates) | YouTube Music Island Added | Control Panel Rewritten (stream overview, auto-config editor, string store editor) | Server-Managed Streams with Well-Known IDs | String Store Added | Marquee Banner Added | Control Panel CJK Font (Microsoft YaHei UI) | File Persistence (Strings + Selector Config) | Window Dimensions in Enumeration | Per-Monitor DPI Awareness | Refresh Endpoint | Window Title Matching in Selector Config | Multi-Preset Selector Config | Computed Strings (Server-Derived, Readonly) | Binary Frame Wire Format | Encoder Log File | Structured Server Logging (Grouped Stderr, Panic Detection, Debug Level) | SidePanel Widgets (Status, Capture, About) | Flat Preset Format (Merged Include/Exclude with @exclude) | $liveMode Computed String (Selector-Driven Mode Tags) | Path Separator Normalization (/ and \ interchangeable) | Strict JSON Persistence (Crash on Corrupt Config)
-**Last Updated**: 2026-03-12
+**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | Frontend Integrated | UI Redesigned (JetBrains Islands) | Auto Window Selector Integrated | Frontend Refactored (stream/ + capture hook) | Crop Mode Added | Crop Mode Refactored (Absolute Box Coordinates) | YouTube Music Island Added | Control Panel Rewritten (stream overview, auto-config editor, string store editor) | Server-Managed Streams with Well-Known IDs | String Store Added | Marquee Banner Added | Control Panel CJK Font (Microsoft YaHei UI) | File Persistence (Strings + Selector Config) | Window Dimensions in Enumeration | Per-Monitor DPI Awareness | Refresh Endpoint | Window Title Matching in Selector Config | Multi-Preset Selector Config | Computed Strings (Server-Derived, Readonly) | Binary Frame Wire Format | Encoder Log File | Structured Server Logging (Grouped Stderr, Panic Detection, Debug Level) | SidePanel Widgets (Status, Capture, About) | Flat Preset Format (Merged Include/Exclude with @exclude) | $liveMode Computed String (Selector-Driven Mode Tags) | Path Separator Normalization (/ and \ interchangeable) | Strict JSON Persistence (Crash on Corrupt Config) | Justfile Recipes (refresh, capture)
+**Last Updated**: 2026-03-16
 **Hardware**: RTX 5090 | Windows 11
 
 ---
@@ -402,11 +402,11 @@ The `generation` field increments each time the underlying capture process is re
 { "ok": true }
 ```
 
-**`PUT /api/v1/streams/auto/config/preset`** — Switch the active preset by name. Returns 404 if the preset doesn't exist.
+**`PUT /api/v1/streams/auto/config/preset`** — Switch the active preset by name. Accepts a plain string body (the preset name). Reloads config from disk first. Returns 400 if the body is empty or the preset doesn't exist.
 
-```json
-// Request body
-{ "name": "gaming" }
+```
+// Request body (text/plain)
+gaming
 
 // Response
 { "ok": true }

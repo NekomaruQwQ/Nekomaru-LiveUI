@@ -115,18 +115,20 @@ const api = new Hono()
             return c.json({ ok: true });
         })
 
-    /// Switch the active preset by name.
-    .put("/auto/config/preset",
-        zValidator("json", z.object({ name: z.string() })),
-        async (c) => {
-            const { name } = c.req.valid("json");
-            try {
-                await selector.setPreset(name);
-            } catch {
-                return c.json({ error: `preset "${name}" not found` }, 404);
-            }
-            return c.json({ ok: true });
-        })
+    /// Switch the active preset by name.  Accepts a plain string body (the preset name).
+    /// Reloads config from disk first so that hand-edits to selector-config.json
+    /// are picked up without a separate /refresh call.
+    .put("/auto/config/preset", async (c) => {
+        const name = (await c.req.text()).trim();
+        if (!name) return c.json({ error: "preset name required" }, 400);
+        try {
+            await selector.loadPersistedConfig();
+            await selector.setPreset(name);
+        } catch {
+            return c.json({ error: `preset "${name}" not found` }, 400);
+        }
+        return c.json({ ok: true });
+    })
 
     // ── Stream lifecycle ─────────────────────────────────────────────────
 

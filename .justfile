@@ -1,11 +1,15 @@
 set shell := ["nu", "-c"]
 
+base_url := "http://localhost:($env.LIVE_PORT)"
+
 alias i := install
 
 list:
     just --list
 refresh:
-    curl -X POST $"http://localhost:($env.LIVE_PORT)/api/v1/refresh"
+    http post $"{{base_url}}/api/v1/refresh" ""
+capture name:
+    http put $"{{base_url}}/api/v1/streams/auto/config/preset" "{{name}}"
 
 server:
     use .mod.nu run; \
