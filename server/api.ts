@@ -121,12 +121,10 @@ const api = new Hono()
     .put("/auto/config/preset", async (c) => {
         const name = (await c.req.text()).trim();
         if (!name) return c.json({ error: "preset name required" }, 400);
-        try {
-            await selector.loadPersistedConfig();
-            await selector.setPreset(name);
-        } catch {
-            return c.json({ error: `preset "${name}" not found` }, 400);
-        }
+        await selector.loadPersistedConfig();
+        const { presets } = selector.getConfig();
+        if (!(name in presets)) return c.json({ error: `preset "${name}" not found` }, 400);
+        await selector.setPreset(name);
         return c.json({ ok: true });
     })
 
