@@ -2,7 +2,7 @@
 
 **Low-latency (<100ms) screen capture streaming from DirectX 11 to the browser**
 
-**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | Frontend Integrated | UI Redesigned (JetBrains Islands) | Auto Window Selector Integrated | Frontend Refactored (stream/ + capture hook) | Crop Mode Added | Crop Mode Refactored (Absolute Box Coordinates) | YouTube Music Island Added | Control Panel Rewritten (stream overview, auto-config editor, string store editor) | Server-Managed Streams with Well-Known IDs | String Store Added | Marquee Banner Added | Control Panel CJK Font (Microsoft YaHei UI) | File Persistence (Strings + Selector Config) | Window Dimensions in Enumeration | Per-Monitor DPI Awareness | Refresh Endpoint | Window Title Matching in Selector Config | Multi-Preset Selector Config | Computed Strings (Server-Derived, Readonly) | Binary Frame Wire Format | Encoder Log File | Structured Server Logging (Grouped Stderr, Panic Detection, Debug Level) | SidePanel Widgets (Status, Capture, About) | Flat Preset Format (Merged Include/Exclude with @exclude) | $liveMode Computed String (Selector-Driven Mode Tags) | Path Separator Normalization (/ and \ interchangeable) | Strict JSON Persistence (Crash on Corrupt Config) | Justfile Recipes (refresh, capture) | Audio Streaming (WASAPI Capture, Server Pipeline, Browser Playback)
+**Status**: Encoding Pipeline Complete | `live-capture` Crate Done | LiveServer Implemented | Frontend Integrated | UI Redesigned (JetBrains Islands) | Auto Window Selector Integrated | Frontend Refactored (stream/ + capture hook) | Crop Mode Added | Crop Mode Refactored (Absolute Box Coordinates) | YouTube Music Island Added | Control Panel Rewritten (stream overview, auto-config editor, string store editor) | Server-Managed Streams with Well-Known IDs | String Store Added | Marquee Banner Added | Control Panel CJK Font (Microsoft YaHei UI) | File Persistence (Strings + Selector Config) | Window Dimensions in Enumeration | Per-Monitor DPI Awareness | Refresh Endpoint | Window Title Matching in Selector Config | Multi-Preset Selector Config | Computed Strings (Server-Derived, Readonly) | Binary Frame Wire Format | Encoder Log File | Structured Server Logging (Grouped Stderr, Panic Detection, Debug Level) | SidePanel Widgets (Status, Capture, About) | Flat Preset Format (Merged Include/Exclude with @exclude) | $liveMode Computed String (Selector-Driven Mode Tags) | Path Separator Normalization (/ and \ interchangeable) | Strict JSON Persistence (Crash on Corrupt Config) | Justfile Recipes (refresh, capture) | Audio Streaming (WASAPI Capture, Server Pipeline, Browser Playback) | Audio Opt-in (LIVE_AUDIO env, 404 graceful stop)
 **Last Updated**: 2026-03-16
 **Hardware**: RTX 5090 | Windows 11
 
@@ -31,6 +31,8 @@
 cargo build --release
 
 # Start the server (auto-starts window selector + YouTube Music manager)
+# Audio capture is off by default to avoid feedback loops on localhost.
+# Set LIVE_AUDIO=1 to enable it.
 cd server && bun run index.ts
 
 # Open the frontend in any browser — streams start automatically
@@ -105,6 +107,7 @@ The project is split into five independently running components. The hard work (
 │    - Generation counter per stream (bumps on replace)            │
 │                                                                  │
 │  Audio Manager                                                   │
+│    - Opt-in via LIVE_AUDIO=1 env (avoids feedback on localhost)  │
 │    - Spawns / kills live-audio.exe (single instance)             │
 │    - Reads stdout, parses binary audio chunks                    │
 │    - Circular audio buffer (~100 chunks, ~1 second)              │
@@ -521,7 +524,7 @@ Keys prefixed with `$` are **computed strings** — readonly values derived from
 
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
-| **Audio Stream** | `frontend/src/audio/index.tsx` | Done | Invisible `<AudioStream>` component. Polls `/api/v1/audio/chunks?after=N` with adaptive timing (16ms normal, 4ms fast retry). Posts PCM chunks to worklet immediately — no A/V sync. Handles browser autoplay policy. |
+| **Audio Stream** | `frontend/src/audio/index.tsx` | Done | Invisible `<AudioStream>` component. Polls `/api/v1/audio/chunks?after=N` with adaptive timing (16ms normal, 4ms fast retry). Posts PCM chunks to worklet immediately — no A/V sync. Handles browser autoplay policy. Exits gracefully on 404 (audio disabled). |
 | **PCM Worklet** | `frontend/src/audio/worklet.ts` | Done | AudioWorklet processor with ring buffer (9600 frames = 200ms at 48kHz). Receives s16le via MessagePort, converts to f32, outputs at audio callback rate. Silence on underrun. |
 
 ### Completed (Control Panel — `core/live-control/`)
@@ -543,13 +546,13 @@ Keys prefixed with `$` are **computed strings** — readonly values derived from
 
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
-| **Entry Point** | `server/index.ts` | Done | Hono app + Vite dev server (middleware mode) on single `node:http` port. Routes `/api/v1/*` → Hono, everything else → Vite. Auto-starts selector and YTM manager on boot. Reads `jj log -r @-` timestamp and pushes `$timestamp` computed string. SIGINT/SIGTERM cleanup. |
+| **Entry Point** | `server/index.ts` | Done | Hono app + Vite dev server (middleware mode) on single `node:http` port. Routes `/api/v1/*` → Hono, everything else → Vite. Auto-starts selector and YTM manager on boot. Audio manager gated by `LIVE_AUDIO` env (opt-in). Reads `jj log -r @-` timestamp and pushes `$timestamp` computed string. SIGINT/SIGTERM cleanup. |
 | **Stream API** | `server/api.ts` | Done | Hono sub-router mounted at `/api/v1/streams`. Routes: `GET/POST/DELETE /`, `GET/POST/DELETE /auto`, `GET/PUT /auto/config`, `PUT /auto/config/preset`, `GET /:id/init`, `GET /:id/frames?after=N`, `GET /windows`. POST accepts resample or crop mode (Zod union — crop uses absolute bounding box). `generation` field in list and frames responses. Frames endpoint returns binary (`application/octet-stream`) — no JSON/base64 overhead. |
 | **Logging** | `server/log.ts` | Done | Structured, color-coded logging for all server modules and forwarded Rust stderr. Three systems: (1) **Marker system** — `[moduleId]` and `[@streamId moduleId]` with cyan brackets, bold green stream IDs. (2) **Alignment** — per-level pad widths (`BASE_PAD_WIDTH` 18 for non-stream, +streamId length+2 for stream-scoped) so messages align within each nesting level. (3) **Rust stderr forwarding** — `writeCaptureGroup()` renders grouped env_logger lines: single-line inline with marker, multiline with marker alone + body indented +4. Panic detection (`PANIC_RE`) upgrades entire group to bold red. `isCaptureLogHead()` exported for group boundary detection. `Logger` interface: `info`, `warn`, `error`, `debug`. Debug level gated by `LIVEUI_DEBUG` env var (zero-cost no-op when unset). |
 | **Process Manager** | `server/process.ts` | Done | `CaptureStream` with `generation` counter. `spawnAndWire()` helper shared by create and replace paths. `createStream()`/`createCropStream()` for manual use (random IDs). `replaceStream()`/`replaceCropStream()` for well-known IDs — kills old process, resets buffer, bumps generation in-place (idempotent: creates if missing). Crop streams use absolute bounding box (minX/Y, maxX/Y). `pipeStderr()` groups Rust log lines using time-based flush (10ms delay) and head detection before forwarding to `writeCaptureGroup()`. |
 | **Protocol Parser** | `server/protocol.ts` | Done | Push-based incremental binary parser. Handles partial reads, greedy parse loop. Mirrors Rust wire format exactly. |
 | **Frame Buffer** | `server/buffer.ts` | Done | Per-stream circular buffer (60 frames). Multi-viewer safe (no drain). Pre-serializes frames on push. Skips to first keyframe for new clients. `reset()` clears all state on stream replacement. |
-| **Constants** | `server/common.ts` | Done | Port (`LIVE_PORT` env or 3000), exe path, buffer capacity, data directory path. |
+| **Constants** | `server/common.ts` | Done | Port (`LIVE_PORT` env or 3000), exe path, buffer capacity, data directory path. `audioEnabled` flag from `LIVE_AUDIO` env. |
 | **Auto Selector** | `server/selector.ts` | Done | `LiveWindowSelector` class. Polls foreground window every 2s via `live-capture.exe --foreground-window`. Multi-preset config: each preset is a flat `string[]` — entries are include by default, `@exclude` marks exclusions. Pattern format: `[@mode] <exePath>[@<windowTitle>]` — `@mode` prefix (e.g. `@code`, `@game`) tags entries with a live mode pushed as `$liveMode` on capture switch. Path separators normalized (`/` and `\` interchangeable). Presets switchable at runtime via `PUT /auto/config/preset`. Config persisted to `data/selector-config.json` — loaded on startup (migrates legacy `{ include, exclude }` format), written on every change. Uses `replaceStream("main", ...)` — stream ID is always `"main"`, generation bumps on each switch. Pushes `$captureWindowTitle` and `$liveMode` on capture switch, `$captureMode` on start/stop. |
 | **YouTube Music Manager** | `server/youtube-music.ts` | Done | `YouTubeMusicManager` class. Polls `enumerateWindows()` every 5s, finds window by `"YouTube Music"` title prefix. Creates/replaces `"youtube-music"` crop stream (bottom 96px computed from window dimensions). Destroys stream when window disappears. |
 | **Persistence** | `server/persist.ts` | Done | Thin JSON file persistence utility. `loadJson(path, fallback)` / `saveJson(path, data)` using Bun APIs. Creates `data/` directory on module load. Strict mode: missing files return fallback silently (first run), but corrupt/malformed JSON crashes the server instead of silently degrading. |
@@ -557,7 +560,7 @@ Keys prefixed with `$` are **computed strings** — readonly values derived from
 | **Audio Manager** | `server/audio.ts` | Done | `AudioManager` class. Spawns `live-audio.exe` with device name, reads stdout via `AudioProtocolParser`, pipes stderr through grouped log forwarding. Single global audio source (not per-stream). |
 | **Audio Protocol** | `server/audio-protocol.ts` | Done | Push-based incremental binary parser for audio IPC messages (`AudioParams`, `AudioFrame`, `Error`). Same pattern as video `protocol.ts`. |
 | **Audio Buffer** | `server/audio-buffer.ts` | Done | Circular chunk buffer (100 chunks = ~1s). Pre-serializes payloads on push. `getChunksAfter(seq)` for polling. `reset()` on process restart. |
-| **Audio API** | `server/audio-api.ts` | Done | Hono routes: `GET /api/v1/audio/init` (format params, 503 if not ready), `GET /api/v1/audio/chunks?after=N` (binary PCM chunks). |
+| **Audio API** | `server/audio-api.ts` | Done | Hono routes: `GET /api/v1/audio/init` (format params, 503 if not ready, 404 if disabled), `GET /api/v1/audio/chunks?after=N` (binary PCM chunks). |
 
 ### Completed (Frontend — React + Hono RPC)
 

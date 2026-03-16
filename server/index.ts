@@ -18,7 +18,7 @@ import * as http from "node:http";
 import * as vite from "vite";
 import * as hono from "@hono/node-server";
 
-import { serverPort, baseUrl } from "./common";
+import { serverPort, baseUrl, audioEnabled } from "./common";
 import { createLogger } from "./log";
 import { destroyAll } from "./process";
 import { selector } from "./selector";
@@ -82,7 +82,7 @@ httpServer.listen(serverPort, async () => {
     // connects.
     selector.start();
     ytmManager.start();
-    audioManager.start();
+    if (audioEnabled) audioManager.start();
 
     // Push the parent revision's timestamp as a computed string for the
     // About widget.  Falls back silently if jj is unavailable.

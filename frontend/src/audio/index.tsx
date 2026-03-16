@@ -130,6 +130,7 @@ async function fetchInit(signal: AbortSignal): Promise<AudioInitParams | null> {
     while (!signal.aborted) {
         try {
             const res = await fetch("/api/v1/audio/init", { signal });
+            if (res.status === 404) return null;  // Audio disabled on server.
             if (res.status === 503) {
                 await sleep(INIT_RETRY_MS);
                 continue;

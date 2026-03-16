@@ -15,6 +15,7 @@ const audioApi = new Hono()
     /// Return audio format parameters for the frontend's AudioContext setup.
     /// Returns 503 if the capture process hasn't sent params yet.
     .get("/init", (c) => {
+        if (!audioManager.active) return c.json({ error: "audio disabled" }, 404);
         const params = audioManager.buffer.getAudioParams();
         if (!params) return c.json({ error: "audio params not yet available" }, 503);
 

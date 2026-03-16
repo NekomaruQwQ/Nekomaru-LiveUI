@@ -24,5 +24,9 @@ export const audioExePath =
 /// WASAPI capture device name passed to live-audio.exe via --device.
 export const audioDeviceName = "Loopback L + R (Focusrite USB Audio)";
 
+/// Whether audio capture is enabled.  Opt-in via LIVE_AUDIO=1 to avoid
+/// feedback loops during localhost development.
+export const audioEnabled = !!process.env.LIVE_AUDIO;
+
 /// Number of frames to buffer per stream (~1 second at 60fps).
 export const frameBufferCapacity = 60;
