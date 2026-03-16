@@ -4,7 +4,7 @@ import { useStreamStatus } from "@/streams";
 import { useStrings } from "@/strings";
 import Marquee from "@/components/marquee";
 import Grid from "@/components/grid";
-import { ClockWidget, StatusWidget, CaptureWidget, AboutWidget } from "./widgets";
+import { ClockWidget, LiveModeWidget, CaptureWidget, AboutWidget } from "./widgets";
 
 /// Pure viewer shell.  Stream lifecycle is fully server-managed — the
 /// frontend just renders two well-known stream IDs and polls for
@@ -52,7 +52,7 @@ function SidePanel() {
             <ClockWidget />
         </div>
         <div className="island px-2 py-1.5">
-            <StatusWidget strings={strings} />
+            <LiveModeWidget strings={strings} />
             <CaptureWidget strings={strings} />
         </div>
         <div className="island px-3 py-2 flex-1">

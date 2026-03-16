@@ -45,11 +45,11 @@ function ClockComponent({ timeZone, label, variant = undefined }: {
     </LiveWidget>;
 }
 
-// ── Status (Mode + Microphone) ───────────────────────────────────────────────
+// ── Mode ─────────────────────────────────────────────────────────────────────
 
-/// Small widget pair: Mode (left) + Microphone (right), sharing one island.
-/// Reads `mode` and `microphone` from the string store passed in as props.
-export function StatusWidget({ strings }: { strings: Record<string, string> }) {
+/// Shows the current live mode derived from the auto-selector's `@mode` tag.
+/// Reads `$liveMode` from the string store passed in as props.
+export function LiveModeWidget({ strings }: { strings: Record<string, string> }) {
     /// Display labels and icons for each mode value.
     const MODE_MAP = {
         unknown: { label: "—", icon: "activity" },
@@ -64,20 +64,12 @@ export function StatusWidget({ strings }: { strings: Record<string, string> }) {
         strings.$liveMode
             && MODE_MAP[strings.$liveMode as keyof typeof MODE_MAP])
             || MODE_MAP.unknown;
-    const micOn = strings.microphone === "on";
 
-    return <Grid columns="1fr 1fr" gap="2">
-        <LiveWidget
-            name="Live Mode"
-            icon={<DynamicIcon name={mode.icon} size={36} />}>
-            <span className="text-md">{mode.label}</span>
-        </LiveWidget>
-        <LiveWidget
-            name="Microphone"
-            icon={<DynamicIcon name={micOn ? "mic" : "mic-off"} size={36} />}>
-            <span className="text-md">{micOn ? "On" : "Muted"}</span>
-        </LiveWidget>
-    </Grid>;
+    return <LiveWidget
+        name="Live Mode"
+        icon={<DynamicIcon name={mode.icon} size={36} />}>
+        <span className="text-md">{mode.label}</span>
+    </LiveWidget>;
 }
 
 // ── Capture ──────────────────────────────────────────────────────────────────
