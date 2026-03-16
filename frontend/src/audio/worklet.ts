@@ -3,15 +3,16 @@
 // Runs on the audio rendering thread.  Receives s16le PCM chunks from the
 // main thread via MessagePort and plays them through a ring buffer.
 //
-// Ring buffer capacity: ~50ms at 48kHz stereo = 2400 frames × 2 channels.
-// This is small enough to keep latency low, large enough to absorb jitter
-// from the HTTP polling interval (~16ms) and WLAN variability (~5ms).
+// Ring buffer capacity: ~200ms at 48kHz stereo = 9600 frames × 2 channels.
+// Large enough to absorb HTTP polling jitter (~25-35ms effective interval),
+// occasional GC pauses, and A/V sync hold-and-release bursts — while keeping
+// latency well under the 250ms streaming target.
 //
 // On underrun, outputs silence (zeros) — no glitch artifacts.
 
 /// Ring buffer capacity in sample frames (not individual samples).
-/// 50ms at 48kHz = 2400 frames.
-const RING_CAPACITY_FRAMES = 2400;
+/// 200ms at 48kHz = 9600 frames.
+const RING_CAPACITY_FRAMES = 9600;
 
 /// Messages received from the main thread.
 interface PcmMessage {

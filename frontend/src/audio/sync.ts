@@ -10,8 +10,9 @@
 //   - AudioStream    (checks shouldRelease before posting chunks to worklet)
 
 /// How far ahead of the video clock we allow audio to play (microseconds).
-/// 20ms threshold accounts for measurement jitter and polling intervals.
-const SYNC_THRESHOLD_US = 20_000n;
+/// 50ms is well within the human lip-sync perception threshold (~80ms for
+/// audio-leads-video) while reducing unnecessary holds in the pending queue.
+const SYNC_THRESHOLD_US = 50_000n;
 
 class AVSyncController {
     /// Timestamp of the most recently displayed video frame (microseconds).

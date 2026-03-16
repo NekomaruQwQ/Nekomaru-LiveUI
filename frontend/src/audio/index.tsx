@@ -8,18 +8,27 @@
 //   1. Create AudioContext at the device's native sample rate
 //   2. Load the PCM worklet module
 //   3. Fetch /api/v1/audio/init (retry on 503 until params arrive)
-//   4. Poll /api/v1/audio/chunks?after=N at ~16ms intervals
-//   5. Check A/V sync, post eligible chunks to the worklet
+//   4. Poll /api/v1/audio/chunks?after=N with adaptive timing
+//   5. Buffer chunks that are ahead of video, release when A/V sync allows
 //   6. Handle browser autoplay policy via user interaction resume
 
 import { useEffect } from "react";
 import { avSync } from "./sync";
 
-/// Poll interval for audio chunks (ms).  ~16ms matches one vsync at 60Hz.
+/// Normal poll interval when chunks were received (ms).
 const POLL_INTERVAL_MS = 16;
+
+/// Shorter poll interval when the server had no new chunks — retry quickly
+/// so we don't waste a full 16ms when data arrives between polls.
+const POLL_FAST_MS = 4;
 
 /// How long to wait before retrying /init when it returns 503 (ms).
 const INIT_RETRY_MS = 500;
+
+/// Maximum number of chunks to hold in the pending queue before flushing.
+/// 100 chunks × 10ms = 1 second — if we accumulate more, video is likely
+/// stalled and holding further serves no purpose.
+const MAX_PENDING_CHUNKS = 100;
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -79,10 +88,29 @@ async function startAudioLoop(signal: AbortSignal): Promise<void> {
     workletNode.connect(ctx.destination);
 
     // Step 3: Poll for audio chunks.
+    //
+    // Chunks that arrive ahead of video are held in a pending queue and
+    // re-checked each iteration — never dropped.  The old code updated
+    // lastSequence before the sync check, permanently losing chunks that
+    // failed shouldRelease().
     let lastSequence = 0;
+    const pending: ParsedChunk[] = [];
 
     while (!signal.aborted) {
         try {
+            // Drain pending chunks that are now releasable.
+            let i = 0;
+            while (i < pending.length) {
+                const held = pending[i];
+                if (held && avSync.shouldRelease(held.timestampUs)) {
+                    postChunkToWorklet(workletNode, held, params.channels);
+                    pending.splice(i, 1);
+                } else {
+                    i++;
+                }
+            }
+
+            // Fetch new chunks from the server.
             const res = await fetch(
                 `/api/v1/audio/chunks?after=${lastSequence}`,
                 { signal });
@@ -95,23 +123,28 @@ async function startAudioLoop(signal: AbortSignal): Promise<void> {
             const buf = new Uint8Array(await res.arrayBuffer());
             const chunks = parseBinaryChunkResponse(buf);
 
-            for (const { sequence, timestampUs, pcmData } of chunks) {
-                lastSequence = Math.max(lastSequence, sequence);
+            for (const chunk of chunks) {
+                lastSequence = Math.max(lastSequence, chunk.sequence);
 
-                // A/V sync: hold audio chunks that are too far ahead of video.
-                if (!avSync.shouldRelease(timestampUs)) continue;
-
-                // Convert raw bytes to Int16Array and post to worklet.
-                const samples = new Int16Array(
-                    pcmData.buffer, pcmData.byteOffset, pcmData.byteLength / 2);
-                workletNode.port.postMessage({
-                    type: "pcm",
-                    samples,
-                    channels: params.channels,
-                });
+                if (avSync.shouldRelease(chunk.timestampUs)) {
+                    postChunkToWorklet(workletNode, chunk, params.channels);
+                } else {
+                    pending.push(chunk);
+                }
             }
 
-            await sleep(POLL_INTERVAL_MS);
+            // Safety: flush if pending grows too large (video likely stalled).
+            if (pending.length > MAX_PENDING_CHUNKS) {
+                console.warn("AudioStream: pending queue overflow (%d), flushing", pending.length);
+                for (const chunk of pending) {
+                    postChunkToWorklet(workletNode, chunk, params.channels);
+                }
+                pending.length = 0;
+            }
+
+            // Adaptive timing: retry quickly when server had nothing new,
+            // use normal interval when chunks arrived.
+            await sleep(chunks.length > 0 ? POLL_INTERVAL_MS : POLL_FAST_MS);
         } catch (e) {
             if (signal.aborted) break;
             console.error("AudioStream: poll error:", e);
@@ -149,6 +182,17 @@ async function fetchInit(signal: AbortSignal): Promise<AudioInitParams | null> {
         }
     }
     return null;
+}
+
+// ── Worklet helpers ──────────────────────────────────────────────────────────
+
+/// Convert a parsed PCM chunk to Int16Array and post to the worklet.
+function postChunkToWorklet(
+    node: AudioWorkletNode, chunk: ParsedChunk, channels: number,
+): void {
+    const samples = new Int16Array(
+        chunk.pcmData.buffer, chunk.pcmData.byteOffset, chunk.pcmData.byteLength / 2);
+    node.port.postMessage({ type: "pcm", samples, channels });
 }
 
 // ── Binary chunk response parser ─────────────────────────────────────────────
