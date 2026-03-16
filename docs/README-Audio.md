@@ -193,6 +193,8 @@ Runs on the dedicated audio rendering thread (not the main thread).
 
 - **Input**: `MessagePort` receives `{ type: "pcm", samples: Int16Array, channels }` from the main thread
 - **Ring buffer**: ~200ms capacity (9600 frames at 48kHz). Stores f32 samples (converted from s16le on write).
+- **Pre-buffering**: One-shot gate — outputs silence until the ring accumulates 100ms (4800 frames), then starts playback permanently. Prevents underruns during the startup transient when the ring is near-empty and HTTP polling jitter could drain it to zero.
+- **Overflow**: If an incoming chunk won't fit in the ring, the entire chunk is dropped (not truncated mid-sample) to preserve PCM continuity.
 - **Output**: `process()` pulls 128 frames per call from the ring buffer into the output channels
 - **Underrun**: Outputs silence (zeros) — no glitch artifacts
 
@@ -235,6 +237,7 @@ live-audio.exe --list-devices
 | `index.tsx` | `POLL_FAST_MS` | 4 | Fast retry interval when server had no new chunks (ms) |
 | `index.tsx` | `INIT_RETRY_MS` | 500 | Retry delay for `/init` 503s (ms) |
 | `worklet.ts` | `RING_CAPACITY_FRAMES` | 9600 | AudioWorklet ring buffer (frames, ~200ms) |
+| `worklet.ts` | `PRE_BUFFER_FRAMES` | 4800 | One-shot pre-buffer threshold (frames, ~100ms) |
 
 ## File Map
 

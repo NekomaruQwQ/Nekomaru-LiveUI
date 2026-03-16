@@ -5,14 +5,25 @@
 //
 // Ring buffer capacity: ~200ms at 48kHz stereo = 9600 frames × 2 channels.
 // Large enough to absorb HTTP polling jitter (~25-35ms effective interval),
-// occasional GC pauses, and A/V sync hold-and-release bursts — while keeping
-// latency well under the 250ms streaming target.
+// occasional GC pauses, and bursty chunk delivery — while keeping latency
+// well under the 250ms streaming target.
 //
-// On underrun, outputs silence (zeros) — no glitch artifacts.
+// Pre-buffering: the worklet outputs silence until the ring has accumulated
+// at least PRE_BUFFER_FRAMES of audio (~100ms).  This is a one-shot gate —
+// once the threshold is reached, playback starts and never re-enters the
+// pre-buffering state.  Without this, the ring starts near-empty on first
+// connect and any HTTP jitter causes underruns (audible chopping).
+//
+// On underrun after priming, outputs silence (zeros) — no glitch artifacts.
 
 /// Ring buffer capacity in sample frames (not individual samples).
 /// 200ms at 48kHz = 9600 frames.
 const RING_CAPACITY_FRAMES = 9600;
+
+/// Pre-buffer threshold in frames.  The worklet outputs silence until this
+/// many frames have been buffered, then starts playback permanently.
+/// 100ms at 48kHz = 4800 frames.
+const PRE_BUFFER_FRAMES = 4800;
 
 /// Messages received from the main thread.
 interface PcmMessage {
@@ -34,6 +45,9 @@ class PcmWorkletProcessor extends AudioWorkletProcessor {
     private writePos = 0;
     /// How many samples are currently buffered.
     private buffered = 0;
+    /// One-shot pre-buffer gate.  Once the ring reaches PRE_BUFFER_FRAMES,
+    /// this flips to true and stays true forever.
+    private primed = false;
 
     constructor() {
         super();
@@ -55,10 +69,13 @@ class PcmWorkletProcessor extends AudioWorkletProcessor {
             this.buffered = 0;
         }
 
-        // Convert s16le → f32 and write to ring buffer.
+        // Drop the entire chunk if it won't fit — preserves PCM continuity
+        // within kept chunks instead of truncating mid-sample.
         const samples = msg.samples;
+        if (samples.length > capacity - this.buffered) return;
+
+        // Convert s16le → f32 and write to ring buffer.
         for (let i = 0; i < samples.length; i++) {
-            if (this.buffered >= capacity) break; // ring full — drop overflow
             this.ring[this.writePos] = samples[i]! / 32768;
             this.writePos = (this.writePos + 1) % capacity;
             this.buffered++;
@@ -71,12 +88,26 @@ class PcmWorkletProcessor extends AudioWorkletProcessor {
 
         const channels = output.length;
         const frameCount = output[0]!.length; // typically 128
+        const capacity = RING_CAPACITY_FRAMES * this.channels;
+
+        // One-shot pre-buffer gate: output silence until the ring has
+        // accumulated enough audio to absorb startup jitter.
+        if (!this.primed) {
+            if (this.buffered >= PRE_BUFFER_FRAMES * this.channels) {
+                this.primed = true;
+            } else {
+                // Fill output with silence while pre-buffering.
+                for (let ch = 0; ch < channels; ch++) {
+                    output[ch]!.fill(0);
+                }
+                return true;
+            }
+        }
 
         for (let frame = 0; frame < frameCount; frame++) {
             if (this.buffered >= channels) {
                 // Read one interleaved frame from the ring.
                 for (let ch = 0; ch < channels; ch++) {
-                    const capacity = RING_CAPACITY_FRAMES * this.channels;
                     output[ch]![frame] = this.ring[this.readPos]!;
                     this.readPos = (this.readPos + 1) % capacity;
                     this.buffered--;
