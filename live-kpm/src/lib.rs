@@ -5,7 +5,7 @@
 //!
 //! ## Wire Format
 //!
-//! Unlike `live-capture` and `live-audio` (binary envelope), `live-kpm` uses
+//! Unlike `live-video` and `live-audio` (binary envelope), `live-kpm` uses
 //! JSON lines for easier debugging — each stdout line is a single JSON object:
 //!
 //! ```json
@@ -26,7 +26,7 @@ use std::io::Write;
 pub struct Batch {
     /// Wall-clock timestamp in microseconds since Unix epoch.
     /// Uses `SystemTime::now().duration_since(UNIX_EPOCH)` — same clock as
-    /// `live-capture` and `live-audio` timestamps.
+    /// `live-video` and `live-audio` timestamps.
     pub t: u64,
     /// Number of keystrokes counted during this batch interval.
     pub c: u32,

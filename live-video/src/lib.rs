@@ -1,4 +1,4 @@
-//! IPC wire protocol for `live-capture`.
+//! IPC wire protocol for `live-video`.
 //!
 //! Defines the binary message format used to communicate encoded H.264 frames
 //! from the capture process to the server over stdout.

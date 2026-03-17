@@ -2,7 +2,7 @@
 //!
 //! Opens a non-resizable window at the stream resolution and loads the
 //! LiveServer frontend. This is a thin shell — all capture, encoding, and
-//! stream management lives in `live-capture.exe` and LiveServer.
+//! stream management lives in `live-video.exe` and LiveServer.
 
 use nkcore::prelude::*;
 use nkcore::os::windows::winit::{

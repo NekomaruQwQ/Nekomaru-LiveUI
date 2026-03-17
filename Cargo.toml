@@ -1,10 +1,10 @@
 [workspace]
 resolver = "3"
 members = [
-    "core/live-app",
-    "core/live-audio",
-    "core/live-capture",
-    "core/live-kpm",
+    "live-app",
+    "live-audio",
+    "live-kpm",
+    "live-video",
     "crates/enumerate-windows",
 ]
 

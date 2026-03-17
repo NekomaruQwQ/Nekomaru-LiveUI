@@ -1,8 +1,8 @@
-//! `live-capture.exe` — standalone screen capture + H.264 encoding to stdout.
+//! `live-video.exe` — standalone screen capture + H.264 encoding to stdout.
 //!
 //! Captures a window by HWND, encodes with NVENC, and writes binary IPC
-//! messages (see [`live_capture`]) to stdout.  Encoder init diagnostics go to
-//! `live-capture.encoder.log` next to the exe; all other log output goes to
+//! messages (see [`live_video`]) to stdout.  Encoder init diagnostics go to
+//! `live-video.encoder.log` next to the exe; all other log output goes to
 //! stderr.  Stdout stays exclusively binary.
 //!
 //! Two exclusive capture modes:
@@ -13,14 +13,14 @@
 //!
 //! ```text
 //! # Resample mode
-//! live-capture.exe --hwnd 0x1A2B3C --width 1920 --height 1200
+//! live-video.exe --hwnd 0x1A2B3C --width 1920 --height 1200
 //!
 //! # Crop mode (absolute bounding box in source pixels)
-//! live-capture.exe --hwnd 0x1A2B3C --crop-min-x 0 --crop-min-y 600 --crop-max-x 1920 --crop-max-y 700
+//! live-video.exe --hwnd 0x1A2B3C --crop-min-x 0 --crop-min-y 600 --crop-max-x 1920 --crop-max-y 700
 //!
 //! # Utility modes
-//! live-capture.exe --enumerate-windows
-//! live-capture.exe --foreground-window
+//! live-video.exe --enumerate-windows
+//! live-video.exe --foreground-window
 //! ```
 
 mod d3d11;
@@ -34,7 +34,7 @@ use converter::NV12Converter;
 use encoder::{H264Encoder, H264EncoderConfig};
 use resample::Resampler;
 
-use live_capture::*;
+use live_video::*;
 
 use clap::Parser;
 use nkcore::prelude::*;
@@ -59,7 +59,7 @@ const BITRATE: u32 = 8_000_000; // 8 Mbps CBR
 
 /// Standalone screen capture + H.264 encoding to stdout.
 #[derive(Parser)]
-#[command(name = "live-capture")]
+#[command(name = "live-video")]
 struct CliArgs {
     /// List visible windows as JSON and exit.
     #[arg(long)]
@@ -177,8 +177,8 @@ fn resolve_capture_mode(args: &CliArgs) -> anyhow::Result<Option<CaptureMode>> {
 // ── Logging ─────────────────────────────────────────────────────────────────
 
 /// Set up dual-output logging:
-/// - Encoder init diagnostics (info/debug/trace from `live_capture::encoder`)
-///   go to `live-capture.encoder.log` next to the executable, truncated on
+/// - Encoder init diagnostics (info/debug/trace from `live_video::encoder`)
+///   go to `live-video.encoder.log` next to the executable, truncated on
 ///   each run.  These are stable and verbose — useful for post-hoc inspection
 ///   but noisy on stderr.
 /// - Warnings and errors from encoder code still go to stderr (real problems).
@@ -194,7 +194,7 @@ fn init_logger(capture_mode: bool) {
     let encoder_log_file: Option<Mutex<std::fs::File>> = if capture_mode {
         std::env::current_exe()
             .ok()
-            .and_then(|p| p.parent().map(|d| d.join("live-capture.encoder.log")))
+            .and_then(|p| p.parent().map(|d| d.join("live-video.encoder.log")))
             .and_then(|p| std::fs::File::create(p).ok())
             .map(Mutex::new)
     } else {
@@ -203,7 +203,7 @@ fn init_logger(capture_mode: bool) {
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format(move |buf, record| {
-            let is_encoder = record.target().starts_with("live_capture::encoder");
+            let is_encoder = record.target().starts_with("live_video::encoder");
             // log::Level ordering: Error < Warn < Info < Debug < Trace.
             // >= Info captures diagnostic messages; Warn/Error fall through to stderr.
             let is_diagnostic = record.level() >= log::Level::Info;

@@ -13,7 +13,7 @@ capture name:
 
 server:
     use .mod.nu run; \
-        run live-capture app --help; \
+        run live-video app --help; \
         run live-audio app --help; \
         run live-kpm app --help;
     cd server; bun --hot index.ts;
