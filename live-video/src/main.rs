@@ -49,7 +49,6 @@ use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::System::Com::*;
-use windows::Win32::UI::HiDpi::*;
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -120,6 +119,12 @@ struct CliArgs {
     /// near-static content like the YouTube Music playback bar.
     #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u32).range(1..=60))]
     fps: u32,
+
+    /// Stream ID tag for log output (e.g. "main", "youtube-music").
+    /// When set, log lines include `@<stream_id>` for disambiguation
+    /// when multiple instances write to the same inherited stderr.
+    #[arg(long)]
+    stream_id: Option<String>,
 }
 
 /// Resolved capture mode after CLI validation.
@@ -187,7 +192,7 @@ fn resolve_capture_mode(args: &CliArgs) -> anyhow::Result<Option<CaptureMode>> {
 /// `capture_mode` controls whether the encoder log file is created.  Utility
 /// modes (`--enumerate-windows`, `--foreground-window`) pass `false` to avoid
 /// truncating a log file that a concurrent capture process is writing to.
-fn init_logger(capture_mode: bool) {
+fn init_logger(capture_mode: bool, stream_id: Option<String>) {
     // Only create (truncate) the encoder log file for actual capture runs.
     // Utility invocations are frequent (selector polls every 2s) and would
     // otherwise repeatedly truncate the file.
@@ -201,7 +206,11 @@ fn init_logger(capture_mode: bool) {
         None
     };
 
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+    // Pre-format the stream ID tag so the closure doesn't allocate per-line.
+    let tag = stream_id.map_or_else(String::new, |id| format!(" @{id}"));
+
+    pretty_env_logger::env_logger::Builder::from_env(
+        pretty_env_logger::env_logger::Env::default().default_filter_or("info"))
         .format(move |buf, record| {
             let is_encoder = record.target().starts_with("live_video::encoder");
             // log::Level ordering: Error < Warn < Info < Debug < Trace.
@@ -210,11 +219,11 @@ fn init_logger(capture_mode: bool) {
             if is_encoder && is_diagnostic
                 && let Some(ref file) = encoder_log_file {
                     let mut f = file.lock().unwrap();
-                    writeln!(f, "[{} {}] {}", record.level(), record.target(), record.args())?;
+                    writeln!(f, "[{}{tag} {}] {}", record.level(), record.target(), record.args())?;
                     drop(f); // release lock before writing to stderr
                     return Ok(());
                 }
-            writeln!(buf, "[{} {}] {}", record.level(), record.target(), record.args())
+            writeln!(buf, "[{}{tag} {}] {}", record.level(), record.target(), record.args())
         })
         .init();
 }
@@ -222,15 +231,11 @@ fn init_logger(capture_mode: bool) {
 // ── Entry point ─────────────────────────────────────────────────────────────
 
 fn main() {
-    // Declare per-monitor DPI awareness so that Win32 geometry APIs (e.g.
-    // `GetClientRect` in enumerate-windows) return physical pixels instead
-    // of DPI-virtualized logical pixels.
-    // SAFETY: Called once, before any window or geometry API usage.
-    let _ = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+    set_dpi_awareness::per_monitor_v2();
 
     let args = CliArgs::parse();
     let is_capture_mode = !args.enumerate_windows && !args.foreground_window;
-    init_logger(is_capture_mode);
+    init_logger(is_capture_mode, args.stream_id.clone());
 
     if args.enumerate_windows {
         let windows = enumerate_windows::enumerate_windows();

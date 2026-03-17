@@ -278,15 +278,13 @@ fn spawn_and_wire(
 ) -> (Child, JoinHandle<()>) {
     let mut child = Command::new(&args[0])
         .args(&args[1..])
+        .args(["--stream-id", id])
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::inherit())
         .spawn()
         .unwrap_or_else(|e| panic!("failed to spawn {}: {e}", args[0]));
 
-    // Take ownership of stdout/stderr — the child retains None for these
-    // fields, but we keep the Child handle for kill() / wait().
     let stdout = child.stdout.take().expect("stdout must be piped");
-    let stderr = child.stderr.take().expect("stderr must be piped");
 
     let id_owned = id.to_owned();
     let registry_clone = Arc::clone(registry);
@@ -334,25 +332,6 @@ fn spawn_and_wire(
         let mut registry = registry_clone.blocking_write();
         if let Some(stream) = registry.streams.get_mut(&id_owned) {
             stream.status = StreamStatus::Stopped;
-        }
-    });
-
-    // Stderr reader: forward lines to log.
-    let id_for_stderr = id.to_owned();
-    tokio::task::spawn_blocking(move || {
-        use std::io::BufRead as _;
-        let reader = BufReader::new(stderr);
-        for line in reader.lines() {
-            match line {
-                Ok(line) if !line.is_empty() => {
-                    log::info!("[{id_for_stderr}] {line}");
-                }
-                Err(e) => {
-                    log::error!("[{id_for_stderr}] stderr read error: {e}");
-                    break;
-                }
-                _ => {}
-            }
         }
     });
 

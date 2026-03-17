@@ -52,12 +52,11 @@ impl AudioState {
         let mut child = Command::new(&args[0])
             .args(&args[1..])
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::inherit())
             .spawn()
             .unwrap_or_else(|e| panic!("failed to spawn {}: {e}", args[0]));
 
         let stdout = child.stdout.take().expect("stdout must be piped");
-        let stderr = child.stderr.take().expect("stderr must be piped");
 
         let state_clone = Arc::clone(state_arc);
 
@@ -99,19 +98,6 @@ impl AudioState {
             let mut state = state_clone.blocking_write();
             state.active = false;
             state.buffer.reset();
-        });
-
-        // Stderr reader task.
-        tokio::task::spawn_blocking(move || {
-            use std::io::BufRead as _;
-            let reader = BufReader::new(stderr);
-            for line in reader.lines() {
-                match line {
-                    Ok(line) if !line.is_empty() => log::info!("[audio] {line}"),
-                    Err(e) => { log::error!("[audio] stderr: {e}"); break; }
-                    _ => {}
-                }
-            }
         });
 
         self.child = Some(child);

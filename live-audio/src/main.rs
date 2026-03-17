@@ -62,9 +62,10 @@ struct Cli {
 // ── Main ────────────────────────────────────────────────────────────────────
 
 fn main() {
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info"))
-        .target(env_logger::Target::Stderr)
+    pretty_env_logger::formatted_builder()
+        .filter_level(log::LevelFilter::Info)
+        .parse_default_env()
+        .target(pretty_env_logger::env_logger::Target::Stderr)
         .init();
 
     let cli = Cli::parse();
