@@ -8,7 +8,7 @@ use crate::kpm::process::KpmState;
 use crate::selector::manager::SelectorState;
 use crate::strings::store::StringStore;
 use crate::video::process::StreamRegistry;
-use crate::ytm::manager::YtmState;
+use crate::youtube_music::manager::YtmState;
 
 use std::sync::Arc;
 

@@ -83,12 +83,15 @@ src/lib.rs                                  human
 src/lib.rs                                  human
 
 # crates/job-object/
-src/lib.rs                                  human
+src/lib.rs                                  agent
 
-# frontend/src/stream/
-chroma-key.ts                               agent
-decoder.ts                                  agent
-index.tsx                                   agent
+# frontend/
+debug.ts                                    human
+global.css                                  human
+global.effects.css                          human
+global.tailwind.css                         human
+index.html                                  human
+index.tsx                                   human
 
 # frontend/src/
 api.ts                                      agent
@@ -101,6 +104,10 @@ app.tsx                                     human
 grid.tsx                                    human
 marquee.tsx                                 agent
 
+# frontend/src/widgets/
+common.tsx                                  agent
+index.tsx                                   agent
+
 # frontend/src/audio/
 index.tsx                                   agent
 worklet.ts                                  agent
@@ -108,15 +115,8 @@ worklet.ts                                  agent
 # frontend/src/kpm/
 index.tsx                                   agent
 
-# frontend/src/widgets/
-common.tsx                                  agent
+# frontend/src/stream/
+chroma-key.ts                               agent
+decoder.ts                                  agent
 index.tsx                                   agent
-
-# frontend/
-debug.ts                                    human
-global.css                                  human
-global.effects.css                          human
-global.tailwind.css                         human
-index.html                                  human
-index.tsx                                   human
 ```

@@ -10,14 +10,40 @@
 //! LIVE_CORE_PORT=3000 LIVE_PORT=5173 live-server
 //! ```
 
-mod audio;
-mod kpm;
-mod selector;
 mod state;
-mod strings;
-mod video;
 mod windows;
-mod ytm;
+
+mod audio {
+    pub mod buffer;
+    pub mod process;
+    pub mod routes;
+}
+mod kpm {
+    pub mod calculator;
+    pub mod process;
+    pub mod routes;
+}
+
+mod selector {
+    pub mod config;
+    pub mod manager;
+    pub mod routes;
+}
+
+mod strings {
+    pub mod routes;
+    pub mod store;
+}
+
+mod video {
+    pub mod buffer;
+    pub mod process;
+    pub mod routes;
+}
+
+mod youtube_music {
+    pub mod manager;
+}
 
 use state::AppState;
 
@@ -40,41 +66,28 @@ struct Cli {
     /// HTTP server port.  Required — reads from LIVE_CORE_PORT env if not
     /// passed as a flag.
     #[arg(long, env = "LIVE_CORE_PORT")]
-    port: u16,
+    core_port: u16,
 
     /// Vite dev server port.  When set, spawns `bunx vite` as a child process
     /// with this port and a proxy back to the core server.
     #[arg(long, env = "LIVE_PORT")]
     vite_port: Option<u16>,
 
-    /// Path to the `live-video` executable.  Defaults to `live-video` in the
-    /// same directory as this binary (from `cargo build`).
-    #[arg(long, default_value = "live-video")]
-    video_exe: String,
-
-    /// Path to the `live-audio` executable.
-    #[arg(long, default_value = "live-audio")]
-    audio_exe: String,
-
-    /// WASAPI capture device name for audio.
-    #[arg(long, default_value = "Loopback L + R (Focusrite USB Audio)")]
-    audio_device: String,
-
     /// Enable audio capture.  Off by default to avoid feedback loops
     /// during localhost development.
     #[arg(long, env = "LIVE_AUDIO")]
     audio: bool,
 
-    /// Path to the `live-kpm` executable.
-    #[arg(long, default_value = "live-kpm")]
-    kpm_exe: String,
+    /// WASAPI capture device name for audio.
+    #[arg(long, default_value = "Loopback L + R (Focusrite USB Audio)")]
+    audio_device: String,
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() {
-    set_dpi_awareness::per_monitor_v2();
+    let _ = set_dpi_awareness::per_monitor_v2();
 
     pretty_env_logger::formatted_builder()
         .filter_level(log::LevelFilter::Info)
@@ -84,9 +97,9 @@ async fn main() {
     let cli = Cli::parse();
 
     // Resolve exe paths: if relative, look next to this binary.
-    let video_exe = resolve_sibling_exe(&cli.video_exe);
-    let audio_exe = resolve_sibling_exe(&cli.audio_exe);
-    let kpm_exe = resolve_sibling_exe(&cli.kpm_exe);
+    let video_exe = resolve_sibling_exe("live-video.exe");
+    let audio_exe = resolve_sibling_exe("live-audio.exe");
+    let kpm_exe = resolve_sibling_exe("live-kpm.exe");
     log::info!("video exe: {video_exe}");
     log::info!("audio exe: {audio_exe}");
     log::info!("kpm exe: {kpm_exe}");
@@ -132,7 +145,7 @@ async fn main() {
         .route("/api/v1/refresh", post(refresh))
         .with_state(Arc::clone(&state));
 
-    let addr = format!("0.0.0.0:{}", cli.port);
+    let addr = format!("0.0.0.0:{}", cli.core_port);
     log::info!("listening on {addr}");
 
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -141,7 +154,7 @@ async fn main() {
 
     // Spawn Vite dev server as a child process if LIVE_PORT is set.
     let mut vite_child = cli.vite_port
-        .and_then(|vp| spawn_vite(vp, cli.port, &job));
+        .and_then(|vp| spawn_vite(vp, cli.core_port, &job));
 
     // Serve until Ctrl+C.
     axum::serve(listener, app)

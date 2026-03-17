@@ -244,7 +244,7 @@ fn init_logger(capture_mode: bool, stream_id: Option<String>) {
 // ── Entry point ─────────────────────────────────────────────────────────────
 
 fn main() {
-    set_dpi_awareness::per_monitor_v2();
+    let _ = set_dpi_awareness::per_monitor_v2();
 
     let args = CliArgs::parse();
     let is_capture_mode = !args.enumerate_windows && !args.foreground_window;
