@@ -233,6 +233,7 @@ fn spawn_vite(vite_port: u16, core_port: u16, job: &JobObject) -> Option<Child> 
     log::info!("spawning vite dev server on port {vite_port} (frontend dir: {})", frontend_dir.display());
 
     let child = std::process::Command::new("bunx")
+        .arg("--bun")
         .arg("vite")
         .current_dir(&frontend_dir)
         .env("LIVE_PORT", vite_port.to_string())
