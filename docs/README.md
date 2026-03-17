@@ -128,6 +128,7 @@ The server was originally TypeScript (Hono on Bun).  It was rewritten in Rust fo
 | Capture processes | Kept as children (not embedded) | A crash in NVENC or WASAPI doesn't take down the server.  Capture binaries use blocking I/O on dedicated threads.  Pipe overhead is negligible (~0.1ms).  Stderr inherited — children log directly via `pretty_env_logger`; `live-video` uses `--stream-id` for multi-instance disambiguation. |
 | Buffer concurrency | `tokio::sync::RwLock<StreamRegistry>` | Read-heavy: 60fps polls from N clients share the read lock. Single-producer write lock held for microseconds per frame push. |
 | Frontend API client | Plain `fetch()` (was Hono RPC) | With the TypeScript server gone, the Hono RPC type chain (`hc<ApiType>`) was removed.  Plain `fetch()` with TypeScript interfaces is simpler and has no runtime dependency. |
+| Frame format (server→browser) | AVCC (server pre-serialized) | The server converts Annex B → AVCC at frame-push time (strip start codes, add 4-byte BE length prefix per NAL).  The frontend feeds AVCC payloads directly to `EncodedVideoChunk` with zero H.264 format knowledge — no parsing, no start code stripping, no AVCC assembly.  Codec string and avcC descriptor are also built server-side and served via `/init`. |
 | Vite integration | Spawned as child, proxy via `vite.config.ts` | Vite's built-in `server.proxy` forwards `/api/*` to the Rust server during development.  No CORS needed.  Production: `tower-http::ServeDir` serves `dist/` on the same port. |
 | Port configuration | `LIVE_CORE_PORT` (server) + `LIVE_PORT` (Vite dev) | No default ports — avoids conflicts with other Vite apps or dev servers. Both required. |
 | Webview launch | Copy-and-run via `.mod.nu` | `just app` / `just youtube-music` build `live-app`, copy as `live-app.<id>.exe`, then run the copy.  Each instance gets its own binary, so `cargo build` (server restart) doesn't hit file locks.  Instance IDs allow frontend and YTM webviews to run simultaneously. |
@@ -331,18 +332,18 @@ Served by `live-server` (Rust/Axum).  Port is configured via `LIVE_CORE_PORT` en
 
 ### Stream Data
 
-**`GET /api/v1/streams/:id/init`** — Codec parameters for decoder initialization.
+**`GET /api/v1/streams/:id/init`** — Pre-built decoder configuration. The server derives the `avc1.PPCCLL` codec string and builds the ISO 14496-15 AVCDecoderConfigurationRecord (avcC) from the cached SPS/PPS — the frontend passes these directly to `VideoDecoder.configure()` with zero H.264 format knowledge.
 
 ```json
 {
-    "sps": "<base64>",
-    "pps": "<base64>",
+    "codec": "avc1.42001f",
     "width": 1920,
-    "height": 1200
+    "height": 1200,
+    "description": "<base64 of avcC descriptor>"
 }
 ```
 
-**`GET /api/v1/streams/:id/frames?after=N`** — Encoded frames after sequence number N. Returns `application/octet-stream` (binary, not JSON).
+**`GET /api/v1/streams/:id/frames?after=N`** — AVCC-formatted frames after sequence number N. Returns `application/octet-stream` (binary, not JSON).
 
 ```
 Binary layout (all little-endian):
@@ -350,11 +351,13 @@ Binary layout (all little-endian):
 [u32: num_frames]
 per frame:
     [u32: sequence]
-    [u32: payload_length]
-    [payload_length bytes: pre-serialized frame payload]
+    [u64: timestamp_us]
+    [u8:  is_keyframe]
+    [u32: avcc_payload_length]
+    [avcc_payload_length bytes: AVCC data]
 ```
 
-The `generation` field increments each time the underlying capture process is replaced (e.g. window switch). The frontend uses this to detect replacements and reinitialize its decoder. Each frame's payload contains the pre-serialized binary data (timestamp + NAL units) — same format as the IPC wire protocol's frame payload. Keyframe status is inferred from NAL unit types on the frontend. Returns JSON `{ "error": "..." }` with 404 status if the stream doesn't exist.
+The `generation` field increments each time the underlying capture process is replaced (e.g. window switch). The frontend uses this to detect replacements and reinitialize its decoder. Each frame's AVCC payload contains concatenated length-prefixed NAL units (`[u32 BE: nal_length][raw NAL data]...`) — directly feedable to `EncodedVideoChunk.data`. The Annex B → AVCC conversion (start code stripping + big-endian length prefixing) happens once at frame push time on the server. Returns JSON `{ "error": "..." }` with 404 status if the stream doesn't exist.
 
 **`GET /api/v1/streams/windows`** — List capturable windows (direct library call to `enumerate_windows::enumerate_windows()` — no child process spawn).
 
@@ -496,12 +499,12 @@ The frontend polls this at ~150ms and computes peak hold + decay locally for smo
 | **Window Enumeration** | `crates/enumerate-windows/src/lib.rs` | Done | `enumerate_windows()` lists capturable windows (with client-area width/height in physical pixels). `get_foreground_window()` returns current foreground window info. Called as a library by `live-server` (no process spawn). |
 | **DPI Awareness** | `crates/set-dpi-awareness/src/lib.rs` | Done | Thin wrapper: `per_monitor_v2()` calls `SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)`. Used by `live-video` and `live-server` at startup so Win32 geometry APIs return physical pixels. |
 
-### Completed (Frontend Stream Module — `frontend/src/stream/`)
+### Completed (Frontend Video Module — `frontend/src/video/`)
 
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
-| **Decoder** | `frontend/src/stream/decoder.ts` | Done | H264Decoder with WebCodecs, avcC descriptor. `fetchInit()` retries on 503 (starting) and 404 (stream not yet created). |
-| **Renderer** | `frontend/src/stream/index.tsx` | Done | `<StreamRenderer>` component. Canvas rendering, ~60fps polling loop. Generation-aware: reinitializes decoder when the server replaces the underlying capture process. Owns full decoder lifecycle via `startStreamLoop()`. 404 treated as retriable. Parses binary frame responses directly (`parseBinaryFrameResponse()` — zero-copy `subarray` slices). |
+| **Decoder** | `frontend/src/video/decoder.ts` | Done | Thin WebCodecs wrapper — zero H.264 format knowledge. Server provides pre-built codec string + avcC descriptor (via `/init`) and AVCC-formatted frame payloads (via `/frames`). `fetchInit()` retries on 503 (starting) and 404 (stream not yet created). `decodeFrame()` passes AVCC data directly to `EncodedVideoChunk` with no conversion. |
+| **Renderer** | `frontend/src/video/index.tsx` | Done | `<StreamRenderer>` component. Canvas rendering, ~60fps polling loop. Generation-aware: reinitializes decoder when the server replaces the underlying capture process. Owns full decoder lifecycle via `startStreamLoop()`. 404 treated as retriable. Parses binary frame responses directly (`parseBinaryFrameResponse()` — zero-copy `subarray` slices, envelope includes timestamp + keyframe flag). |
 
 ### Completed (`live-audio` crate — `live-audio/`)
 
@@ -545,9 +548,9 @@ Replaces the former TypeScript Hono server.  All server logic is now Rust.  Modu
 | **Entry Point** | `live-server/src/main.rs` | Done | Axum HTTP server. Per-monitor DPI aware via `set-dpi-awareness` crate. CLI args via clap (port, exe paths, audio device/enable). Auto-starts selector, YTM manager, KPM on boot. Audio gated by `--audio` / `LIVE_AUDIO` env. Spawns Vite dev server as child when `LIVE_PORT` is set. Resolves sibling executables from cargo build output. |
 | **Constants** | `live-server/src/constant.rs` | Done | Centralized well-known values: data paths, stream IDs (`STREAM_ID_MAIN`, `STREAM_ID_YTM`), computed string keys (`CSID_*`), capture defaults, buffer capacities, poll intervals, YTM crop geometry (`ytm_crop_geometry()`), default selector config (`default_selector_config()` via `json!`). |
 | **Shared State** | `live-server/src/state.rs` | Done | `AppState` with per-subsystem `Arc<RwLock<T>>`. Accessor methods for read/write locks and cloneable `Arc` handles for child-process reader tasks. |
-| **Video Buffer** | `live-server/src/video/buffer.rs` | Done | Per-stream circular buffer (60 frames). Pre-serializes frames on push. Keyframe gating for first client request (WebCodecs decoder needs IDR to initialize). `reset()` on stream replacement. 6 unit tests. |
+| **Video Buffer** | `live-server/src/video/buffer.rs` | Done | Per-stream circular buffer (60 frames). Annex B → AVCC conversion at push time (`strip_start_code` + 4-byte BE length prefix per NAL). Keyframe gating for first client request. `build_codec_string()` / `build_avcc_descriptor()` for the `/init` endpoint — both strip start codes from `CodecParams.sps`/`.pps` (which contain raw `NALUnit.data` with Annex B prefixes). `reset()` on stream replacement. 15 unit tests. |
 | **Video Process** | `live-server/src/video/process.rs` | Done | `StreamRegistry` with `CaptureStream` entries. `spawn_and_wire()` spawns `live-video.exe` with `--stream-id`, reads stdout via `live_video::read_message()` on `spawn_blocking` thread, pushes into buffer. `create_stream()` / `create_crop_stream()` for manual use. `replace_stream()` / `replace_crop_stream()` for well-known IDs — kill old, reset buffer, bump generation (idempotent). Stderr inherited (child tags its own log lines via `--stream-id`). |
-| **Video Routes** | `live-server/src/video/routes.rs` | Done | `GET/POST /streams`, `DELETE /streams/:id`, `GET /streams/:id/init` (SPS/PPS base64), `GET /streams/:id/frames?after=N` (binary `application/octet-stream` with generation header). |
+| **Video Routes** | `live-server/src/video/routes.rs` | Done | `GET/POST /streams`, `DELETE /streams/:id`, `GET /streams/:id/init` (codec string + avcC base64), `GET /streams/:id/frames?after=N` (binary AVCC with generation + per-frame timestamp/keyframe envelope). |
 | **Audio Buffer** | `live-server/src/audio/buffer.rs` | Done | Circular chunk buffer (100 chunks = ~1s). Pre-serialized payloads. Generation reset detection (stale cursor → return all). 4 unit tests. |
 | **Audio Process** | `live-server/src/audio/process.rs` | Done | `AudioState` singleton. Spawns `live-audio.exe`, reads stdout via `live_audio::read_message()`. Stderr inherited. Reset on process exit. |
 | **Audio Routes** | `live-server/src/audio/routes.rs` | Done | `GET /audio/init` (format params, 503/404), `GET /audio/chunks?after=N` (binary + delta encoding + gzip via `flate2`). 1 delta-encoding unit test. |
@@ -672,6 +675,14 @@ Within `live-video.exe`, the capture thread (main) and encoding thread share a s
 
 **Lesson**: D3D11 draw calls require explicit viewport, scissor, and render target setup.
 
+### Bug #4: CodecParams SPS/PPS Include Annex B Start Codes
+
+**Problem**: After moving Annex B → AVCC conversion to the server, `build_codec_string()` produced `avc1.000001` instead of `avc1.42001f`. The `CodecParams.sps` doc comment said "raw NAL data without start code", but the encoder populates it from `NALUnit.data` which **includes** the Annex B start code (`00 00 00 01`).
+
+**Fix**: `build_codec_string()` and `build_avcc_descriptor()` now call `strip_start_code()` before accessing SPS/PPS bytes. The old frontend code did this too (calling `stripStartCode()` after base64 decode) — it wasn't redundant.
+
+**Lesson**: Don't trust doc comments over actual data flow. Trace the bytes from producer to consumer.
+
 ---
 
 ## File Structure
@@ -694,7 +705,7 @@ Nekomaru-LiveUI-v2/
 │       ├── constant.rs              # Centralized constants, well-known IDs, computed string keys
 │       ├── state.rs                 # AppState (Arc<RwLock<...>> per subsystem)
 │       ├── video/                   # Video capture pipeline
-│       │   ├── buffer.rs            # Circular frame buffer (keyframe gating, pre-serialization)
+│       │   ├── buffer.rs            # Circular frame buffer (Annex B→AVCC, keyframe gating, avcC builder)
 │       │   ├── process.rs           # StreamRegistry, spawn live-video, protocol parsing
 │       │   └── routes.rs            # /api/v1/streams CRUD, /frames, /init
 │       ├── audio/                   # Audio capture pipeline
@@ -768,9 +779,10 @@ Nekomaru-LiveUI-v2/
     │   │   └── worklet.ts           # PCM AudioWorklet processor (ring buffer, s16→f32)
     │   ├── kpm/                     # KPM burst meter module
     │   │   └── index.tsx            # useKpm() hook + <KpmMeter> VU meter component
-    │   └── stream/                  # Self-contained H.264 stream module
+    │   └── video/                   # Self-contained video stream module
     │       ├── index.tsx            # <StreamRenderer> (generation-aware, owns decoder lifecycle)
-    │       └── decoder.ts           # H264Decoder (WebCodecs + avcC + fetchInit, retries 404/503)
+    │       ├── decoder.ts           # H264Decoder (thin WebCodecs wrapper, server provides AVCC)
+    │       └── chroma-key.ts        # WebGL2 chroma-key renderer (GPU fragment shader)
     └── public/
         └── img/
 ```

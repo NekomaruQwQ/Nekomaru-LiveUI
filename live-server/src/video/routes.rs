@@ -3,10 +3,11 @@
 //! - `GET    /api/v1/streams`            — list active streams
 //! - `POST   /api/v1/streams`            — create a new capture
 //! - `DELETE /api/v1/streams/:id`        — destroy a capture
-//! - `GET    /api/v1/streams/:id/init`   — codec params (SPS/PPS base64)
-//! - `GET    /api/v1/streams/:id/frames` — encoded frames (binary, polling)
+//! - `GET    /api/v1/streams/:id/init`   — codec string + avcC descriptor
+//! - `GET    /api/v1/streams/:id/frames` — AVCC frames (binary, polling)
 
 use crate::state::AppState;
+use crate::video::buffer::{build_avcc_descriptor, build_codec_string};
 use crate::video::process::CropParams;
 
 use axum::Router;
@@ -90,8 +91,13 @@ async fn destroy_stream(
     Json(serde_json::json!({ "ok": true })).into_response()
 }
 
-// ── Init (codec params) ─────────────────────────────────────────────────────
+// ── Init (codec string + avcC descriptor) ───────────────────────────────────
 
+/// `GET /api/v1/streams/:id/init` — pre-built decoder configuration.
+///
+/// Returns the `avc1.PPCCLL` codec string and a base64-encoded
+/// AVCDecoderConfigurationRecord (avcC) so the frontend can call
+/// `VideoDecoder.configure()` with zero H.264 format knowledge.
 async fn get_init(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -105,18 +111,18 @@ async fn get_init(
         return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({ "error": "codec params not yet available" }))).into_response();
     };
 
-    let sps = params.sps.clone();
-    let pps = params.pps.clone();
+    let codec = build_codec_string(&params.sps);
+    let avcc = build_avcc_descriptor(&params.sps, &params.pps);
     let width = params.width;
     let height = params.height;
     drop(registry);
 
     let b64 = base64::engine::general_purpose::STANDARD;
     Json(serde_json::json!({
-        "sps": b64.encode(&sps),
-        "pps": b64.encode(&pps),
+        "codec": codec,
         "width": width,
         "height": height,
+        "description": b64.encode(&avcc),
     })).into_response()
 }
 
@@ -127,12 +133,17 @@ struct FramesQuery {
     after: Option<String>,
 }
 
-/// `GET /api/v1/streams/:id/frames?after=N` — binary frame data.
+/// `GET /api/v1/streams/:id/frames?after=N` — AVCC frame data.
 ///
-/// Response layout (all little-endian):
+/// Response layout (all little-endian unless noted):
 /// ```text
-/// [u32: generation][u32: num_frames]
-/// per frame: [u32: sequence][u32: payload_length][payload bytes]
+/// [u32 LE: generation][u32 LE: num_frames]
+/// per frame:
+///   [u32 LE: sequence]
+///   [u64 LE: timestamp_us]
+///   [u8:     is_keyframe]
+///   [u32 LE: avcc_payload_length]
+///   [avcc_payload bytes]          ← ready for EncodedVideoChunk.data
 /// ```
 async fn get_frames(
     State(state): State<Arc<AppState>>,
@@ -152,10 +163,11 @@ async fn get_frames(
     let frames = stream.buffer.get_frames_after(after);
     let generation = stream.generation;
 
-    // Pre-compute total size: 8-byte header + (8 + payload) per frame.
+    // Pre-compute total size: 8-byte header + (17 + payload) per frame.
+    // Per-frame envelope: sequence(4) + timestamp(8) + keyframe(1) + len(4) = 17.
     let mut total_size: usize = 8;
     for f in &frames {
-        total_size += 8 + f.payload.len();
+        total_size += 17 + f.payload.len();
     }
 
     let mut buf = vec![0u8; total_size];
@@ -167,10 +179,14 @@ async fn get_frames(
     buf[pos..pos + 4].copy_from_slice(&(frames.len() as u32).to_le_bytes());
     pos += 4;
 
-    // Each frame: sequence + payload length + raw payload bytes.
+    // Each frame: sequence, timestamp, keyframe flag, AVCC payload.
     for f in &frames {
         buf[pos..pos + 4].copy_from_slice(&f.sequence.to_le_bytes());
         pos += 4;
+        buf[pos..pos + 8].copy_from_slice(&f.timestamp_us.to_le_bytes());
+        pos += 8;
+        buf[pos] = u8::from(f.is_keyframe);
+        pos += 1;
         buf[pos..pos + 4].copy_from_slice(&(f.payload.len() as u32).to_le_bytes());
         pos += 4;
         buf[pos..pos + f.payload.len()].copy_from_slice(&f.payload);

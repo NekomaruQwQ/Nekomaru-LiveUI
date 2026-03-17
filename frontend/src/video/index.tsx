@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 
 import { DEBUG } from "../../debug";
 import { ChromaKeyRenderer, parseHexColor } from "./chroma-key";
-import { H264Decoder, parseStreamFrame } from "./decoder";
+import { H264Decoder } from "./decoder";
 
 /**
  * Video renderer for a well-known stream ID ("main" or "youtube-music").
@@ -195,10 +195,9 @@ async function startStreamLoop(
             }
             currentGeneration = generation;
 
-            for (const { sequence, payload } of frames) {
+            for (const { sequence, timestamp, isKeyframe, data } of frames) {
                 lastSequence = Math.max(lastSequence, sequence);
-                const frame = parseStreamFrame(payload);
-                decoder.decodeFrame(frame);
+                decoder.decodeFrame(timestamp, isKeyframe, data);
             }
             await sleep(pollMs);
 
@@ -225,16 +224,26 @@ function sleep(ms: number): Promise<void> {
 
 // ── Binary frame response parser ─────────────────────────────────────────
 
+interface FrameEntry {
+    sequence: number;
+    timestamp: number;
+    isKeyframe: boolean;
+    /// AVCC payload — directly feedable to EncodedVideoChunk.data.
+    data: Uint8Array;
+}
+
 interface BinaryFrameResponse {
     generation: number;
-    frames: { sequence: number; payload: Uint8Array }[];
+    frames: FrameEntry[];
 }
 
 /// Parse the binary blob returned by GET /:id/frames.
 ///
 /// Layout (all little-endian):
 ///   [u32: generation][u32: num_frames]
-///   per frame: [u32: sequence][u32: payload_length][payload bytes]
+///   per frame:
+///     [u32: sequence][u64: timestamp_us][u8: is_keyframe]
+///     [u32: avcc_payload_length][avcc bytes]
 function parseBinaryFrameResponse(buf: Uint8Array): BinaryFrameResponse {
     const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
     let pos = 0;
@@ -242,13 +251,15 @@ function parseBinaryFrameResponse(buf: Uint8Array): BinaryFrameResponse {
     const generation = view.getUint32(pos, true); pos += 4;
     const numFrames = view.getUint32(pos, true);  pos += 4;
 
-    const frames: BinaryFrameResponse["frames"] = [];
+    const frames: FrameEntry[] = [];
     for (let i = 0; i < numFrames; i++) {
-        const sequence = view.getUint32(pos, true);      pos += 4;
-        const payloadLen = view.getUint32(pos, true);     pos += 4;
+        const sequence = view.getUint32(pos, true);                pos += 4;
+        const timestamp = Number(view.getBigUint64(pos, true));    pos += 8;
+        const isKeyframe = view.getUint8(pos) !== 0;               pos += 1;
+        const dataLen = view.getUint32(pos, true);                 pos += 4;
         // subarray: zero-copy view into the same ArrayBuffer.
-        const payload = buf.subarray(pos, pos + payloadLen); pos += payloadLen;
-        frames.push({ sequence, payload });
+        const data = buf.subarray(pos, pos + dataLen);             pos += dataLen;
+        frames.push({ sequence, timestamp, isKeyframe, data });
     }
 
     return { generation, frames };
