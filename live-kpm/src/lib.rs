@@ -114,7 +114,7 @@ mod tests {
 
         let mut buf = Vec::new();
         for b in &batches {
-            write_batch(&mut buf, &b).unwrap();
+            write_batch(&mut buf, b).unwrap();
         }
 
         assert_eq!(buf.len(), BATCH_SIZE * 3);

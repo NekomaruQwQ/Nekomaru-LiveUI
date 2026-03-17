@@ -28,7 +28,7 @@ use winit::{
 struct LiveAppArgs {
     /// URL to load in the webview. If not provided, defaults to
     /// `http://localhost:{LIVE_PORT}`.
-    pub url: Option<String>,
+    pub url: String,
 
     /// Initial width of the window in logical pixels. Must be provided if
     /// `height` is provided.
@@ -60,16 +60,6 @@ struct LiveAppArgs {
     pub scale_factor: Option<f32>,
 }
 
-/// Reads `LIVE_PORT` from the environment, panics if not set or invalid,
-/// and constructs the server URL.
-fn get_server_url() -> String {
-    let port = std::env::var("LIVE_PORT")
-        .ok()
-        .and_then(|port| port.parse::<u16>().ok())
-        .expect("LIVE_PORT not set or is not a valid port number");
-    format!("http://localhost:{port}")
-}
-
 /// Parse CLI arguments and launch the webview. Convenience entry point for
 /// binaries that don't need programmatic control over the URL or title.
 fn main() {
@@ -91,7 +81,7 @@ fn main() {
             WindowSize::from(window_size)
         };
 
-    let url = args.url.unwrap_or_else(get_server_url);
+    let url = args.url;
     let scale_factor = args.scale_factor;
 
     log::info!("starting frontend at {url}, scale factor: {scale_factor:?}");

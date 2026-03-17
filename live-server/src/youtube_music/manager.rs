@@ -5,7 +5,7 @@
 //! (or replaces) a crop-mode stream capturing the bottom playback bar.  When
 //! the window disappears, the stream is destroyed.
 
-use crate::constant::{STREAM_ID_YTM, YTM_POLL_INTERVAL_MS, YTM_TITLE};
+use crate::constant::{STREAM_ID_YTM, YTM_POLL_INTERVAL_MS, YOUTUBE_MUSIC_WINDOW_TITLE};
 use crate::video::process::StreamRegistry;
 
 use std::sync::Arc;
@@ -90,7 +90,7 @@ async fn poll_once(
         .await
         .unwrap_or_default();
 
-    let ytm = windows.iter().find(|w| w.title == YTM_TITLE);
+    let ytm = windows.iter().find(|w| w.title == YOUTUBE_MUSIC_WINDOW_TITLE);
 
     if let Some(ytm) = ytm {
         let hwnd_str = format!("0x{:X}", ytm.hwnd);
@@ -101,7 +101,7 @@ async fn poll_once(
 
         log::info!("[ytm] window detected: {hwnd_str} ({}x{})", ytm.width, ytm.height);
 
-        let Some(crop) = crate::constant::ytm_crop_geometry(ytm.width, ytm.height)
+        let Some(crop) = crate::constant::get_youtube_music_crop_geometry(ytm.width, ytm.height)
             else { return; };
 
         {

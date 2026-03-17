@@ -62,7 +62,7 @@ pub const KPM_WINDOW_DURATION_MS: u64 = 5000;
 // ── YouTube Music ───────────────────────────────────────────────────────────
 
 /// Expected YouTube Music window title.
-pub const YTM_TITLE: &str = "YouTube Music - Nekomaru LiveUI v2";
+pub const YOUTUBE_MUSIC_WINDOW_TITLE: &str = "YouTube Music - Nekomaru LiveUI v2";
 
 /// Compute the crop box for the YouTube Music playback bar.
 ///
@@ -74,7 +74,7 @@ pub const YTM_TITLE: &str = "YouTube Music - Nekomaru LiveUI v2";
 /// - Right margin: 96px trimmed from right edge
 ///
 /// Returns `None` when the window is too small for a meaningful crop box.
-pub const fn ytm_crop_geometry(window_width: u32, window_height: u32) -> Option<CropParams> {
+pub const fn get_youtube_music_crop_geometry(window_width: u32, window_height: u32) -> Option<CropParams> {
     let title_bar = 48u32;
     let bar_height = 112u32;
     let bottom_margin = 12u32;
@@ -94,9 +94,9 @@ pub const fn ytm_crop_geometry(window_width: u32, window_height: u32) -> Option<
 /// Default selector config, used when `data/selector-config.json` is missing.
 pub fn default_selector_config() -> serde_json::Value {
     serde_json::json!({
-        "preset": "default",
+        "preset": "main",
         "presets": {
-            "default": [
+            "main": [
                 "@code devenv.exe",
                 "@code C:/Program Files/Microsoft Visual Studio Code/Code.exe",
                 "@code C:/Program Files/JetBrains/",

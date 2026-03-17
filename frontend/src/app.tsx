@@ -1,5 +1,5 @@
 import { AudioStream } from "@/audio";
-import { StreamRenderer } from "@/stream";
+import { StreamRenderer } from "@/video";
 import { useStreamStatus } from "@/streams";
 import { useStrings } from "@/strings";
 import Marquee from "@/components/marquee";
