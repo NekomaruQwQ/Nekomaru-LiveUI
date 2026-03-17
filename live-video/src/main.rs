@@ -193,6 +193,8 @@ fn resolve_capture_mode(args: &CliArgs) -> anyhow::Result<Option<CaptureMode>> {
 /// modes (`--enumerate-windows`, `--foreground-window`) pass `false` to avoid
 /// truncating a log file that a concurrent capture process is writing to.
 fn init_logger(capture_mode: bool, stream_id: Option<String>) {
+    use pretty_env_logger::env_logger::fmt::Color;
+
     // Only create (truncate) the encoder log file for actual capture runs.
     // Utility invocations are frequent (selector polls every 2s) and would
     // otherwise repeatedly truncate the file.
@@ -208,8 +210,6 @@ fn init_logger(capture_mode: bool, stream_id: Option<String>) {
 
     // Pre-format the stream ID tag so the closure doesn't allocate per-line.
     let tag = stream_id.map_or_else(String::new, |id| format!(" @{id}"));
-
-    use pretty_env_logger::env_logger::fmt::Color;
 
     pretty_env_logger::env_logger::Builder::from_env(
         pretty_env_logger::env_logger::Env::default().default_filter_or("info"))

@@ -23,6 +23,7 @@ pub struct AppState {
     kpm: Arc<RwLock<KpmState>>,
     selector: Arc<RwLock<SelectorState>>,
     ytm: Arc<RwLock<YtmState>>,
+    #[expect(dead_code, reason = "kept alive for RAII — dropping kills all assigned children")]
     job: Arc<JobObject>,
 }
 
@@ -38,8 +39,6 @@ impl AppState {
             job,
         }
     }
-
-    pub fn job(&self) -> &JobObject { &self.job }
 
     // ── Strings ──────────────────────────────────────────────────────────
 

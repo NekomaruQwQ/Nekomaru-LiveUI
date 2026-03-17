@@ -146,7 +146,7 @@ async fn main() {
     // Serve until Ctrl+C.
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
-            tokio::signal::ctrl_c().await.ok();
+            let _ = tokio::signal::ctrl_c().await;
             log::info!("Ctrl+C received");
         })
         .await

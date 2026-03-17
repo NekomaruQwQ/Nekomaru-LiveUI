@@ -4,7 +4,7 @@
 //! so that all assigned child processes are automatically terminated when the
 //! job handle is closed — including abnormal exits (crash, Task Manager kill).
 
-use std::os::windows::io::AsRawHandle;
+use std::os::windows::io::AsRawHandle as _;
 
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::JobObjects::*;
@@ -38,9 +38,9 @@ impl JobObject {
             SetInformationJobObject(
                 handle,
                 JobObjectExtendedLimitInformation,
-                &info as *const _ as *const std::ffi::c_void,
+                (&raw const info).cast::<std::ffi::c_void>(),
                 u32::try_from(size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>())
-                    .expect("size fits in u32"))
+                    .map_err(|e| std::io::Error::other(format!("size_of overflow: {e}")))?)
         }
         .map_err(|e| std::io::Error::other(format!("SetInformationJobObject: {e}")))?;
 
@@ -68,6 +68,7 @@ impl JobObject {
 // SAFETY: The job object handle is an opaque kernel object — safe to send and
 // share across threads.
 unsafe impl Send for JobObject {}
+// SAFETY: All methods take `&self` and delegate to thread-safe Win32 APIs.
 unsafe impl Sync for JobObject {}
 
 impl Drop for JobObject {

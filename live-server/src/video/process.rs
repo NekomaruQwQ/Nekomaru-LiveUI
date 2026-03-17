@@ -75,7 +75,7 @@ pub struct StreamRegistry {
     /// Path to the `live-video.exe` binary.
     pub exe_path: String,
     /// Job object — assigned children are killed when the server exits.
-    job: Arc<JobObject>,
+    pub job: Arc<JobObject>,
 }
 
 impl StreamRegistry {
