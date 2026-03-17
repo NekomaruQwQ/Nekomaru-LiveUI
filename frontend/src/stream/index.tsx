@@ -1,7 +1,6 @@
 import { useEffect, useRef } from "react";
 
 import { DEBUG } from "../../debug";
-import { api } from "../api";
 import { ChromaKeyRenderer, parseHexColor } from "./chroma-key";
 import { H264Decoder, parseStreamFrame } from "./decoder";
 
@@ -158,10 +157,8 @@ async function startStreamLoop(
             if (DEBUG.debugStreamRenderer) {
                 console.log("StreamLoop: Fetching frame after sequence %d", lastSequence);
             }
-            const res = await api[":id"].frames.$get({
-                param: { id: streamId },
-                query: { after: String(lastSequence) },
-            });
+            const res = await fetch(
+                `/api/v1/streams/${streamId}/frames?after=${lastSequence}`);
 
             // 404 = stream doesn't exist yet (server may create it soon).
             // Sleep and retry rather than counting towards fatal errors.
@@ -183,7 +180,7 @@ async function startStreamLoop(
 
             consecutiveErrors = 0;
 
-            // Parse the binary frame response (see server/api.ts for layout).
+            // Parse the binary frame response (see live-server/src/video/routes.rs for layout).
             const { generation, frames } = parseBinaryFrameResponse(
                 new Uint8Array(await res.arrayBuffer()));
 
