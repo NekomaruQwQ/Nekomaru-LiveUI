@@ -10,7 +10,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 
 use job_object::JobObject;
-use tokio::sync::RwLock;
+use tokio::sync::{watch, RwLock};
 use tokio::task::JoinHandle;
 
 use crate::constant::{KPM_BATCH_INTERVAL_MS, KPM_WINDOW_DURATION_MS};
@@ -22,15 +22,21 @@ pub struct KpmState {
     pub active: bool,
     pub child: Option<Child>,
     pub reader_handle: Option<JoinHandle<()>>,
+    /// Watch channel carrying the latest KPM value.  `None` when the capture
+    /// process is not running.  WebSocket handlers clone the receiver and
+    /// `changed().await` to push updates.
+    pub notify: watch::Sender<Option<i64>>,
 }
 
 impl KpmState {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
+        let (notify, _) = watch::channel(None);
         Self {
             calculator: KpmCalculator::new(KPM_WINDOW_DURATION_MS, KPM_BATCH_INTERVAL_MS),
             active: false,
             child: None,
             reader_handle: None,
+            notify,
         }
     }
 
@@ -62,6 +68,8 @@ impl KpmState {
                     Ok(Some(batch)) => {
                         let mut state = state_clone.blocking_write();
                         state.calculator.push_batch(batch.t, batch.c);
+                        let kpm = state.calculator.get_kpm().round() as i64;
+                        state.notify.send_replace(Some(kpm));
                         drop(state);
                     }
                     Ok(None) => {
@@ -78,6 +86,7 @@ impl KpmState {
             let mut state = state_clone.blocking_write();
             state.active = false;
             state.calculator.reset();
+            state.notify.send_replace(None);
         });
 
         self.child = Some(child);
@@ -100,6 +109,7 @@ impl KpmState {
 
         self.active = false;
         self.calculator.reset();
+        self.notify.send_replace(None);
         log::info!("stopped");
     }
 }

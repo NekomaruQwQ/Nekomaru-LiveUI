@@ -27,7 +27,7 @@ use winit::{
 #[command(name = "live-app", about = "Minimal wry webview host for Nekomaru LiveUI")]
 struct LiveAppArgs {
     /// URL to load in the webview. If not provided, defaults to
-    /// `http://localhost:{LIVE_PORT}`.
+    /// `http://localhost:{LIVE_VITE_PORT}`.
     pub url: String,
 
     /// Initial width of the window in logical pixels. Must be provided if

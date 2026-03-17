@@ -12,8 +12,11 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 
 use job_object::JobObject;
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 use tokio::task::JoinHandle;
+
+/// Broadcast capacity for chunk-push notifications (see `video::process`).
+const NOTIFY_CAPACITY: usize = 4;
 
 use crate::constant::AUDIO_BUFFER_CAPACITY;
 
@@ -24,15 +27,20 @@ pub struct AudioState {
     pub active: bool,
     pub child: Option<Child>,
     pub reader_handle: Option<JoinHandle<()>>,
+    /// Notification channel — fires after every `push_chunk()`.  WebSocket
+    /// handlers subscribe to this to wake and read from the buffer.
+    pub notify: broadcast::Sender<()>,
 }
 
 impl AudioState {
     pub fn new() -> Self {
+        let (notify, _) = broadcast::channel(NOTIFY_CAPACITY);
         Self {
             buffer: AudioBuffer::new(AUDIO_BUFFER_CAPACITY),
             active: false,
             child: None,
             reader_handle: None,
+            notify,
         }
     }
 
@@ -78,9 +86,11 @@ impl AudioState {
                                     "params: {}Hz, {}ch, {}-bit",
                                     params.sample_rate, params.channels, params.bits_per_sample);
                                 state.buffer.set_audio_params(params);
+                                state.notify.send(()).ok();
                             }
                             Message::AudioChunk(chunk) => {
                                 state.buffer.push_chunk(&chunk);
+                                state.notify.send(()).ok();
                             }
                             Message::Error(e) => {
                                 log::error!("capture error: {e}");

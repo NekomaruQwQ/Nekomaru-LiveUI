@@ -7,22 +7,25 @@
 //! ## Usage
 //!
 //! ```text
-//! LIVE_CORE_PORT=3000 LIVE_PORT=5173 live-server
+//! LIVE_CORE_PORT=3000 LIVE_VITE_PORT=5173 live-server
 //! ```
 
 mod constant;
 mod state;
+mod vite_proxy;
 mod windows;
 
 mod audio {
     pub mod buffer;
     pub mod process;
     pub mod routes;
+    pub mod ws;
 }
 mod kpm {
     pub mod calculator;
     pub mod process;
     pub mod routes;
+    pub mod ws;
 }
 
 mod selector {
@@ -34,12 +37,14 @@ mod selector {
 mod strings {
     pub mod routes;
     pub mod store;
+    pub mod ws;
 }
 
 mod video {
     pub mod buffer;
     pub mod process;
     pub mod routes;
+    pub mod ws;
 }
 
 mod youtube_music {
@@ -70,8 +75,8 @@ struct Cli {
     core_port: u16,
 
     /// Vite dev server port.  When set, spawns `bunx vite` as a child process
-    /// with this port and a proxy back to the core server.
-    #[arg(long, env = "LIVE_PORT")]
+    /// and proxies non-API requests to it for dev assets / HMR.
+    #[arg(long, env = "LIVE_VITE_PORT")]
     vite_port: Option<u16>,
 
     /// Enable audio capture.  Off by default to avoid feedback loops
@@ -136,7 +141,8 @@ async fn main() {
         state.ytm_mut().await.start(&streams_arc);
     }
 
-    let app = Router::new()
+    let mut app = Router::new()
+        // HTTP routes.
         .merge(audio::routes::router())
         .merge(kpm::routes::router())
         .merge(selector::routes::router())
@@ -144,7 +150,17 @@ async fn main() {
         .merge(video::routes::router())
         .merge(windows::router())
         .route("/api/v1/refresh", post(refresh))
+        // WebSocket routes.
+        .merge(audio::ws::router())
+        .merge(kpm::ws::router())
+        .merge(strings::ws::router())
+        .merge(video::ws::router())
         .with_state(Arc::clone(&state));
+
+    // Fallback: dev → proxy to Vite, prod → serve dist/.
+    if let Some(vp) = cli.vite_port {
+        app = app.fallback(vite_proxy::fallback(vp));
+    }
 
     let addr = format!("0.0.0.0:{}", cli.core_port);
     log::info!("listening on {addr}");
@@ -153,7 +169,7 @@ async fn main() {
         .await
         .expect("failed to bind");
 
-    // Spawn Vite dev server as a child process if LIVE_PORT is set.
+    // Spawn Vite dev server as a child process if LIVE_VITE_PORT is set.
     let mut vite_child = cli.vite_port
         .and_then(|vp| spawn_vite(vp, cli.core_port, &job));
 
@@ -219,12 +235,12 @@ fn resolve_sibling_exe(name: &str) -> String {
 
 // ── Vite Dev Server ─────────────────────────────────────────────────────────
 
-/// Spawn `bunx vite` as a child process.  Vite's proxy config (in
-/// `frontend/vite.config.ts`) forwards `/api/*` to our Axum server.
+/// Spawn `bunx vite` as a child process.  The core server proxies non-API
+/// requests to Vite for dev assets; Vite no longer proxies back to us.
 ///
 /// Returns the child process handle for explicit cleanup on shutdown.
 /// The child is also assigned to the job object so it dies on crash.
-fn spawn_vite(vite_port: u16, core_port: u16, job: &JobObject) -> Option<Child> {
+fn spawn_vite(vite_port: u16, _core_port: u16, job: &JobObject) -> Option<Child> {
     let frontend_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent()?.parent()?.parent().map(|d| d.join("frontend")))
@@ -236,8 +252,7 @@ fn spawn_vite(vite_port: u16, core_port: u16, job: &JobObject) -> Option<Child> 
         .arg("--bun")
         .arg("vite")
         .current_dir(&frontend_dir)
-        .env("LIVE_PORT", vite_port.to_string())
-        .env("LIVE_CORE_PORT", core_port.to_string())
+        .env("LIVE_VITE_PORT", vite_port.to_string())
         .spawn();
 
     match child {

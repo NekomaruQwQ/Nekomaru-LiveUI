@@ -1,41 +1,35 @@
-// Polling hook for the server-managed string store.
+// WebSocket hook for the server-managed string store.
 //
-// Polls GET /strings every 2 seconds and returns all key-value pairs.
-// Used by app.tsx to display well-known string IDs at designated locations
-// in the layout (e.g. "test" in the sidebar).
+// Connects to /api/v1/ws/strings and receives full JSON snapshots whenever
+// any value changes.  Used by app.tsx to display well-known string IDs at
+// designated locations in the layout (e.g. "test" in the sidebar).
 
 import { useEffect, useState } from "react";
 
-import { fetchStrings } from "./strings-api";
-
-const POLL_INTERVAL_MS = 2000;
+import { connectWs } from "./ws";
 
 /// Returns all server-managed strings as a key-value record.
-/// Polls every 2s — updates are reflected within one interval.
+/// Updates are pushed by the server immediately on change.
 export function useStrings(): Record<string, string> {
-	const [strings, setStrings] = useState<Record<string, string>>({});
+    const [strings, setStrings] = useState<Record<string, string>>({});
 
-	useEffect(() => {
-		let cancelled = false;
+    useEffect(() => {
+        const abort = new AbortController();
 
-		async function poll() {
-			if (cancelled) return;
-			try {
-				const data = await fetchStrings();
-				if (!cancelled) setStrings(data);
-			} catch (e) {
-				console.error("Failed to poll strings:", e);
-			}
-		}
+        connectWs({
+            path: "/api/v1/ws/strings",
+            signal: abort.signal,
+            onTextMessage(text) {
+                try {
+                    setStrings(JSON.parse(text) as Record<string, string>);
+                } catch (e) {
+                    console.error("Failed to parse strings WS message:", e);
+                }
+            },
+        });
 
-		poll();
-		const intervalId = setInterval(poll, POLL_INTERVAL_MS);
+        return () => abort.abort();
+    }, []);
 
-		return () => {
-			cancelled = true;
-			clearInterval(intervalId);
-		};
-	}, []);
-
-	return strings;
+    return strings;
 }

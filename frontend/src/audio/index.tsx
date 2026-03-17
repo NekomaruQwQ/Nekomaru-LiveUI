@@ -18,12 +18,7 @@
 
 import { useEffect } from "react";
 
-/// Normal poll interval when chunks were received (ms).
-const POLL_INTERVAL_MS = 16;
-
-/// Shorter poll interval when the server had no new chunks — retry quickly
-/// so we don't waste a full 16ms when data arrives between polls.
-const POLL_FAST_MS = 4;
+import { openWebSocket, wsMessages } from "../ws";
 
 /// How long to wait before retrying /init when it returns 503 (ms).
 const INIT_RETRY_MS = 500;
@@ -88,35 +83,36 @@ async function startAudioLoop(signal: AbortSignal): Promise<void> {
     });
     workletNode.connect(ctx.destination);
 
-    // Step 3: Poll for audio chunks and post them to the worklet immediately.
+    // Step 3: Stream audio chunks via WebSocket.
     let lastSequence = 0;
+
+    const INITIAL_DELAY_MS = 100;
+    const MAX_DELAY_MS = 5000;
+    let delay = INITIAL_DELAY_MS;
 
     while (!signal.aborted) {
         try {
-            const res = await fetch(
-                `/api/v1/audio/chunks?after=${lastSequence}`,
-                { signal });
-
-            if (!res.ok) {
-                await sleep(100);
-                continue;
-            }
-
-            const buf = new Uint8Array(await res.arrayBuffer());
-            const chunks = parseBinaryChunkResponse(buf);
-
-            for (const chunk of chunks) {
-                lastSequence = Math.max(lastSequence, chunk.sequence);
-                postChunkToWorklet(workletNode, chunk, params.channels);
-            }
-
-            // Adaptive timing: retry quickly when server had nothing new,
-            // use normal interval when chunks arrived.
-            await sleep(chunks.length > 0 ? POLL_INTERVAL_MS : POLL_FAST_MS);
-        } catch (e) {
+            const ws = await openWebSocket("/api/v1/ws/audio", signal);
             if (signal.aborted) break;
-            console.error("AudioStream: poll error:", e);
-            await sleep(1000);
+            ws.send(JSON.stringify({ after: lastSequence }));
+            delay = INITIAL_DELAY_MS;
+
+            for await (const data of wsMessages(ws, signal)) {
+                // WS path sends raw PCM (no delta encoding, no gzip).
+                const chunks = parseBinaryChunkResponse(
+                    new Uint8Array(data), false);
+                for (const chunk of chunks) {
+                    lastSequence = Math.max(lastSequence, chunk.sequence);
+                    postChunkToWorklet(workletNode, chunk, params.channels);
+                }
+            }
+        } catch {
+            if (signal.aborted) break;
+        }
+
+        if (!signal.aborted) {
+            await sleep(delay);
+            delay = Math.min(delay * 2, MAX_DELAY_MS);
         }
     }
 
@@ -172,17 +168,17 @@ interface ParsedChunk {
     pcmData: Uint8Array;
 }
 
-/// Parse the binary blob returned by GET /api/v1/audio/chunks.
+/// Parse the binary blob returned by the audio chunks endpoint.
 ///
 /// Layout (all little-endian):
 ///   [u32: num_chunks]
 ///   per chunk: [u32: sequence][u32: payload_length][payload bytes]
 ///
-/// Payload per chunk: [u64 LE: timestamp_us][delta-encoded s16le PCM bytes]
+/// Payload per chunk: [u64 LE: timestamp_us][s16le PCM bytes]
 ///
-/// Delta decoding: first sample is literal, each subsequent sample is
-/// accumulated (prefix sum) to reconstruct the original PCM.
-function parseBinaryChunkResponse(buf: Uint8Array): ParsedChunk[] {
+/// @param deltaEncoded  When true (HTTP path), applies delta decoding.
+///                      The WS path sends raw PCM, so pass false.
+function parseBinaryChunkResponse(buf: Uint8Array, deltaEncoded = true): ParsedChunk[] {
     const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
     let pos = 0;
 
@@ -199,7 +195,7 @@ function parseBinaryChunkResponse(buf: Uint8Array): ParsedChunk[] {
         const pcmData = buf.slice(pos + 8, pos + payloadLen);
         pos += payloadLen;
 
-        deltaDecodePcm(pcmData);
+        if (deltaEncoded) deltaDecodePcm(pcmData);
         chunks.push({ sequence, timestampUs, pcmData });
     }
 

@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { KeyboardIcon } from "lucide-react";
+import { connectWs } from "./ws";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -16,9 +17,6 @@ const MAX_KPM = 480;
 /// < 1.0 compresses the top end and expands the lower range, making
 /// moderate typing (50-300 KPM) more visually interesting.
 const CURVE_EXPONENT = 0.7;
-
-/// How often to poll the server (ms).
-const POLL_INTERVAL_MS = 150;
 
 /// Peak hold duration before decay begins (ms).
 const PEAK_HOLD_MS = 1500;
@@ -33,7 +31,7 @@ interface KpmState {
     peak: number;
 }
 
-/// Polls the KPM endpoint and computes peak hold + decay locally.
+/// Streams KPM values via WebSocket and computes peak hold + decay locally.
 function useKpm(): KpmState | null {
     const [state, setState] = useState<KpmState | null>(null);
 
@@ -42,26 +40,23 @@ function useKpm(): KpmState | null {
     const peakTimeRef = useRef(0);
 
     useEffect(() => {
-        let timer: ReturnType<typeof setTimeout>;
-        let cancelled = false;
+        const abort = new AbortController();
 
-        async function poll() {
-            try {
-                const res = await fetch("/api/v1/kpm");
-                if (res.status === 404) { setState(null); return; }
-                if (!res.ok) return;
+        connectWs({
+            path: "/api/v1/ws/kpm",
+            signal: abort.signal,
+            onTextMessage(text) {
+                const data = JSON.parse(text) as { kpm: number | null };
+                if (data.kpm == null) { setState(null); return; }
 
-                const data = await res.json() as { kpm: number };
                 const now = performance.now();
                 const kpm = data.kpm;
 
                 // Update peak hold.
                 if (kpm >= peakRef.current) {
-                    // New peak — reset hold timer.
                     peakRef.current = kpm;
                     peakTimeRef.current = now;
                 } else {
-                    // Decay: hold for PEAK_HOLD_MS, then linear decay over PEAK_DECAY_MS.
                     const elapsed = now - peakTimeRef.current;
                     if (elapsed > PEAK_HOLD_MS) {
                         const decayProgress = Math.min(
@@ -71,15 +66,10 @@ function useKpm(): KpmState | null {
                 }
 
                 setState({ kpm, peak: Math.round(peakRef.current) });
-            } catch {
-                // Network error — keep last state.
-            }
+            },
+        });
 
-            if (!cancelled) timer = setTimeout(poll, POLL_INTERVAL_MS);
-        }
-
-        poll();
-        return () => { cancelled = true; clearTimeout(timer); };
+        return () => abort.abort();
     }, []);
 
     return state;

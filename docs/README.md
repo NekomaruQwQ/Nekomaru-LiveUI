@@ -2,7 +2,7 @@
 
 **Low-latency (<100ms) screen capture streaming from DirectX 11 to the browser**
 
-**Last Updated**: 2026-03-17
+**Last Updated**: 2026-03-18
 **Hardware**: RTX 5090 | Windows 11
 
 ---
@@ -32,11 +32,12 @@ just install
 # Start the server — auto-starts selector, YTM manager, KPM.
 # Spawns Vite dev server as a child process for frontend HMR.
 # Audio capture is off by default to avoid feedback loops on localhost.
-LIVE_CORE_PORT=3000 LIVE_PORT=5173 just server
-# Or with audio: LIVE_AUDIO=1 LIVE_CORE_PORT=3000 LIVE_PORT=5173 just server
+LIVE_CORE_PORT=3000 LIVE_VITE_PORT=5173 just server
+# Or with audio: LIVE_AUDIO=1 LIVE_CORE_PORT=3000 LIVE_VITE_PORT=5173 just server
 
-# Open the frontend — Vite proxies /api/* to the Rust server
-# http://localhost:5173
+# Open the frontend — the core server is the entry point.
+# It proxies non-API requests to Vite for dev assets.
+# http://localhost:3000
 
 # (Optional) Launch the webview host
 just app
@@ -79,15 +80,15 @@ graph TD
         kpm["<b>live-kpm.exe</b><br/>Single instance<br/>WH_KEYBOARD_LL hook<br/>(privacy: no key identity)<br/>→ binary batches to stdout"]
     end
 
-    subgraph frontend["Browser (via Vite dev proxy) / live-app.exe"]
-        viewer["<b>Frontend</b> (React + WebCodecs)<br/>H264Decoder, StreamRenderer<br/>AudioStream (PCM worklet)<br/>KpmMeter (VU bar, peak hold)<br/>Polls strings for dynamic text"]
+    subgraph frontend["Browser (connects to live-server) / live-app.exe"]
+        viewer["<b>Frontend</b> (React + WebCodecs)<br/>H264Decoder via WebSocket push<br/>AudioStream (PCM worklet) via WS<br/>KpmMeter (VU bar) via WS<br/>Strings via WS push"]
     end
 
     capture -- "stdout (binary IPC)" --> procmgr
     audio -- "stdout (binary IPC)" --> audiomgr
     kpm -- "stdout (12-byte binary)" --> kpmmgr
     procmgr --> buffer
-    api -- "HTTP (localhost)" --> viewer
+    api -- "HTTP + WebSocket" --> viewer
 ```
 
 ### Why This Split?
@@ -100,7 +101,7 @@ graph TD
 | HTTP server + stream management | Rust (`live-server`, Axum) | Reuses protocol types from lib crates directly (`live_video::read_message()`). No protocol duplication. Single process for all server logic. |
 | Webview host | Rust (`live-app`, optional) | Tiny wry wrapper for aspect-ratio-locked window. Could also just use a browser. |
 | IPC | Child process stdout | Zero config, natural lifetime (process death = stream death), trivially testable (`live-video > dump.bin`). |
-| Frontend dev server | Vite (spawned by live-server) | HMR for React development. Vite's built-in proxy forwards `/api/*` to the Rust server. Production: `tower-http::ServeDir` serves pre-built `dist/`. |
+| Frontend dev server | Vite (spawned by live-server) | HMR for React development. The core server reverse-proxies non-API requests to Vite for dev assets. HMR WebSocket connects directly to Vite via `server.hmr.clientPort`. Production: `tower-http::ServeDir` serves pre-built `dist/`. |
 
 ### Why RIIR? (Rewrite It In Rust)
 
@@ -126,11 +127,12 @@ The server was originally TypeScript (Hono on Bun).  It was rewritten in Rust fo
 | Async runtime | tokio (full features) | Required by Axum. Child process stdout is read on `spawn_blocking` threads. |
 | Logging | `pretty_env_logger` | Already in workspace. Simple and sufficient — nobody reads structured logs for a personal streaming tool. |
 | Capture processes | Kept as children (not embedded) | A crash in NVENC or WASAPI doesn't take down the server.  Capture binaries use blocking I/O on dedicated threads.  Pipe overhead is negligible (~0.1ms).  Stderr inherited — children log directly via `pretty_env_logger`; `live-video` uses `--stream-id` for multi-instance disambiguation. |
-| Buffer concurrency | `tokio::sync::RwLock<StreamRegistry>` | Read-heavy: 60fps polls from N clients share the read lock. Single-producer write lock held for microseconds per frame push. |
-| Frontend API client | Plain `fetch()` (was Hono RPC) | With the TypeScript server gone, the Hono RPC type chain (`hc<ApiType>`) was removed.  Plain `fetch()` with TypeScript interfaces is simpler and has no runtime dependency. |
+| Buffer concurrency | `tokio::sync::RwLock<StreamRegistry>` | Read-heavy with brief writes.  `broadcast` channels notify WebSocket tasks of new frames; `watch` channels notify of KPM/string updates. |
+| Frontend transport | WebSocket push (was HTTP polling) | Video frames, audio chunks, KPM, and strings are pushed over dedicated WebSocket connections.  Eliminates per-request TCP overhead — critical for TCP port-forwarded deployments.  HTTP endpoints kept for CRUD, `/init`, and backward compatibility. |
+| Frontend API client | Plain `fetch()` + native `WebSocket` | No runtime dependencies.  `fetch()` for low-frequency HTTP; `WebSocket` with auto-reconnect for streaming data. |
 | Frame format (server→browser) | AVCC (server pre-serialized) | The server converts Annex B → AVCC at frame-push time (strip start codes, add 4-byte BE length prefix per NAL).  The frontend feeds AVCC payloads directly to `EncodedVideoChunk` with zero H.264 format knowledge — no parsing, no start code stripping, no AVCC assembly.  Codec string and avcC descriptor are also built server-side and served via `/init`. |
-| Vite integration | Spawned as child, proxy via `vite.config.ts` | Vite's built-in `server.proxy` forwards `/api/*` to the Rust server during development.  No CORS needed.  Production: `tower-http::ServeDir` serves `dist/` on the same port. |
-| Port configuration | `LIVE_CORE_PORT` (server) + `LIVE_PORT` (Vite dev) | No default ports — avoids conflicts with other Vite apps or dev servers. Both required. |
+| Vite integration | Spawned as child, reverse-proxied by core server | The core server is the single entry point — the browser connects to `LIVE_CORE_PORT`.  Non-API requests are reverse-proxied to Vite via `reqwest`.  HMR WebSocket connects directly to Vite (`hmr.clientPort`).  No Vite-side proxy config needed. |
+| Port configuration | `LIVE_CORE_PORT` (server, browser entry) + `LIVE_VITE_PORT` (Vite dev, internal) | No default ports — avoids conflicts. `LIVE_VITE_PORT` is optional (omit for production). |
 | Webview launch | Copy-and-run via `.mod.nu` | `just app` / `just youtube-music` build `live-app`, copy as `live-app.<id>.exe`, then run the copy.  Each instance gets its own binary, so `cargo build` (server restart) doesn't hit file locks.  Instance IDs allow frontend and YTM webviews to run simultaneously. |
 
 ### Why Not a Monolith?
@@ -469,7 +471,19 @@ Keys prefixed with `$` are **computed strings** — readonly values derived from
 
 Returns 404 if the KPM capture process is not running. Always enabled — no env gating needed (unlike audio).
 
-The frontend polls this at ~150ms and computes peak hold + decay locally for smooth VU meter animation.
+The HTTP endpoint is kept for backward compatibility; the frontend now uses WebSocket (see below).
+
+### WebSocket Streaming
+
+All high-frequency data is pushed over dedicated WebSocket connections, eliminating per-request TCP overhead.  Each endpoint uses the same binary format as its HTTP counterpart.
+
+**`WS /api/v1/ws/video/:id`** — Video frames (binary push).  On connect, the client may send `{"after": N}` to set its cursor; the server sends a catch-up batch, then pushes frames as they arrive via `broadcast` notification.  Same binary layout as `GET /streams/:id/frames`.
+
+**`WS /api/v1/ws/audio`** — Audio chunks (binary push, no gzip/delta — raw PCM).  Same cursor protocol as video.  Same binary layout as `GET /audio/chunks` but without delta encoding or gzip compression.
+
+**`WS /api/v1/ws/kpm`** — KPM updates (JSON text push).  Sends `{"kpm": N}` or `{"kpm": null}` on every value change via `watch` channel.  Initial value sent immediately on connect.
+
+**`WS /api/v1/ws/strings`** — String store snapshots (JSON text push).  Sends the full `Record<string, string>` on connect and after every mutation via a `watch` version counter.
 
 ### Refresh
 
@@ -504,7 +518,7 @@ The frontend polls this at ~150ms and computes peak hold + decay locally for smo
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
 | **Decoder** | `frontend/src/video/decoder.ts` | Done | Thin WebCodecs wrapper — zero H.264 format knowledge. Server provides pre-built codec string + avcC descriptor (via `/init`) and AVCC-formatted frame payloads (via `/frames`). `fetchInit()` retries on 503 (starting) and 404 (stream not yet created). `decodeFrame()` passes AVCC data directly to `EncodedVideoChunk` with no conversion. |
-| **Renderer** | `frontend/src/video/index.tsx` | Done | `<StreamRenderer>` component. Canvas rendering, ~60fps polling loop. Generation-aware: reinitializes decoder when the server replaces the underlying capture process. Reinit retries in a loop on failure (prevents frozen canvas from a dead decoder). Owns full decoder lifecycle via `startStreamLoop()`. 404 treated as retriable. Parses binary frame responses directly (`parseBinaryFrameResponse()` — zero-copy `subarray` slices, envelope includes timestamp + keyframe flag). |
+| **Renderer** | `frontend/src/video/index.tsx` | Done | `<StreamRenderer>` component. Canvas rendering via WebSocket push. Generation-aware: reinitializes decoder when the server replaces the underlying capture process. Reinit retries in a loop on failure. Owns full decoder lifecycle via `startStreamLoop()` with auto-reconnect + exponential backoff. Uses `openWebSocket()` + `wsMessages()` async generator from `ws.ts`. `parseBinaryFrameResponse()` unchanged (same binary format as HTTP). |
 
 ### Completed (`live-audio` crate — `live-audio/`)
 
@@ -517,7 +531,7 @@ The frontend polls this at ~150ms and computes peak hold + decay locally for smo
 
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
-| **Audio Stream** | `frontend/src/audio/index.tsx` | Done | Invisible `<AudioStream>` component. Polls `/api/v1/audio/chunks?after=N` with adaptive timing (16ms normal, 4ms fast retry). Posts PCM chunks to worklet immediately — no A/V sync. Handles browser autoplay policy. Exits gracefully on 404 (audio disabled). |
+| **Audio Stream** | `frontend/src/audio/index.tsx` | Done | Invisible `<AudioStream>` component. Receives PCM chunks via `WS /ws/audio` (raw, no delta/gzip). Posts to worklet immediately — no A/V sync. Auto-reconnect with exponential backoff. Handles browser autoplay policy. Exits gracefully on 404 (audio disabled). |
 | **PCM Worklet** | `frontend/src/audio/worklet.ts` | Done | AudioWorklet processor with ring buffer (9600 frames = 200ms at 48kHz). Receives s16le via MessagePort, converts to f32, outputs at audio callback rate. Silence on underrun. |
 
 ### Completed (`live-kpm` crate — `live-kpm/`)
@@ -531,13 +545,13 @@ The frontend polls this at ~150ms and computes peak hold + decay locally for smo
 
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
-| **KPM Meter** | `frontend/src/kpm/index.tsx` | Done | `useKpm()` hook polls `GET /api/v1/kpm` at ~150ms. Frontend-computed peak hold (1.5s hold + 0.5s linear decay). `<KpmMeter>` renders vertical VU-style bar with LED segments, neon accent color (tracks island hue via `currentColor`), prominent peak marker with glow, live KPM readout + keyboard icon label. |
+| **KPM Meter** | `frontend/src/kpm.tsx` | Done | `useKpm()` hook receives values via `WS /ws/kpm` using `connectWs()`. Frontend-computed peak hold (1.5s hold + 0.5s linear decay). `<KpmMeter>` renders vertical VU-style bar with LED segments, neon accent color (tracks island hue via `currentColor`), prominent peak marker with glow, live KPM readout + keyboard icon label. |
 
 ### Completed (Webview Host — `live-app/`)
 
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
-| **live-app** | `live-app/src/main.rs` | Done | Non-resizable 1280x800 wry webview via nkcore/winit event loop. CLI args: `--url`, `--window-title`, `--scaling-factor`. Reads `LIVE_PORT` env for default URL. |
+| **live-app** | `live-app/src/main.rs` | Done | Non-resizable 1280x800 wry webview via nkcore/winit event loop. CLI args: `--url`, `--window-title`, `--scaling-factor`. |
 
 ### Completed (`live-server` — Rust/Axum, `live-server/`)
 
@@ -545,38 +559,43 @@ Replaces the former TypeScript Hono server.  All server logic is now Rust.  Modu
 
 | Component | File(s) | Status | Notes |
 |-----------|---------|--------|-------|
-| **Entry Point** | `live-server/src/main.rs` | Done | Axum HTTP server. Per-monitor DPI aware via `set-dpi-awareness` crate. CLI args via clap (port, exe paths, audio device/enable). Auto-starts selector, YTM manager, KPM on boot. Audio gated by `--audio` / `LIVE_AUDIO` env. Spawns Vite dev server as child when `LIVE_PORT` is set. Resolves sibling executables from cargo build output. |
+| **Entry Point** | `live-server/src/main.rs` | Done | Axum HTTP + WebSocket server. Single entry point — the browser connects here. Per-monitor DPI aware. CLI args via clap. Auto-starts selector, YTM manager, KPM on boot. Audio gated by `LIVE_AUDIO`. Spawns Vite as child when `LIVE_VITE_PORT` is set; non-API requests are reverse-proxied to Vite for dev assets. |
 | **Constants** | `live-server/src/constant.rs` | Done | Centralized well-known values: data paths, stream IDs (`STREAM_ID_MAIN`, `STREAM_ID_YTM`), computed string keys (`CSID_*`), capture defaults, buffer capacities, poll intervals, YTM crop geometry (`ytm_crop_geometry()`), default selector config (`default_selector_config()` via `json!`). |
 | **Shared State** | `live-server/src/state.rs` | Done | `AppState` with per-subsystem `Arc<RwLock<T>>`. Accessor methods for read/write locks and cloneable `Arc` handles for child-process reader tasks. |
 | **Video Buffer** | `live-server/src/video/buffer.rs` | Done | Per-stream circular buffer (60 frames). Annex B → AVCC conversion at push time (`strip_start_code` + 4-byte BE length prefix per NAL). Keyframe gating for first client request. `build_codec_string()` / `build_avcc_descriptor()` for the `/init` endpoint — both strip start codes from `CodecParams.sps`/`.pps` (which contain raw `NALUnit.data` with Annex B prefixes). `reset()` on stream replacement. 15 unit tests. |
-| **Video Process** | `live-server/src/video/process.rs` | Done | `StreamRegistry` with `CaptureStream` entries. `spawn_and_wire()` spawns `live-video.exe` with `--stream-id`, reads stdout via `live_video::read_message()` on `spawn_blocking` thread, pushes into buffer. Generation-guarded: each reader task receives its generation number and checks `stream.generation == my_generation` before every write — stale readers from replaced processes (whose `spawn_blocking` tasks cannot be cancelled) never touch the new generation's buffer or status. `create_stream()` / `create_crop_stream()` for manual use. `replace_stream()` / `replace_crop_stream()` for well-known IDs — kill old, reset buffer, bump generation (idempotent). Stderr inherited (child tags its own log lines via `--stream-id`). |
-| **Video Routes** | `live-server/src/video/routes.rs` | Done | `GET/POST /streams`, `DELETE /streams/:id`, `GET /streams/:id/init` (codec string + avcC base64), `GET /streams/:id/frames?after=N` (binary AVCC with generation + per-frame timestamp/keyframe envelope). |
+| **Video Process** | `live-server/src/video/process.rs` | Done | `StreamRegistry` with `CaptureStream` entries. `spawn_and_wire()` spawns `live-video.exe` with `--stream-id`, reads stdout via `live_video::read_message()` on `spawn_blocking` thread, pushes into buffer. `broadcast::Sender<()>` per stream fires after each frame push — wakes WebSocket tasks. Generation-guarded: stale readers never touch the new generation's buffer. |
+| **Video Routes** | `live-server/src/video/routes.rs` | Done | `GET/POST /streams`, `DELETE /streams/:id`, `GET /streams/:id/init` (codec string + avcC base64), `GET /streams/:id/frames?after=N` (binary AVCC, kept for backward compat). |
+| **Video WebSocket** | `live-server/src/video/ws.rs` | Done | `WS /ws/video/:id` — subscribes to `broadcast`, pushes AVCC frames in same binary format as HTTP. Cursor sync via `{"after": N}` on connect. |
 | **Audio Buffer** | `live-server/src/audio/buffer.rs` | Done | Circular chunk buffer (100 chunks = ~1s). Pre-serialized payloads. Generation reset detection (stale cursor → return all). 4 unit tests. |
-| **Audio Process** | `live-server/src/audio/process.rs` | Done | `AudioState` singleton. Spawns `live-audio.exe`, reads stdout via `live_audio::read_message()`. Stderr inherited. Reset on process exit. |
-| **Audio Routes** | `live-server/src/audio/routes.rs` | Done | `GET /audio/init` (format params, 503/404), `GET /audio/chunks?after=N` (binary + delta encoding + gzip via `flate2`). 1 delta-encoding unit test. |
+| **Audio Process** | `live-server/src/audio/process.rs` | Done | `AudioState` singleton. Spawns `live-audio.exe`, reads stdout via `live_audio::read_message()`. `broadcast::Sender<()>` fires after each chunk push. Stderr inherited. Reset on process exit. |
+| **Audio Routes** | `live-server/src/audio/routes.rs` | Done | `GET /audio/init` (format params, 503/404), `GET /audio/chunks?after=N` (binary + delta encoding + gzip via `flate2`, kept for backward compat). 1 delta-encoding unit test. |
+| **Audio WebSocket** | `live-server/src/audio/ws.rs` | Done | `WS /ws/audio` — pushes raw PCM chunks (no delta encoding, no gzip). Same cursor protocol as video. |
 | **KPM Calculator** | `live-server/src/kpm/calculator.rs` | Done | 5-second sliding window with `VecDeque`. Extrapolates to KPM. No peak tracking (frontend handles it). 5 unit tests. |
-| **KPM Process** | `live-server/src/kpm/process.rs` | Done | `KpmState` singleton. Spawns `live-kpm.exe`, reads 12-byte binary batches via `live_kpm::read_batch()`. Stderr inherited. Always enabled. |
-| **KPM Route** | `live-server/src/kpm/routes.rs` | Done | `GET /kpm` → `{ kpm: number }`. Returns 404 if process not running. |
+| **KPM Process** | `live-server/src/kpm/process.rs` | Done | `KpmState` singleton. Spawns `live-kpm.exe`, reads 12-byte binary batches via `live_kpm::read_batch()`. `watch::Sender<Option<i64>>` updated after each batch — carries the rounded KPM value. Stderr inherited. Always enabled. |
+| **KPM Route** | `live-server/src/kpm/routes.rs` | Done | `GET /kpm` → `{ kpm: number }`. Returns 404 if process not running. Kept for backward compat. |
+| **KPM WebSocket** | `live-server/src/kpm/ws.rs` | Done | `WS /ws/kpm` — pushes `{"kpm": N}` on every `watch` change. Sends current value immediately on connect. |
 | **Selector Config** | `live-server/src/selector/config.rs` | Done | `PresetConfig` with persistence to `data/selector-config.json`. Pattern parser: `[@mode] <exePath>[@<windowTitle>]`. `should_capture()` with exclude-veto semantics. Path separator normalization. Legacy format migration. 9 unit tests. |
 | **Selector Manager** | `live-server/src/selector/manager.rs` | Done | `SelectorState`. Polls foreground window every 2s via `enumerate_windows::get_foreground_window()` (direct library call). Replaces `"main"` stream on match. Pushes `$captureInfo` (exe FileDescription, falls back to window title), `$liveMode`, `$captureMode` computed strings. |
 | **Selector Routes** | `live-server/src/selector/routes.rs` | Done | `GET/POST/DELETE /streams/auto`, `GET/PUT /streams/auto/config`, `PUT /streams/auto/config/preset`. |
 | **YTM Manager** | `live-server/src/ytm/manager.rs` | Done | `YtmState`. Polls `enumerate_windows()` every 5s, finds "YouTube Music" window. Creates/replaces `"youtube-music"` crop stream (bottom playback bar). Destroys on window disappearance. |
-| **String Store** | `live-server/src/strings/store.rs` | Done | `StringStore` with `HashMap<String, String>` (user) + `HashMap<String, String>` (computed, `$`-prefixed). Dual-layer persistence: `data/strings.json` (single-line) + `data/strings/<key>.md` (multiline). Strict mode: crash on corrupt JSON. |
+| **String Store** | `live-server/src/strings/store.rs` | Done | `StringStore` with `HashMap<String, String>` (user) + `HashMap<String, String>` (computed, `$`-prefixed). `watch::Sender<u64>` version counter bumped on every mutation — wakes WS clients. Dual-layer persistence: `data/strings.json` (single-line) + `data/strings/<key>.md` (multiline). Strict mode: crash on corrupt JSON. |
 | **String Routes** | `live-server/src/strings/routes.rs` | Done | `GET /strings` (all, merged), `PUT /strings/:key` (set, 403 for `$`), `DELETE /strings/:key`. |
+| **Strings WebSocket** | `live-server/src/strings/ws.rs` | Done | `WS /ws/strings` — pushes full JSON snapshot on connect and after every mutation. |
 | **Window Enumeration** | `live-server/src/windows.rs` | Done | `GET /streams/windows` — calls `enumerate_windows::enumerate_windows()` on `spawn_blocking` thread. No process spawn. |
+| **Vite Dev Proxy** | `live-server/src/vite_proxy.rs` | Done | Catch-all fallback: reverse-proxies non-API requests to the Vite dev server via `reqwest`. Active only when `LIVE_VITE_PORT` is set. HMR WebSocket connects directly to Vite (not proxied). |
 
-### Completed (Frontend — React + plain fetch)
+### Completed (Frontend — React + WebSocket)
 
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
-| **API Client** | `frontend/src/api.ts` | Done | Plain `fetch()` wrapper — `fetchStreams()` returns typed `StreamInfo[]`. No Hono RPC dependency (removed during RIIR). |
-| **Strings API Client** | `frontend/src/strings-api.ts` | Done | Plain `fetch()` wrapper — `fetchStrings()` returns `Record<string, string>`. |
-| **Stream Status** | `frontend/src/streams.ts` | Done | `useStreamStatus()` hook. Polls `GET /api/v1/streams` every 2s, returns `{ hasMain, hasYouTubeMusic }` booleans for UI visibility. |
-| **String Store Hook** | `frontend/src/strings.ts` | Done | `useStrings()` hook. Polls `GET /api/v1/strings` every 2s, returns `Record<string, string>` of all key-value pairs. |
+| **WebSocket Helper** | `frontend/src/ws.ts` | Done | Shared WS utilities: `connectWs()` (callback-based with auto-reconnect + exponential backoff), `openWebSocket()` (promise-based), `wsMessages()` (async generator yielding `ArrayBuffer`). All tied to `AbortSignal` for clean teardown. |
+| **API Client** | `frontend/src/api.ts` | Done | Plain `fetch()` wrapper — `fetchStreams()` returns typed `StreamInfo[]`. Used by `useStreamStatus()` (low-frequency HTTP polling). |
+| **Stream Status** | `frontend/src/streams.ts` | Done | `useStreamStatus()` hook. Polls `GET /api/v1/streams` every 2s, returns `{ hasMain, hasYouTubeMusic }` booleans for UI visibility. Still HTTP (low-frequency, not latency-sensitive). |
+| **String Store Hook** | `frontend/src/strings.ts` | Done | `useStrings()` hook. Receives full JSON snapshots via `WS /ws/strings` — updates pushed by server immediately on change. |
 | **App** | `frontend/src/app.tsx` | Done | Pure viewer shell. JetBrains Islands dark theme. Hardcoded `streamId="main"` and `streamId="youtube-music"`. YouTube Music island shown/hidden via `useStreamStatus()`. Displays server-managed strings by well-known ID (e.g. `"marquee"` in scrolling top banner, `"message"` in sidebar). SidePanel hosts Clock, Mode, Capture, message area, and About widgets. No control buttons — all lifecycle is server-managed. |
 | **Widgets** | `frontend/src/widgets/index.tsx` | Done | All widgets in one file: `ClockWidget` (dual timezone), `LiveModeWidget` (`$liveMode`, small), `CaptureWidget` (capture mode + exe description, large), `AboutWidget` (revision timestamp + credits, large). Shared `LiveWidget` base in `widgets/common.tsx`. |
 | **Entry Point** | `frontend/index.tsx` | Done | React 19 `createRoot()` (migrated from Preact). |
-| **Vite Config** | `frontend/vite.config.ts` | Done | `@vitejs/plugin-react-swc` + `@tailwindcss/vite`, `root: "."`, `@` alias. Dev proxy: `/api/*` → `http://localhost:${LIVE_CORE_PORT}`. |
+| **Vite Config** | `frontend/vite.config.ts` | Done | `@vitejs/plugin-react-swc` + `@tailwindcss/vite`, `root: "."`, `@` alias. No proxy — the core server is the browser entry point and reverse-proxies to Vite. `server.hmr.clientPort` for direct HMR connection. |
 
 ---
 
@@ -706,24 +725,28 @@ Nekomaru-LiveUI-v2/
 │   ├── strings/                     # Per-key Markdown files for multiline values
 │   └── selector-config.json         # Auto-selector preset config
 │
-├── live-server/                     # HTTP server (Rust, Axum + tokio)
+├── live-server/                     # HTTP + WebSocket server (Rust, Axum + tokio)
 │   ├── Cargo.toml
 │   └── src/
 │       ├── main.rs                  # Entry point: Axum, CLI args, Vite child, signal handling
 │       ├── constant.rs              # Centralized constants, well-known IDs, computed string keys
 │       ├── state.rs                 # AppState (Arc<RwLock<...>> per subsystem)
+│       ├── vite_proxy.rs            # Dev fallback: reverse-proxies non-API requests to Vite
 │       ├── video/                   # Video capture pipeline
 │       │   ├── buffer.rs            # Circular frame buffer (Annex B→AVCC, keyframe gating, avcC builder)
-│       │   ├── process.rs           # StreamRegistry, spawn live-video, protocol parsing
-│       │   └── routes.rs            # /api/v1/streams CRUD, /frames, /init
+│       │   ├── process.rs           # StreamRegistry, spawn live-video, broadcast notify
+│       │   ├── routes.rs            # /api/v1/streams CRUD, /frames, /init (HTTP)
+│       │   └── ws.rs                # WS /api/v1/ws/video/:id (binary frame push)
 │       ├── audio/                   # Audio capture pipeline
 │       │   ├── buffer.rs            # Circular audio chunk buffer
-│       │   ├── process.rs           # AudioState, spawn live-audio, protocol parsing
-│       │   └── routes.rs            # /api/v1/audio/init, /chunks (delta + gzip)
+│       │   ├── process.rs           # AudioState, spawn live-audio, broadcast notify
+│       │   ├── routes.rs            # /api/v1/audio/init, /chunks (HTTP, delta + gzip)
+│       │   └── ws.rs                # WS /api/v1/ws/audio (binary chunk push, raw PCM)
 │       ├── kpm/                     # KPM pipeline
 │       │   ├── calculator.rs        # Sliding window KPM calculator (5s window)
-│       │   ├── process.rs           # KpmState, spawn live-kpm, binary reader
-│       │   └── routes.rs            # /api/v1/kpm
+│       │   ├── process.rs           # KpmState, spawn live-kpm, watch notify
+│       │   ├── routes.rs            # /api/v1/kpm (HTTP)
+│       │   └── ws.rs                # WS /api/v1/ws/kpm (JSON text push)
 │       ├── selector/                # Auto window selector
 │       │   ├── config.rs            # Preset parsing, pattern matching, persistence
 │       │   ├── manager.rs           # Foreground polling, stream replacement
@@ -731,8 +754,9 @@ Nekomaru-LiveUI-v2/
 │       ├── ytm/                     # YouTube Music manager
 │       │   └── manager.rs           # Window polling, crop stream management
 │       ├── strings/                 # String store
-│       │   ├── store.rs             # Map + computed strings + dual-layer persistence
-│       │   └── routes.rs            # /api/v1/strings CRUD
+│       │   ├── store.rs             # Map + computed strings + watch version counter
+│       │   ├── routes.rs            # /api/v1/strings CRUD (HTTP)
+│       │   └── ws.rs                # WS /api/v1/ws/strings (JSON snapshot push)
 │       └── windows.rs               # /api/v1/streams/windows (library call)
 │
 ├── live-video/                      # live-video.exe + live_video lib (was live-capture)
@@ -774,21 +798,20 @@ Nekomaru-LiveUI-v2/
     ├── global.tailwind.css          # Tailwind base import
     ├── debug.ts                     # Debug flags
     ├── src/                         # Application source (aliased as @/)
+    │   ├── ws.ts                    # Shared WebSocket helpers (connectWs, openWebSocket, wsMessages)
     │   ├── api.ts                   # Plain fetch() wrapper for /api/v1/streams
-    │   ├── strings-api.ts           # Plain fetch() wrapper for /api/v1/strings
     │   ├── app.tsx                  # Pure viewer shell (streams + server-managed strings by ID)
     │   ├── streams.ts               # useStreamStatus() hook (polls availability for UI visibility)
-    │   ├── strings.ts               # useStrings() hook (polls /api/v1/strings every 2s)
+    │   ├── strings.ts               # useStrings() hook (WS push from /ws/strings)
+    │   ├── kpm.tsx                  # useKpm() hook (WS push) + <KpmMeter> VU meter component
     │   ├── widgets/                 # SidePanel widgets
     │   │   ├── common.tsx           # LiveWidget base component (icon + label + content layout)
     │   │   └── index.tsx            # All widgets: Clock, Status, Capture, About
     │   ├── audio/                   # Audio streaming module
-    │   │   ├── index.tsx            # <AudioStream> (polls PCM chunks, posts to worklet)
+    │   │   ├── index.tsx            # <AudioStream> (WS push, raw PCM to worklet)
     │   │   └── worklet.ts           # PCM AudioWorklet processor (ring buffer, s16→f32)
-    │   ├── kpm/                     # KPM burst meter module
-    │   │   └── index.tsx            # useKpm() hook + <KpmMeter> VU meter component
     │   └── video/                   # Self-contained video stream module
-    │       ├── index.tsx            # <StreamRenderer> (generation-aware, owns decoder lifecycle)
+    │       ├── index.tsx            # <StreamRenderer> (WS push, generation-aware decoder lifecycle)
     │       ├── decoder.ts           # H264Decoder (thin WebCodecs wrapper, server provides AVCC)
     │       └── chroma-key.ts        # WebGL2 chroma-key renderer (GPU fragment shader)
     └── public/

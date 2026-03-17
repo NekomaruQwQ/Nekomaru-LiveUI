@@ -13,7 +13,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 
 use job_object::JobObject;
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 use tokio::task::JoinHandle;
 
 use crate::constant::FRAME_BUFFER_CAPACITY;
@@ -29,6 +29,11 @@ pub enum StreamStatus {
     Stopped,
 }
 
+/// Broadcast channel capacity for frame-push notifications.  Small capacity is
+/// fine — the notification carries no data, just a "wake up and read the buffer"
+/// signal.  Lagged receivers catch up via sequence-based buffer reads.
+const NOTIFY_CAPACITY: usize = 4;
+
 /// A single capture stream backed by a `live-video.exe` child process.
 pub struct VideoStream {
     pub id: String,
@@ -41,6 +46,9 @@ pub struct VideoStream {
     pub child: Option<Child>,
     /// Abort handle for the stdout reader task.
     pub reader_handle: Option<JoinHandle<()>>,
+    /// Notification channel — fires after every `push_frame()`.  WebSocket
+    /// handlers subscribe to this to wake and read from the buffer.
+    pub notify: broadcast::Sender<()>,
 }
 
 impl VideoStream {
@@ -234,6 +242,7 @@ impl StreamRegistry {
         registry: &std::sync::Arc<RwLock<Self>>,
     ) {
         let initial_generation = 1;
+        let (notify, _) = broadcast::channel(NOTIFY_CAPACITY);
         let (child, reader_handle) = spawn_and_wire(id, initial_generation, args, &self.job, registry);
 
         let stream = VideoStream {
@@ -244,6 +253,7 @@ impl StreamRegistry {
             generation: initial_generation,
             child: Some(child),
             reader_handle: Some(reader_handle),
+            notify,
         };
 
         self.streams.insert(id.to_owned(), stream);
@@ -329,9 +339,12 @@ fn spawn_and_wire(
                                     stream.status = StreamStatus::Running;
                                     log::info!("@{id_owned} running (codec params received)");
                                 }
+                                // Wake WS clients so they can fetch /init params.
+                                stream.notify.send(()).ok();
                             }
                             Message::Frame(frame) => {
                                 stream.buffer.push_frame(&frame);
+                                stream.notify.send(()).ok();
                             }
                             Message::Error(e) => {
                                 log::error!("@{id_owned} capture error: {e}");

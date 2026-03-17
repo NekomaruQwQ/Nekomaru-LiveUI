@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import { DEBUG } from "../../debug";
+import { openWebSocket, wsMessages } from "../ws";
 import { ChromaKeyRenderer, parseHexColor } from "./chroma-key";
 import { H264Decoder } from "./decoder";
 
@@ -118,11 +119,11 @@ function renderFrame(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, f
 }
 
 /**
- * Stream loop that owns decoder lifecycle, fetches frames, and handles
- * generation changes (decoder reinitialization) and 404s (stream not yet
- * created).
+ * Stream loop that owns decoder lifecycle, receives frames via WebSocket,
+ * and handles generation changes (decoder reinitialization).
  *
  * Runs until the AbortSignal fires (component unmount / streamId change).
+ * Reconnects with exponential backoff on disconnect.
  *
  * @param onFrame  Callback that renders a decoded VideoFrame.  Responsible
  *                 for closing the frame after use.
@@ -131,7 +132,7 @@ async function startStreamLoop(
     streamId: string,
     onFrame: (frame: VideoFrame) => void,
     signal: AbortSignal,
-    pollMs: number,
+    _pollMs: number,
 ): Promise<void> {
     console.log("StreamLoop: Starting stream loop");
 
@@ -149,87 +150,68 @@ async function startStreamLoop(
 
     let lastSequence = 0;
     let currentGeneration: number | null = null;
-    let consecutiveErrors = 0;
-    const MAX_CONSECUTIVE_ERRORS = 30;
 
+    const INITIAL_DELAY_MS = 100;
+    const MAX_DELAY_MS = 5000;
+    let delay = INITIAL_DELAY_MS;
+
+    // Outer reconnect loop.
     while (!signal.aborted) {
         try {
-            if (DEBUG.debugStreamRenderer) {
-                console.log("StreamLoop: Fetching frame after sequence %d", lastSequence);
-            }
-            const res = await fetch(
-                `/api/v1/streams/${streamId}/frames?after=${lastSequence}`);
-
-            // 404 = stream doesn't exist yet (server may create it soon).
-            // Sleep and retry rather than counting towards fatal errors.
-            if (res.status === 404) {
-                await sleep(1000);
-                continue;
-            }
-
-            if (!res.ok) {
-                console.error("StreamLoop: Stream request failed: %d %s", res.status, res.statusText);
-                await sleep(100);
-                consecutiveErrors++;
-                if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                    console.error("StreamLoop: Too many consecutive errors, stopping stream");
-                    break;
-                }
-                continue;
-            }
-
-            consecutiveErrors = 0;
-
-            // Parse the binary frame response (see live-server/src/video/routes.rs for layout).
-            const { generation, frames } = parseBinaryFrameResponse(
-                new Uint8Array(await res.arrayBuffer()));
-
-            // ── Generation change: reinitialize decoder ──────────────────
-            // Retry init in a loop: if the new capture process is still
-            // starting, fetchInit() may throw after exhausting retries.
-            // Without this, the decoder stays unconfigured and all
-            // subsequent frames are silently dropped (frozen canvas).
-            if (currentGeneration !== null && generation !== currentGeneration) {
-                console.log("StreamLoop: Generation changed %d → %d, reinitializing decoder",
-                    currentGeneration, generation);
-                decoder.close();
-                decoder = new H264Decoder(streamId, onFrame);
-                while (!signal.aborted) {
-                    try {
-                        await decoder.init();
-                        break;
-                    } catch (e) {
-                        console.warn("StreamLoop: Reinit failed, retrying:", e);
-                        await sleep(1000);
-                    }
-                }
-                if (signal.aborted) break;
-                lastSequence = 0;
-            }
-            currentGeneration = generation;
-
-            for (const { sequence, timestamp, isKeyframe, data } of frames) {
-                lastSequence = Math.max(lastSequence, sequence);
-                decoder.decodeFrame(timestamp, isKeyframe, data);
-            }
-            await sleep(pollMs);
-
-        } catch (e) {
-            // AbortError is expected on cleanup — don't log or count it.
+            const ws = await openWebSocket(
+                `/api/v1/ws/video/${streamId}`, signal);
             if (signal.aborted) break;
-            console.error("StreamLoop: Stream error:", e);
-            consecutiveErrors++;
-            if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                console.error("StreamLoop: Too many consecutive errors, stopping stream");
-                break;
+
+            // Send cursor so the server sends a catch-up batch.
+            ws.send(JSON.stringify({ after: lastSequence }));
+            delay = INITIAL_DELAY_MS; // Reset backoff on successful connect.
+
+            // Inner message loop — process frames until WS closes.
+            for await (const data of wsMessages(ws, signal)) {
+                const { generation, frames } = parseBinaryFrameResponse(
+                    new Uint8Array(data));
+
+                // Generation change: reinitialize decoder.
+                if (currentGeneration !== null && generation !== currentGeneration) {
+                    console.log("StreamLoop: Generation changed %d → %d, reinitializing decoder",
+                        currentGeneration, generation);
+                    decoder.close();
+                    decoder = new H264Decoder(streamId, onFrame);
+                    while (!signal.aborted) {
+                        try {
+                            await decoder.init();
+                            break;
+                        } catch (e) {
+                            console.warn("StreamLoop: Reinit failed, retrying:", e);
+                            await sleep(1000);
+                        }
+                    }
+                    if (signal.aborted) break;
+                    lastSequence = 0;
+                }
+                currentGeneration = generation;
+
+                for (const { sequence, timestamp, isKeyframe, data: frameData } of frames) {
+                    lastSequence = Math.max(lastSequence, sequence);
+                    decoder.decodeFrame(timestamp, isKeyframe, frameData);
+                }
             }
-            await sleep(1000);
+        } catch {
+            if (signal.aborted) break;
+        }
+
+        // Backoff before reconnecting.
+        if (!signal.aborted) {
+            console.log("StreamLoop: WS disconnected, reconnecting in %dms", delay);
+            await sleep(delay);
+            delay = Math.min(delay * 2, MAX_DELAY_MS);
         }
     }
 
     decoder.close();
     console.log("StreamLoop: Stream loop ended");
 }
+
 
 function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
