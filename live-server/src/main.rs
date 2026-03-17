@@ -12,6 +12,7 @@
 
 mod state;
 mod strings;
+mod video;
 mod windows;
 
 use state::AppState;
@@ -39,6 +40,11 @@ struct Cli {
     /// with this port and a proxy back to the core server.
     #[arg(long, env = "LIVE_PORT")]
     vite_port: Option<u16>,
+
+    /// Path to the `live-video` executable.  Defaults to `live-video` in the
+    /// same directory as this binary (from `cargo build`).
+    #[arg(long, default_value = "live-video")]
+    video_exe: String,
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────
@@ -52,10 +58,15 @@ async fn main() {
 
     let cli = Cli::parse();
 
-    let state = Arc::new(AppState::new());
+    // Resolve video exe path: if relative, look next to this binary.
+    let video_exe = resolve_sibling_exe(&cli.video_exe);
+    log::info!("video exe: {video_exe}");
+
+    let state = Arc::new(AppState::new(video_exe));
 
     let app = Router::new()
         .merge(strings::routes::router())
+        .merge(video::routes::router())
         .merge(windows::router())
         .route("/api/v1/refresh", post(refresh))
         .with_state(state);
@@ -84,6 +95,37 @@ async fn main() {
 async fn refresh(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     state.strings.write().await.reload();
     Json(serde_json::json!({ "ok": true }))
+}
+
+// ── Exe Resolution ──────────────────────────────────────────────────────────
+
+/// Resolve an executable name to a full path.  If the name is a bare filename
+/// (no directory separators), look for it next to the current binary (the
+/// `target/debug/` or `target/release/` directory from `cargo build`).
+fn resolve_sibling_exe(name: &str) -> String {
+    let path = std::path::Path::new(name);
+    if path.parent().is_some_and(|p| p != std::path::Path::new("")) {
+        // Already has a directory component — use as-is.
+        return name.to_owned();
+    }
+
+    // Bare name: look next to this binary.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let candidate = dir.join(name);
+            // On Windows, try with .exe suffix.
+            let with_ext = candidate.with_extension("exe");
+            if with_ext.exists() {
+                return with_ext.to_string_lossy().into_owned();
+            }
+            if candidate.exists() {
+                return candidate.to_string_lossy().into_owned();
+            }
+        }
+    }
+
+    // Fallback: hope it's on PATH.
+    name.to_owned()
 }
 
 // ── Vite Dev Server ─────────────────────────────────────────────────────────
