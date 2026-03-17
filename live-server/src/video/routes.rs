@@ -13,7 +13,7 @@ use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Json, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get};
 
 use base64::Engine as _;
 use serde::Deserialize;

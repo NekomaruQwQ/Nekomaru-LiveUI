@@ -112,6 +112,7 @@ impl AppState {
         self.ytm_inner.write().await
     }
 
+    #[allow(dead_code)]
     pub fn ytm_arc(&self) -> Arc<RwLock<YtmState>> {
         self.ytm_inner.clone()
     }

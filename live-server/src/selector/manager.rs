@@ -5,7 +5,7 @@
 //! When the foreground matches the active preset and differs from the
 //! current capture target, replaces the "main" stream in-place.
 
-use crate::selector::config::{self, PresetConfig, should_capture};
+use crate::selector::config::should_capture;
 use crate::strings::store::StringStore;
 use crate::video::process::StreamRegistry;
 

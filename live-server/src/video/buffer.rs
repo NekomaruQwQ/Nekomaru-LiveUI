@@ -12,7 +12,7 @@
 //! The `is_keyframe` byte from the IPC wire format is NOT included — the
 //! frontend infers keyframe status from NAL unit types.
 
-use live_video::{CodecParams, FrameMessage, NALUnitType};
+use live_video::{CodecParams, FrameMessage};
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

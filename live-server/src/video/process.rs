@@ -189,7 +189,8 @@ impl StreamRegistry {
         }
     }
 
-    /// Kill all child processes.
+    /// Kill all child processes.  Called on server shutdown.
+    #[allow(dead_code)]
     pub fn destroy_all(&mut self) {
         let ids: Vec<_> = self.streams.keys().cloned().collect();
         for id in ids {

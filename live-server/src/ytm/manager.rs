@@ -23,6 +23,7 @@ const YTM_TITLE: &str = "YouTube Music - Nekomaru LiveUI v2";
 
 // ── YTM State ────────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 pub struct YtmState {
     pub active: bool,
     pub last_known_hwnd: Option<String>,
@@ -60,6 +61,7 @@ impl YtmState {
         log::info!("[ytm] started");
     }
 
+    #[allow(dead_code)]
     pub fn stop(&mut self, streams_arc: &Arc<RwLock<StreamRegistry>>) {
         if !self.active { return; }
 
