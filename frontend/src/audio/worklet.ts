@@ -82,7 +82,7 @@ class PcmWorkletProcessor extends AudioWorkletProcessor {
         }
     }
 
-    process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
+    override process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
         const output = outputs[0];
         if (!output || output.length === 0) return true;
 

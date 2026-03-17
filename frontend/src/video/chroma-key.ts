@@ -167,5 +167,6 @@ function createProgram(gl: WebGL2RenderingContext, vertSrc: string, fragSrc: str
 export function parseHexColor(hex: string): [number, number, number] {
     const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
     if (!m) throw new Error(`Invalid hex color: ${hex}`)
-    return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
+    const [, r, g, b] = m as unknown as [string, string, string, string]
+    return [parseInt(r, 16), parseInt(g, 16), parseInt(b, 16)]
 }
