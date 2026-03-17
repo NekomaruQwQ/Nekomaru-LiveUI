@@ -1,13 +1,18 @@
-// Typed API client for the LiveServer stream API.
+// API client for the LiveServer stream endpoints.
 //
-// Uses Hono RPC (hc) to get end-to-end type safety from the server route
-// definitions.  The server exports its route type as ApiType; we pass it to
-// hc() so every endpoint call is fully typed — URL construction, path/query
-// params, request body, and response shape.
+// Plain fetch — no Hono RPC dependency.  The response shapes match the Rust
+// server's JSON output.
 
-import { hc } from "hono/client";
-import type { ApiType } from "../../server/api";
+export interface StreamInfo {
+	id: string;
+	hwnd: string;
+	status: "starting" | "running" | "stopped";
+	generation: number;
+}
 
-/// Typed Hono RPC client.  All endpoints under /api/v1/streams are accessible
-/// via this client (e.g. `api.index.$get()`, `api[":id"].init.$get(...)`).
-export const api = hc<ApiType>("/api/v1/streams");
+/// Fetch the list of active streams.
+export async function fetchStreams(): Promise<StreamInfo[]> {
+	const res = await fetch("/api/v1/streams");
+	if (!res.ok) return [];
+	return res.json();
+}

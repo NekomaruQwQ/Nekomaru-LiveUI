@@ -1,6 +1,6 @@
 set shell := ["nu", "-c"]
 
-base_url := "http://localhost:($env.LIVE_PORT)"
+base_url := "http://localhost:($env.LIVE_CORE_PORT)"
 
 alias i := install
 
@@ -12,25 +12,16 @@ capture name:
     http put $"{{base_url}}/api/v1/streams/auto/config/preset" "{{name}}"
 
 server:
-    use .mod.nu run; \
-        run live-video app --help; \
-        run live-audio app --help; \
-        run live-kpm app --help;
-    cd server; bun --hot index.ts;
+    cargo run -p live-server
 
 app *args:
-    use .mod.nu run; \
-        run live-app app -x 1280 -y 720 {{args}}
+    cargo run -p live-app -- -x 1280 -y 720 {{args}}
 youtube-music *args:
-    use .mod.nu run; \
-        run live-app youtube-music \
-            "https://music.youtube.com/" \
-            -t "YouTube Music" \
-            -x 1280 -y 720 -s 2 \
-            {{args}}
+    cargo run -p live-app -- \
+        "https://music.youtube.com/" \
+        -t "YouTube Music" \
+        -x 1280 -y 720 -s 2 \
+        {{args}}
 
-install: install-frontend install-server
-install-frontend:
+install:
     cd frontend; bun i;
-install-server:
-    cd server; bun i;

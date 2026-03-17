@@ -20,5 +20,11 @@ export default vite.defineConfig({
         // Allow any host to connect to the dev server.  This is necessary when running
         // the frontend on another pc.
         allowedHosts: true,
+
+        // Proxy /api/* to the Rust server (live-server) during development.
+        // In production, live-server serves the built frontend directly.
+        proxy: {
+            "/api": `http://localhost:${process.env.LIVE_CORE_PORT}`,
+        },
     },
 });

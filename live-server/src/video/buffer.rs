@@ -167,7 +167,7 @@ fn serialize_frame_payload(frame: &FrameMessage) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use live_video::NALUnit;
+    use live_video::{NALUnit, NALUnitType};
 
     fn make_frame(is_keyframe: bool, timestamp: u64) -> FrameMessage {
         let nal_type = if is_keyframe { NALUnitType::IDR } else { NALUnitType::NonIDR };

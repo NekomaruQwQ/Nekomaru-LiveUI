@@ -7,47 +7,47 @@
 
 import { useEffect, useState } from "react";
 
-import { api } from "./api";
+import { fetchStreams } from "./api";
 
 export interface StreamStatus {
-    hasMain: boolean;
-    hasYouTubeMusic: boolean;
+	hasMain: boolean;
+	hasYouTubeMusic: boolean;
 }
 
 const POLL_INTERVAL_MS = 2000;
 
 export function useStreamStatus(): StreamStatus {
-    const [status, setStatus] = useState<StreamStatus>({
-        hasMain: false,
-        hasYouTubeMusic: false,
-    });
+	const [status, setStatus] = useState<StreamStatus>({
+		hasMain: false,
+		hasYouTubeMusic: false,
+	});
 
-    useEffect(() => {
-        let cancelled = false;
+	useEffect(() => {
+		let cancelled = false;
 
-        async function poll() {
-            if (cancelled) return;
-            try {
-                const res = await api.index.$get();
-                if (!res.ok || cancelled) return;
-                const streams = await res.json();
-                setStatus({
-                    hasMain: streams.some((s) => s.id === "main"),
-                    hasYouTubeMusic: streams.some((s) => s.id === "youtube-music"),
-                });
-            } catch (e) {
-                console.error("Failed to poll stream status:", e);
-            }
-        }
+		async function poll() {
+			if (cancelled) return;
+			try {
+				const streams = await fetchStreams();
+				if (!cancelled) {
+					setStatus({
+						hasMain: streams.some((s) => s.id === "main"),
+						hasYouTubeMusic: streams.some((s) => s.id === "youtube-music"),
+					});
+				}
+			} catch (e) {
+				console.error("Failed to poll stream status:", e);
+			}
+		}
 
-        poll();
-        const intervalId = setInterval(poll, POLL_INTERVAL_MS);
+		poll();
+		const intervalId = setInterval(poll, POLL_INTERVAL_MS);
 
-        return () => {
-            cancelled = true;
-            clearInterval(intervalId);
-        };
-    }, []);
+		return () => {
+			cancelled = true;
+			clearInterval(intervalId);
+		};
+	}, []);
 
-    return status;
+	return status;
 }
