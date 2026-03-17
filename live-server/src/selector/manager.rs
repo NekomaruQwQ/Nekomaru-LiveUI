@@ -6,7 +6,7 @@
 //! current capture target, replaces the "main" stream in-place.
 
 use crate::constant::{
-    CSID_CAPTURE_MODE, CSID_CAPTURE_WINDOW_TITLE, CSID_LIVE_MODE,
+    CSID_CAPTURE_INFO, CSID_CAPTURE_MODE, CSID_LIVE_MODE,
     DEFAULT_CAPTURE_HEIGHT, DEFAULT_CAPTURE_WIDTH,
     SELECTOR_POLL_INTERVAL_MS, STREAM_ID_MAIN,
 };
@@ -120,7 +120,7 @@ impl SelectorState {
         tokio::spawn(async move {
             streams.write().await.destroy_stream(STREAM_ID_MAIN);
             let mut s = strings.write().await;
-            s.clear_computed(CSID_CAPTURE_WINDOW_TITLE);
+            s.clear_computed(CSID_CAPTURE_INFO);
             s.clear_computed(CSID_CAPTURE_MODE);
             s.clear_computed(CSID_LIVE_MODE);
         });
@@ -164,11 +164,14 @@ async fn poll_once(
 
     // Check if foreground hasn't changed.
     if selector.last_capture_hwnd.as_deref() == Some(&hwnd_str) {
-        // Title might have changed on the same window.
+        // Title might have changed on the same window — update $captureInfo
+        // only if we're using the title as fallback (no exe description).
         if selector.last_capture_title.as_deref() != Some(&info.title) {
             selector.last_capture_title = Some(info.title.clone());
+            // Re-resolve: prefer exe description, fall back to new title.
+            let label = resolve_capture_info(&info.executable_path, &info.title);
             strings_arc.write().await
-                .set_computed(CSID_CAPTURE_WINDOW_TITLE, info.title);
+                .set_computed(CSID_CAPTURE_INFO, label);
         }
         return;
     }
@@ -198,7 +201,7 @@ async fn poll_once(
     // Update computed strings.
     {
         let mut strings = strings_arc.write().await;
-        strings.set_computed(CSID_CAPTURE_WINDOW_TITLE, info.title);
+        strings.set_computed(CSID_CAPTURE_INFO, resolve_capture_info(&info.executable_path, &info.title));
         match capture_match.mode {
             Some(m) => strings.set_computed(CSID_LIVE_MODE, m),
             None => strings.clear_computed(CSID_LIVE_MODE),
@@ -206,6 +209,16 @@ async fn poll_once(
     }
 
     log::info!("capturing {hwnd_str}");
+}
+
+/// Prefer the executable's FileDescription from PE version info;
+/// fall back to the window title when version info is unavailable or empty.
+fn resolve_capture_info(exe_path: &std::path::Path, window_title: &str) -> String {
+    win32_version_info::VersionInfo::from_file(exe_path)
+        .ok()
+        .map(|v| v.file_description)
+        .filter(|d| !d.is_empty())
+        .unwrap_or_else(|| window_title.to_owned())
 }
 
 fn format_hwnd(hwnd: usize) -> String {

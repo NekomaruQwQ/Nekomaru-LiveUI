@@ -20,8 +20,10 @@ pub const STREAM_ID_YTM: &str = "youtube-music";
 
 // ── Computed String IDs ─────────────────────────────────────────────────────
 
-/// Title of the window currently being captured on the "main" stream.
-pub const CSID_CAPTURE_WINDOW_TITLE: &str = "$captureWindowTitle";
+/// Human-readable label for the window being captured on the "main" stream.
+/// Prefers the executable's FileDescription (from PE version info); falls back
+/// to the window title when version info is unavailable.
+pub const CSID_CAPTURE_INFO: &str = "$captureInfo";
 
 /// Current capture mode — `"auto"` when the selector is active.
 pub const CSID_CAPTURE_MODE: &str = "$captureMode";

@@ -432,7 +432,7 @@ Keys prefixed with `$` are **computed strings** — readonly values derived from
 
 | Key | Source | Description |
 |-----|--------|-------------|
-| `$captureWindowTitle` | Auto selector | Title of the window currently being captured on the "main" stream. Set at capture-switch time. |
+| `$captureInfo` | Auto selector | Human-readable label for the captured window. Prefers the executable's FileDescription from PE version info (e.g. "Visual Studio Code"); falls back to the window title when unavailable. |
 | `$captureMode` | Auto selector | Current capture mode — `"auto"` when the selector is active, absent when stopped. |
 | `$liveMode` | Auto selector | Live mode derived from the matched include pattern's `@mode` tag (e.g. `"code"`, `"sing"`). Absent when no mode tag on the matched pattern or selector stopped. |
 | `$timestamp` | Server startup | Revision timestamp of the `@-` jj revision, read via `jj log` at server boot. Displayed in the About widget. |
@@ -440,7 +440,7 @@ Keys prefixed with `$` are **computed strings** — readonly values derived from
 **`GET /api/v1/strings`** — Get all key-value pairs (including computed strings).
 
 ```json
-{ "test": "Hello World", "banner": "Live now!", "$captureWindowTitle": "MyApp — Window Title" }
+{ "test": "Hello World", "banner": "Live now!", "$captureInfo": "Visual Studio Code" }
 ```
 
 **`PUT /api/v1/strings/:key`** — Set a string value (idempotent). Returns 403 for `$`-prefixed keys.
@@ -558,7 +558,7 @@ Replaces the former TypeScript Hono server.  All server logic is now Rust.  Modu
 | **KPM Process** | `live-server/src/kpm/process.rs` | Done | `KpmState` singleton. Spawns `live-kpm.exe`, reads 12-byte binary batches via `live_kpm::read_batch()`. Stderr inherited. Always enabled. |
 | **KPM Route** | `live-server/src/kpm/routes.rs` | Done | `GET /kpm` → `{ kpm: number }`. Returns 404 if process not running. |
 | **Selector Config** | `live-server/src/selector/config.rs` | Done | `PresetConfig` with persistence to `data/selector-config.json`. Pattern parser: `[@mode] <exePath>[@<windowTitle>]`. `should_capture()` with exclude-veto semantics. Path separator normalization. Legacy format migration. 9 unit tests. |
-| **Selector Manager** | `live-server/src/selector/manager.rs` | Done | `SelectorState`. Polls foreground window every 2s via `enumerate_windows::get_foreground_window()` (direct library call). Replaces `"main"` stream on match. Pushes `$captureWindowTitle`, `$liveMode`, `$captureMode` computed strings. |
+| **Selector Manager** | `live-server/src/selector/manager.rs` | Done | `SelectorState`. Polls foreground window every 2s via `enumerate_windows::get_foreground_window()` (direct library call). Replaces `"main"` stream on match. Pushes `$captureInfo` (exe FileDescription, falls back to window title), `$liveMode`, `$captureMode` computed strings. |
 | **Selector Routes** | `live-server/src/selector/routes.rs` | Done | `GET/POST/DELETE /streams/auto`, `GET/PUT /streams/auto/config`, `PUT /streams/auto/config/preset`. |
 | **YTM Manager** | `live-server/src/ytm/manager.rs` | Done | `YtmState`. Polls `enumerate_windows()` every 5s, finds "YouTube Music" window. Creates/replaces `"youtube-music"` crop stream (bottom playback bar). Destroys on window disappearance. |
 | **String Store** | `live-server/src/strings/store.rs` | Done | `StringStore` with `HashMap<String, String>` (user) + `HashMap<String, String>` (computed, `$`-prefixed). Dual-layer persistence: `data/strings.json` (single-line) + `data/strings/<key>.md` (multiline). Strict mode: crash on corrupt JSON. |
@@ -574,7 +574,7 @@ Replaces the former TypeScript Hono server.  All server logic is now Rust.  Modu
 | **Stream Status** | `frontend/src/streams.ts` | Done | `useStreamStatus()` hook. Polls `GET /api/v1/streams` every 2s, returns `{ hasMain, hasYouTubeMusic }` booleans for UI visibility. |
 | **String Store Hook** | `frontend/src/strings.ts` | Done | `useStrings()` hook. Polls `GET /api/v1/strings` every 2s, returns `Record<string, string>` of all key-value pairs. |
 | **App** | `frontend/src/app.tsx` | Done | Pure viewer shell. JetBrains Islands dark theme. Hardcoded `streamId="main"` and `streamId="youtube-music"`. YouTube Music island shown/hidden via `useStreamStatus()`. Displays server-managed strings by well-known ID (e.g. `"marquee"` in scrolling top banner, `"message"` in sidebar). SidePanel hosts Clock, Mode, Capture, message area, and About widgets. No control buttons — all lifecycle is server-managed. |
-| **Widgets** | `frontend/src/widgets/index.tsx` | Done | All widgets in one file: `ClockWidget` (dual timezone), `LiveModeWidget` (`$liveMode`, small), `CaptureWidget` (capture mode + window title, large), `AboutWidget` (revision timestamp + credits, large). Shared `LiveWidget` base in `widgets/common.tsx`. |
+| **Widgets** | `frontend/src/widgets/index.tsx` | Done | All widgets in one file: `ClockWidget` (dual timezone), `LiveModeWidget` (`$liveMode`, small), `CaptureWidget` (capture mode + exe description, large), `AboutWidget` (revision timestamp + credits, large). Shared `LiveWidget` base in `widgets/common.tsx`. |
 | **Entry Point** | `frontend/index.tsx` | Done | React 19 `createRoot()` (migrated from Preact). |
 | **Vite Config** | `frontend/vite.config.ts` | Done | `@vitejs/plugin-react-swc` + `@tailwindcss/vite`, `root: "."`, `@` alias. Dev proxy: `/api/*` → `http://localhost:${LIVE_CORE_PORT}`. |
 

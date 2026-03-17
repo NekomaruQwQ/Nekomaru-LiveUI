@@ -75,18 +75,18 @@ export function LiveModeWidget({ strings }: { strings: Record<string, string> })
 // ── Capture ──────────────────────────────────────────────────────────────────
 
 /// Large widget showing the current capture target and mode (AUTO/LOCKED).
-/// Reads `$captureMode` and `$captureWindowTitle` computed strings.
+/// Reads `$captureMode` and `$captureInfo` computed strings.
 export function CaptureWidget({ strings }: { strings: Record<string, string> }) {
     const captureMode =
         strings.$captureMode?.toUpperCase() ?? "—";
-    const windowTitle =
-        strings.$captureWindowTitle ?? "";
+    const captureInfo =
+        strings.$captureInfo ?? "";
 
     return <LiveWidget
         name={`Capture Mode - ${captureMode}`}
         icon={<DynamicIcon name="monitor" size={36} />}>
         <span className="text-sm truncate">
-            {windowTitle && <> {windowTitle}</>}
+            {captureInfo && <> {captureInfo}</>}
         </span>
     </LiveWidget>;
 }
