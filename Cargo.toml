@@ -4,6 +4,7 @@ members = [
     "live-app",
     "live-audio",
     "live-kpm",
+    "live-server",
     "live-video",
     "crates/enumerate-windows",
 ]

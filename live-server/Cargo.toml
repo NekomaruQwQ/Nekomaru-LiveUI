@@ -1,0 +1,22 @@
+[package]
+name = "live-server"
+version = { workspace = true }
+edition = { workspace = true }
+
+[lints]
+workspace = true
+
+[dependencies]
+enumerate-windows = { workspace = true }
+live-video = { path = "../live-video" }
+live-audio = { path = "../live-audio" }
+
+axum = "0.8"
+base64 = { workspace = true }
+clap = { workspace = true, features = ["env"] }
+log = { workspace = true }
+pretty_env_logger = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["fs"] }
