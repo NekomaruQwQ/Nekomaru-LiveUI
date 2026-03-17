@@ -1,1 +1,3 @@
-// Audio capture pipeline — Phase 3.
+pub mod buffer;
+pub mod process;
+pub mod routes;

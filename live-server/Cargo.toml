@@ -12,6 +12,7 @@ live-video = { path = "../live-video" }
 live-audio = { path = "../live-audio" }
 
 axum = "0.8"
+flate2 = "1"
 base64 = { workspace = true }
 clap = { workspace = true, features = ["env"] }
 log = { workspace = true }

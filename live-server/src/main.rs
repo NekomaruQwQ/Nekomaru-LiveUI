@@ -10,6 +10,7 @@
 //! LIVE_CORE_PORT=3000 LIVE_PORT=5173 live-server
 //! ```
 
+mod audio;
 mod state;
 mod strings;
 mod video;
@@ -45,6 +46,19 @@ struct Cli {
     /// same directory as this binary (from `cargo build`).
     #[arg(long, default_value = "live-video")]
     video_exe: String,
+
+    /// Path to the `live-audio` executable.
+    #[arg(long, default_value = "live-audio")]
+    audio_exe: String,
+
+    /// WASAPI capture device name for audio.
+    #[arg(long, default_value = "Loopback L + R (Focusrite USB Audio)")]
+    audio_device: String,
+
+    /// Enable audio capture.  Off by default to avoid feedback loops
+    /// during localhost development.
+    #[arg(long, env = "LIVE_AUDIO")]
+    audio: bool,
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────
@@ -58,13 +72,22 @@ async fn main() {
 
     let cli = Cli::parse();
 
-    // Resolve video exe path: if relative, look next to this binary.
+    // Resolve exe paths: if relative, look next to this binary.
     let video_exe = resolve_sibling_exe(&cli.video_exe);
+    let audio_exe = resolve_sibling_exe(&cli.audio_exe);
     log::info!("video exe: {video_exe}");
+    log::info!("audio exe: {audio_exe}");
 
     let state = Arc::new(AppState::new(video_exe));
 
+    // Start audio capture if enabled.
+    if cli.audio {
+        let audio_arc = state.audio_arc();
+        state.audio_mut().await.start(&audio_exe, &cli.audio_device, &audio_arc);
+    }
+
     let app = Router::new()
+        .merge(audio::routes::router())
         .merge(strings::routes::router())
         .merge(video::routes::router())
         .merge(windows::router())

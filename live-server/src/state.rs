@@ -4,6 +4,7 @@
 //! extractor.  Each subsystem (video, audio, KPM, selector, strings) owns its
 //! state behind a `tokio::sync::RwLock` for concurrent read-heavy access.
 
+use crate::audio::process::AudioState;
 use crate::strings::store::StringStore;
 use crate::video::process::StreamRegistry;
 
@@ -17,6 +18,8 @@ pub struct AppState {
     /// Shared stream registry — `Arc` so child-process reader tasks can push
     /// frames back without holding a reference to the full `AppState`.
     streams_inner: Arc<RwLock<StreamRegistry>>,
+    /// Shared audio state — `Arc` so the reader task can push chunks.
+    audio_inner: Arc<RwLock<AudioState>>,
 }
 
 impl AppState {
@@ -24,6 +27,7 @@ impl AppState {
         Self {
             strings: RwLock::new(StringStore::new()),
             streams_inner: Arc::new(RwLock::new(StreamRegistry::new(video_exe_path))),
+            audio_inner: Arc::new(RwLock::new(AudioState::new())),
         }
     }
 
@@ -40,5 +44,20 @@ impl AppState {
     /// Get a cloneable `Arc` handle to the streams lock for child-process tasks.
     pub fn streams_arc(&self) -> Arc<RwLock<StreamRegistry>> {
         self.streams_inner.clone()
+    }
+
+    /// Acquire a read lock on the audio state.
+    pub async fn audio(&self) -> tokio::sync::RwLockReadGuard<'_, AudioState> {
+        self.audio_inner.read().await
+    }
+
+    /// Acquire a write lock on the audio state.
+    pub async fn audio_mut(&self) -> tokio::sync::RwLockWriteGuard<'_, AudioState> {
+        self.audio_inner.write().await
+    }
+
+    /// Get a cloneable `Arc` handle to the audio lock for reader tasks.
+    pub fn audio_arc(&self) -> Arc<RwLock<AudioState>> {
+        self.audio_inner.clone()
     }
 }
