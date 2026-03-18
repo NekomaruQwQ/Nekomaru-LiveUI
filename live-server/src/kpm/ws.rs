@@ -3,7 +3,7 @@
 //! `GET /api/v1/ws/kpm` — upgrades to a WebSocket that pushes JSON text
 //! messages `{"kpm": N}` whenever the KPM value changes.
 
-use crate::kpm::process::KpmState;
+use crate::kpm::hook::KpmState;
 use crate::state::AppState;
 
 use axum::Router;

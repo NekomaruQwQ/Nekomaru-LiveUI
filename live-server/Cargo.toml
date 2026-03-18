@@ -12,8 +12,8 @@ set-dpi-awareness = { workspace = true }
 job-object = { workspace = true }
 live-video = { workspace = true }
 live-audio = { workspace = true }
-live-kpm = { workspace = true }
 
+anyhow = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
 clap = { workspace = true, features = ["env"] }
@@ -24,3 +24,7 @@ serde_json = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true }
 win32-version-info = { workspace = true }
+windows = { workspace = true, features = [
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }

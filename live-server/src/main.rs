@@ -11,6 +11,7 @@
 //! ```
 
 mod constant;
+mod message_pump;
 mod state;
 mod vite_proxy;
 mod windows;
@@ -23,7 +24,7 @@ mod audio {
 }
 mod kpm {
     pub mod calculator;
-    pub mod process;
+    pub mod hook;
     pub mod ws;
 }
 
@@ -80,7 +81,7 @@ struct Cli {
     /// Enable audio capture (any non-zero number = on, 0 or unset = off).
     /// Off by default to avoid feedback loops during localhost development.
     #[arg(long, env = "LIVE_AUDIO")]
-    audio: Option<u64>,
+    audio: Option<u8>,
 
     /// WASAPI capture device name for audio.
     #[arg(long, default_value = "Loopback L + R (Focusrite USB Audio)")]
@@ -103,10 +104,8 @@ async fn main() {
     // Resolve exe paths: if relative, look next to this binary.
     let video_exe = resolve_sibling_exe("live-video.exe");
     let audio_exe = resolve_sibling_exe("live-audio.exe");
-    let kpm_exe = resolve_sibling_exe("live-kpm.exe");
     log::info!("video exe: {video_exe}");
     log::info!("audio exe: {audio_exe}");
-    log::info!("kpm exe: {kpm_exe}");
 
     // Job object: all child processes assigned to it are killed when the
     // server exits — even on crash or Task Manager kill.
@@ -126,10 +125,10 @@ async fn main() {
         state.audio_mut().await.start(&audio_exe, &cli.audio_device, &job, &audio_arc);
     }
 
-    // Start KPM capture (always enabled).
+    // Start KPM capture (always enabled, in-process keyboard hook).
     {
         let kpm_arc = state.kpm_arc();
-        state.kpm_mut().await.start(&kpm_exe, &job, &kpm_arc);
+        state.kpm_mut().await.start(&kpm_arc);
     }
 
     // Start auto-selector and YouTube Music manager.

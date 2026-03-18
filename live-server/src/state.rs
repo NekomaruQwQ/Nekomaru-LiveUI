@@ -4,7 +4,7 @@
 //! extractor.  Each subsystem owns its state behind a `tokio::sync::RwLock`.
 
 use crate::audio::process::AudioState;
-use crate::kpm::process::KpmState;
+use crate::kpm::hook::KpmState;
 use crate::selector::manager::SelectorState;
 use crate::strings::store::StringStore;
 use crate::video::process::StreamRegistry;
@@ -136,7 +136,7 @@ impl AppState {
             self.ytm.write().await.stop(&streams_arc).await;
         }
 
-        // 2. Stop audio and KPM capture processes.
+        // 2. Stop audio and KPM capture.
         self.audio.write().await.stop();
         self.kpm.write().await.stop();
 

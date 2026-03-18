@@ -60,14 +60,14 @@ The `app` and `youtube-music` recipes use a copy-and-run pattern (via `.mod.nu`)
 
 ### Multi-Executable Design
 
-The project is split into four independently running components, all in Rust.  The server (`live-server`) manages everything: HTTP API, process lifecycle, frame buffering, auto-selector, string store.  Capture processes are spawned as children and communicate via binary IPC over stdout pipes.
+The project is split into three independently running components, all in Rust.  The server (`live-server`) manages everything: HTTP API, process lifecycle, frame buffering, auto-selector, string store, and in-process KPM capture.  Video and audio capture processes are spawned as children and communicate via binary IPC over stdout pipes.
 
 ```mermaid
 graph TD
     subgraph server["live-server (Rust/Axum, primary process)"]
         procmgr["<b>Stream Registry</b><br/>Spawns/kills capture instances<br/>Well-known IDs: main, youtube-music<br/>Generation counter per stream"]
         audiomgr["<b>Audio Manager</b><br/>Opt-in via LIVE_AUDIO<br/>Binary parser → circular buffer"]
-        kpmmgr["<b>KPM Manager</b><br/>Always enabled<br/>Binary reader → 5s sliding window"]
+        kpmmgr["<b>KPM (in-process)</b><br/>Always enabled<br/>WH_KEYBOARD_LL on message pump thread<br/>AtomicU32 counter → 5s sliding window"]
         buffer["<b>Video Buffer</b><br/>Circular (60 frames/stream)<br/>SPS/PPS cache, keyframe gating"]
         selector["<b>Auto Selector + YTM</b><br/>Foreground polling → main stream<br/>YouTube Music → crop stream"]
         strings["<b>String Store</b><br/>Key-value + computed ($-prefix)<br/>Persisted to data/"]
@@ -77,16 +77,14 @@ graph TD
     subgraph children["Rust Child Processes (spawned by live-server)"]
         capture["<b>live-video.exe</b><br/>One instance per window<br/>WinRT Capture → GPU Resample/Crop<br/>→ BGRA→NV12 → NVENC H.264<br/>→ binary frames to stdout"]
         audio["<b>live-audio.exe</b><br/>Single instance<br/>WASAPI shared-mode capture<br/>→ f32→s16le → 10ms chunks<br/>→ binary audio to stdout"]
-        kpm["<b>live-kpm.exe</b><br/>Single instance<br/>WH_KEYBOARD_LL hook<br/>(privacy: no key identity)<br/>→ binary batches to stdout"]
     end
 
     subgraph frontend["Browser (connects to live-server) / live-app.exe"]
-        viewer["<b>Frontend</b> (React + WebCodecs)<br/>H264Decoder via WebSocket push<br/>AudioStream (PCM worklet) via WS<br/>KpmMeter (VU bar) via WS<br/>Strings via HTTP polling"]
+        viewer["<b>Frontend</b> (React + WebCodecs)<br/>H264Decoder via WebSocket push<br/>AudioStream (PCM worklet) via WS<br/>KpmMeter (VU bar) via WS<br/>Strings via WS push"]
     end
 
     capture -- "stdout (binary IPC)" --> procmgr
     audio -- "stdout (binary IPC)" --> audiomgr
-    kpm -- "stdout (12-byte binary)" --> kpmmgr
     procmgr --> buffer
     api -- "HTTP + WebSocket" --> viewer
 ```
@@ -97,7 +95,7 @@ graph TD
 |---------|----------|-----------|
 | GPU capture + encoding | Rust (`live-video`) | Requires `unsafe` Windows APIs, hardware access, zero-copy GPU pipelines. No alternative. |
 | Audio capture | Rust (`live-audio`) | WASAPI requires COM + `unsafe`. Same child-process-to-stdout model as video capture. |
-| Keystroke counting | Rust (`live-kpm`) | `WH_KEYBOARD_LL` requires Win32 message pump. Privacy-by-design: never reads key identity. Binary IPC to stdout. |
+| Keystroke counting | In-process (`live-server`) | `WH_KEYBOARD_LL` hook on a dedicated message pump thread. Privacy-by-design: never reads key identity. `AtomicU32` counter polled by a tokio timer — no IPC. Merged from former `live-kpm.exe` child process. |
 | HTTP server + stream management | Rust (`live-server`, Axum) | Reuses protocol types from lib crates directly (`live_video::read_message()`). No protocol duplication. Single process for all server logic. |
 | Webview host | Rust (`live-app`, optional) | Tiny wry wrapper for aspect-ratio-locked window. Could also just use a browser. |
 | IPC | Child process stdout | Zero config, natural lifetime (process death = stream death), trivially testable (`live-video > dump.bin`). |
@@ -113,7 +111,7 @@ The server was originally TypeScript (Hono on Bun).  It was rewritten in Rust fo
 
 3. **The "iterable" surface was small.**  The original rationale for TypeScript was "fast iteration on the server".  In practice, the string store, selector config, and persistence code changed rarely.  The real iteration happened in the React frontend (served by Vite regardless).
 
-4. **KPM simplification.**  With both ends in Rust, `live-kpm` switched from JSON lines to 12-byte fixed-size binary messages — no serde, no JSON parsing overhead.  The server reads `u64 + u32` directly.
+4. **KPM merged into server.**  KPM was originally a child process (`live-kpm.exe`) communicating via 12-byte binary IPC.  With the server in Rust, the `WH_KEYBOARD_LL` hook now runs in-process on a dedicated message pump thread, and a `static AtomicU32` counter replaces the IPC pipe entirely — zero serialization, zero process management overhead.
 
 5. **Window enumeration without process spawn.**  The TypeScript server shelled out to `live-video.exe --enumerate-windows` and `--foreground-window` for every poll.  The Rust server calls `enumerate_windows::enumerate_windows()` and `get_foreground_window()` as library functions — no child process, no JSON parse.
 
@@ -126,7 +124,8 @@ The server was originally TypeScript (Hono on Bun).  It was rewritten in Rust fo
 | Web framework | Axum (tower-based) | De facto standard Rust web framework (2025). No macro magic, native tokio integration, typed extractors. |
 | Async runtime | tokio (full features) | Required by Axum. Child process stdout is read on `spawn_blocking` threads. |
 | Logging | `pretty_env_logger` | Already in workspace. Simple and sufficient — nobody reads structured logs for a personal streaming tool. |
-| Capture processes | Kept as children (not embedded) | A crash in NVENC or WASAPI doesn't take down the server.  Capture binaries use blocking I/O on dedicated threads.  Pipe overhead is negligible (~0.1ms).  Stderr inherited — children log directly via `pretty_env_logger`; `live-video` uses `--stream-id` for multi-instance disambiguation. |
+| Video/audio capture | Kept as children (not embedded) | A crash in NVENC or WASAPI doesn't take down the server.  Capture binaries use blocking I/O on dedicated threads.  Pipe overhead is negligible (~0.1ms).  Stderr inherited — children log directly via `pretty_env_logger`; `live-video` uses `--stream-id` for multi-instance disambiguation. |
+| KPM capture | In-process (merged) | Small unsafe surface (hook install + callback).  Runs on a dedicated message pump `std::thread`, communicates via `AtomicU32` — no IPC, no serialization, no process management.  Crash isolation traded for simplicity (KPM code is stable and always-on). |
 | Buffer concurrency | `tokio::sync::RwLock<StreamRegistry>` | Read-heavy with brief writes.  `broadcast` channels notify WebSocket tasks of new frames/audio; `watch` channel notifies of KPM updates. |
 | Frontend transport | WebSocket push + HTTP polling | Video frames, audio chunks, and KPM are pushed over dedicated WebSocket connections (latency-critical).  Strings use HTTP polling at 2s (low-frequency, rarely changes).  HTTP endpoints also kept for CRUD, `/init`, and backward compatibility. |
 | Frontend API client | Plain `fetch()` + native `WebSocket` | No runtime dependencies.  `fetch()` for low-frequency HTTP; `WebSocket` with auto-reconnect for streaming data. |
@@ -284,25 +283,13 @@ Resample args (`--width`/`--height`) and crop args (`--crop-*`) conflict — you
 
 Logging goes to stderr via `pretty_env_logger` with colored output (auto-disabled when piped).  When `--stream-id <ID>` is set, all log lines include `@<ID>` in bold cyan for disambiguation when multiple instances share the server's inherited stderr (e.g. ` INFO @main live_video::encoder > message`).
 
-### KPM Protocol (`live-kpm.exe`)
+### KPM Capture (In-Process)
 
-`live-kpm` uses fixed-size 12-byte binary messages (both ends are Rust, so no JSON overhead needed).  The server reads batches via `live_kpm::read_batch()`.
+KPM capture runs inside `live-server` — no child process or IPC.
 
-```
-[u64 LE: timestamp_us]   — wall-clock timestamp (microseconds since Unix epoch)
-[u32 LE: count]           — number of keystrokes in this batch interval
-```
+A dedicated `std::thread` (the **message pump**) installs a `WH_KEYBOARD_LL` system-wide hook and runs the Win32 message loop.  The hook callback increments a `static AtomicU32` counter on every key-down event.  A tokio timer task polls the counter every 50ms, timestamps the batch, and feeds it into a 5-second sliding window calculator.
 
-No length prefix or envelope header needed — messages are fixed-size.  EOF signals process exit.
-
-**CLI:**
-
-```bash
-# Count keystrokes, batch every 50ms
-live-kpm.exe --batch-interval 50
-```
-
-`--batch-interval <ms>` is **required** (hard error if omitted). Logging goes to stderr via `pretty_env_logger`.
+The message pump is a reusable server primitive (`message_pump.rs`) — it accepts an `init` closure that runs on the pump thread (to install hooks) and returns a cleanup closure (to unhook).  The KPM-specific hook logic lives in `kpm/hook.rs`.
 
 **Privacy-by-design:** The `WH_KEYBOARD_LL` hook callback never inspects key identity (`vkCode`, `scanCode`, or any `KBDLLHOOKSTRUCT` field). Only the occurrence of `WM_KEYDOWN` / `WM_SYSKEYDOWN` events is counted.
 
@@ -509,13 +496,6 @@ Latency-critical data is pushed over dedicated WebSocket connections, eliminatin
 | **Audio Stream** | `frontend/src/audio/index.tsx` | Done | Invisible `<AudioStream>` component. Receives PCM chunks via `WS /ws/audio` (raw, no delta/gzip). Posts to worklet immediately — no A/V sync. Auto-reconnect with exponential backoff. Handles browser autoplay policy. Exits gracefully on 404 (audio disabled). |
 | **PCM Worklet** | `frontend/src/audio/worklet.ts` | Done | AudioWorklet processor with ring buffer (9600 frames = 200ms at 48kHz). Receives s16le via MessagePort, converts to f32, outputs at audio callback rate. Silence on underrun. |
 
-### Completed (`live-kpm` crate — `live-kpm/`)
-
-| Component | File | Status | Notes |
-|-----------|------|--------|-------|
-| **Binary Protocol (lib)** | `live-kpm/src/lib.rs` | Done | Fixed 12-byte binary protocol. `Batch` type with `t` (timestamp_us, u64 LE) and `c` (count, u32 LE). `write_batch()` / `read_batch()`. No envelope header — fixed message size. Round-trip tested. |
-| **CLI + Capture Loop** | `live-kpm/src/main.rs` | Done | `WH_KEYBOARD_LL` system-wide hook. Required `--batch-interval` arg. Main thread: Win32 message pump. Writer thread: timer loop, `AtomicU32` counter → 12-byte binary batches to stdout. Privacy-by-design: never reads `vkCode`/`scanCode`. Broken pipe → clean exit via `PostQuitMessage`. |
-
 ### Completed (Frontend KPM Module — `frontend/src/kpm/`)
 
 | Component | File | Status | Notes |
@@ -545,8 +525,9 @@ Replaces the former TypeScript Hono server.  All server logic is now Rust.  Modu
 | **Audio Process** | `live-server/src/audio/process.rs` | Done | `AudioState` singleton. Spawns `live-audio.exe`, reads stdout via `live_audio::read_message()`. `broadcast::Sender<()>` fires after each chunk push. Stderr inherited. Reset on process exit. |
 | **Audio Routes** | `live-server/src/audio/routes.rs` | Done | `GET /audio/init` (format params, 503/404). |
 | **Audio WebSocket** | `live-server/src/audio/ws.rs` | Done | `WS /ws/audio` — pushes raw PCM chunks (no delta encoding, no gzip). Same cursor protocol as video. |
+| **Message Pump** | `live-server/src/message_pump.rs` | Done | Reusable Win32 message pump on a dedicated `std::thread`. `start(init)` takes a closure that runs on the pump thread (for hook install) and returns a cleanup closure (for unhook). Shutdown via `PostThreadMessageW(WM_QUIT)`. Independent of tokio runtime. |
 | **KPM Calculator** | `live-server/src/kpm/calculator.rs` | Done | 5-second sliding window with `VecDeque`. Extrapolates to KPM. No peak tracking (frontend handles it). 5 unit tests. |
-| **KPM Process** | `live-server/src/kpm/process.rs` | Done | `KpmState` singleton. Spawns `live-kpm.exe`, reads 12-byte binary batches via `live_kpm::read_batch()`. `watch::Sender<Option<i64>>` updated after each batch — carries the rounded KPM value. Stderr inherited. Always enabled. |
+| **KPM Hook + State** | `live-server/src/kpm/hook.rs` | Done | In-process KPM capture (replaces former `live-kpm.exe` child process). `WH_KEYBOARD_LL` hook on the message pump thread increments a `static AtomicU32`. `KpmState` owns the pump + a tokio timer that polls the counter every 50ms and feeds the calculator. `watch::Sender<Option<i64>>` carries the rounded KPM value. Privacy-by-design: hook never reads key identity. |
 | **KPM WebSocket** | `live-server/src/kpm/ws.rs` | Done | `WS /ws/kpm` — pushes `{"kpm": N}` on every `watch` change. Sends current value immediately on connect. |
 | **Selector Config** | `live-server/src/selector/config.rs` | Done | `PresetConfig` with persistence to `data/selector-config.json`. Pattern parser: `[@mode] <exePath>[@<windowTitle>]`. `should_capture()` with exclude-veto semantics. Path separator normalization. Legacy format migration. 9 unit tests. |
 | **Selector Manager** | `live-server/src/selector/manager.rs` | Done | `SelectorState`. Polls foreground window every 2s via `enumerate_windows::get_foreground_window()` (direct library call). Replaces `"main"` stream on match. Pushes `$captureInfo` (exe FileDescription, falls back to window title), `$liveMode`, `$captureMode` computed strings. |
@@ -716,9 +697,10 @@ Nekomaru-LiveUI-v2/
 │       │   ├── process.rs           # AudioState, spawn live-audio, broadcast notify
 │       │   ├── routes.rs            # /api/v1/audio/init (HTTP)
 │       │   └── ws.rs                # WS /api/v1/ws/audio (binary chunk push, raw PCM)
-│       ├── kpm/                     # KPM pipeline
+│       ├── message_pump.rs           # Reusable Win32 message pump (dedicated OS thread)
+│       ├── kpm/                     # KPM pipeline (in-process, no child process)
 │       │   ├── calculator.rs        # Sliding window KPM calculator (5s window)
-│       │   ├── process.rs           # KpmState, spawn live-kpm, watch notify
+│       │   ├── hook.rs              # WH_KEYBOARD_LL hook + KpmState (pump + timer lifecycle)
 │       │   └── ws.rs                # WS /api/v1/ws/kpm (JSON text push)
 │       ├── selector/                # Auto window selector
 │       │   ├── config.rs            # Preset parsing, pattern matching, persistence
@@ -744,12 +726,6 @@ Nekomaru-LiveUI-v2/
 │   └── src/
 │       ├── lib.rs                   # Audio IPC protocol (reused by live-server)
 │       └── main.rs                  # WASAPI capture, f32→s16le, 10ms chunks → stdout
-│
-├── live-kpm/                        # live-kpm.exe + live_kpm lib
-│   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs                   # Binary IPC protocol (12-byte fixed messages)
-│       └── main.rs                  # WH_KEYBOARD_LL hook, message pump, binary batch writer
 │
 ├── live-app/                        # Webview host (wry)
 │   ├── Cargo.toml
