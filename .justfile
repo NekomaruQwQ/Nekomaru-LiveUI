@@ -1,6 +1,6 @@
 set shell := ["nu", "-c"]
 
-base_url := "http://localhost:($env.LIVE_CORE_PORT)"
+base_url := "http://localhost:($env.LIVE_PORT)"
 
 alias i := install
 

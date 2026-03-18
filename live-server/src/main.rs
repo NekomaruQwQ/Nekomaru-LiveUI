@@ -7,7 +7,7 @@
 //! ## Usage
 //!
 //! ```text
-//! LIVE_CORE_PORT=3000 LIVE_VITE_PORT=5173 live-server
+//! LIVE_PORT=3000 LIVE_VITE_PORT=5173 live-server
 //! ```
 
 mod constant;
@@ -67,10 +67,10 @@ use std::sync::Arc;
 #[derive(Parser)]
 #[command(name = "live-server")]
 struct Cli {
-    /// HTTP server port.  Required — reads from LIVE_CORE_PORT env if not
+    /// HTTP server port.  Required — reads from LIVE_PORT env if not
     /// passed as a flag.
-    #[arg(long, env = "LIVE_CORE_PORT")]
-    core_port: u16,
+    #[arg(long, env = "LIVE_PORT")]
+    port: u16,
 
     /// Vite dev server port.  When set, spawns `bunx vite` as a child process
     /// and proxies non-API requests to it for dev assets / HMR.
@@ -158,7 +158,7 @@ async fn main() {
         app = app.fallback(vite_proxy::fallback(vp));
     }
 
-    let addr = format!("0.0.0.0:{}", cli.core_port);
+    let addr = format!("0.0.0.0:{}", cli.port);
     log::info!("listening on {addr}");
 
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -167,7 +167,7 @@ async fn main() {
 
     // Spawn Vite dev server as a child process if LIVE_VITE_PORT is set.
     let mut vite_child = cli.vite_port
-        .and_then(|vp| spawn_vite(vp, cli.core_port, &job));
+        .and_then(|vp| spawn_vite(vp, cli.port, &job));
 
     // Serve until Ctrl+C.
     axum::serve(listener, app)

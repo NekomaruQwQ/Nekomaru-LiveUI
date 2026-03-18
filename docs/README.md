@@ -32,8 +32,8 @@ just install
 # Start the server — auto-starts selector, YTM manager, KPM.
 # Spawns Vite dev server as a child process for frontend HMR.
 # Audio capture is off by default to avoid feedback loops on localhost.
-LIVE_CORE_PORT=3000 LIVE_VITE_PORT=5173 just server
-# Or with audio: LIVE_AUDIO=1 LIVE_CORE_PORT=3000 LIVE_VITE_PORT=5173 just server
+LIVE_PORT=3000 LIVE_VITE_PORT=5173 just server
+# Or with audio: LIVE_AUDIO=1 LIVE_PORT=3000 LIVE_VITE_PORT=5173 just server
 
 # Open the frontend — the core server is the entry point.
 # It proxies non-API requests to Vite for dev assets.
@@ -131,8 +131,8 @@ The server was originally TypeScript (Hono on Bun).  It was rewritten in Rust fo
 | Frontend transport | WebSocket push + HTTP polling | Video frames, audio chunks, and KPM are pushed over dedicated WebSocket connections (latency-critical).  Strings use HTTP polling at 2s (low-frequency, rarely changes).  HTTP endpoints also kept for CRUD, `/init`, and backward compatibility. |
 | Frontend API client | Plain `fetch()` + native `WebSocket` | No runtime dependencies.  `fetch()` for low-frequency HTTP; `WebSocket` with auto-reconnect for streaming data. |
 | Frame format (server→browser) | AVCC (server pre-serialized) | The server converts Annex B → AVCC at frame-push time (strip start codes, add 4-byte BE length prefix per NAL).  The frontend feeds AVCC payloads directly to `EncodedVideoChunk` with zero H.264 format knowledge — no parsing, no start code stripping, no AVCC assembly.  Codec string and avcC descriptor are also built server-side and served via `/init`. |
-| Vite integration | Spawned as child, reverse-proxied by core server | The core server is the single entry point — the browser connects to `LIVE_CORE_PORT`.  Non-API requests are reverse-proxied to Vite via `reqwest`.  HMR WebSocket connects directly to Vite (`hmr.clientPort`).  No Vite-side proxy config needed. |
-| Port configuration | `LIVE_CORE_PORT` (server, browser entry) + `LIVE_VITE_PORT` (Vite dev, internal) | No default ports — avoids conflicts. `LIVE_VITE_PORT` is optional (omit for production). |
+| Vite integration | Spawned as child, reverse-proxied by core server | The core server is the single entry point — the browser connects to `LIVE_PORT`.  Non-API requests are reverse-proxied to Vite via `reqwest`.  HMR WebSocket connects directly to Vite (`hmr.clientPort`).  No Vite-side proxy config needed. |
+| Port configuration | `LIVE_PORT` (server, browser entry) + `LIVE_VITE_PORT` (Vite dev, internal) | No default ports — avoids conflicts. `LIVE_VITE_PORT` is optional (omit for production). |
 | Webview launch | Copy-and-run via `.mod.nu` | `just app` / `just youtube-music` build `live-app`, copy as `live-app.<id>.exe`, then run the copy.  Each instance gets its own binary, so `cargo build` (server restart) doesn't hit file locks.  Instance IDs allow frontend and YTM webviews to run simultaneously. |
 
 ### Why Not a Monolith?
@@ -305,7 +305,7 @@ live-kpm.exe --batch-interval 50
 
 ## HTTP API
 
-Served by `live-server` (Rust/Axum).  Port is configured via `LIVE_CORE_PORT` environment variable (required, no default).  All endpoints are prefixed with `/api/v1`.
+Served by `live-server` (Rust/Axum).  Port is configured via `LIVE_PORT` environment variable (required, no default).  All endpoints are prefixed with `/api/v1`.
 
 ### Stream Management
 

@@ -25,7 +25,7 @@ export default vite.defineConfig({
         host: true,
         allowedHosts: true,
 
-        // The browser loads the page from the core server (LIVE_CORE_PORT), not Vite.
+        // The browser loads the page from the core server (LIVE_PORT), not Vite.
         // The core server proxies non-API requests to Vite for dev assets.
         // HMR client must connect directly to Vite — no proxy needed for dev-only traffic.
         hmr: { clientPort: vitePort },
