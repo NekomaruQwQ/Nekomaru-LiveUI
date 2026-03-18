@@ -99,7 +99,7 @@ impl SelectorState {
     }
 
     /// Stop polling and destroy the managed stream.
-    pub fn stop(
+    pub async fn stop(
         &mut self,
         streams_arc: &Arc<RwLock<StreamRegistry>>,
         strings_arc: &Arc<RwLock<StringStore>>,
@@ -114,16 +114,14 @@ impl SelectorState {
         self.last_capture_hwnd = None;
         self.last_capture_title = None;
 
-        // Destroy the managed stream.
-        let streams = Arc::clone(streams_arc);
-        let strings = Arc::clone(strings_arc);
-        tokio::spawn(async move {
-            streams.write().await.destroy_stream(STREAM_ID_MAIN);
-            let mut s = strings.write().await;
+        // Destroy the managed stream and clear computed strings.
+        streams_arc.write().await.destroy_stream(STREAM_ID_MAIN);
+        {
+            let mut s = strings_arc.write().await;
             s.clear_computed(CSID_CAPTURE_INFO);
             s.clear_computed(CSID_CAPTURE_MODE);
             s.clear_computed(CSID_LIVE_MODE);
-        });
+        }
 
         log::info!("stopped");
     }
@@ -184,9 +182,6 @@ async fn poll_once(
 
     let exe_path = info.executable_path.to_string_lossy().to_string();
     let Some(capture_match) = should_capture(&patterns, &exe_path, &info.title) else { return };
-
-    // Already capturing this window.
-    if selector.last_capture_hwnd.as_deref() == Some(&hwnd_str) { return; }
 
     // Switch capture.
     {

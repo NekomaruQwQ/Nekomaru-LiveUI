@@ -26,26 +26,27 @@ impl YtmState {
         Self { active: false, last_known_hwnd: None, poll_handle: None }
     }
 
-    pub fn start(&mut self, streams_arc: &Arc<RwLock<StreamRegistry>>) {
+    pub fn start(
+        &mut self,
+        ytm_arc: &Arc<RwLock<Self>>,
+        streams_arc: &Arc<RwLock<StreamRegistry>>,
+    ) {
         if self.active { return; }
         self.active = true;
 
+        let ytm = Arc::clone(ytm_arc);
         let streams = Arc::clone(streams_arc);
-
-        // Shared hwnd state between poll iterations.
-        let last_hwnd: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
-        let last_hwnd_clone = last_hwnd;
 
         self.poll_handle = Some(tokio::spawn(async move {
             // Immediate first poll.
-            poll_once(&streams, &last_hwnd_clone).await;
+            poll_once(&ytm, &streams).await;
 
             let mut interval = tokio::time::interval(
                 std::time::Duration::from_millis(YTM_POLL_INTERVAL_MS));
 
             loop {
                 interval.tick().await;
-                poll_once(&streams, &last_hwnd_clone).await;
+                poll_once(&ytm, &streams).await;
             }
         }));
 
@@ -53,7 +54,7 @@ impl YtmState {
     }
 
     /// Stop polling and destroy the managed YouTube Music stream.
-    pub fn stop(&mut self, streams_arc: &Arc<RwLock<StreamRegistry>>) {
+    pub async fn stop(&mut self, streams_arc: &Arc<RwLock<StreamRegistry>>) {
         if !self.active { return; }
 
         if let Some(handle) = self.poll_handle.take() {
@@ -63,10 +64,7 @@ impl YtmState {
         self.active = false;
         self.last_known_hwnd = None;
 
-        let streams = Arc::clone(streams_arc);
-        tokio::spawn(async move {
-            streams.write().await.destroy_stream(STREAM_ID_YTM);
-        });
+        streams_arc.write().await.destroy_stream(STREAM_ID_YTM);
 
         log::info!("stopped");
     }
@@ -83,8 +81,8 @@ impl Drop for YtmState {
 // ── Poll Logic ───────────────────────────────────────────────────────────────
 
 async fn poll_once(
+    ytm_arc: &Arc<RwLock<YtmState>>,
     streams_arc: &Arc<RwLock<StreamRegistry>>,
-    last_hwnd: &Arc<RwLock<Option<String>>>,
 ) {
     let windows = tokio::task::spawn_blocking(enumerate_windows::enumerate_windows)
         .await
@@ -95,9 +93,10 @@ async fn poll_once(
     if let Some(ytm) = ytm {
         let hwnd_str = format!("0x{:X}", ytm.hwnd);
 
-        let current = last_hwnd.read().await;
-        if current.as_deref() == Some(&hwnd_str) { return; }
-        drop(current);
+        {
+            let state = ytm_arc.read().await;
+            if state.last_known_hwnd.as_deref() == Some(&hwnd_str) { return; }
+        }
 
         log::info!("window detected: {hwnd_str} ({}x{})", ytm.width, ytm.height);
 
@@ -110,13 +109,12 @@ async fn poll_once(
                 STREAM_ID_YTM, &hwnd_str, &crop, Some(2), streams_arc);
         }
 
-        *last_hwnd.write().await = Some(hwnd_str);
+        ytm_arc.write().await.last_known_hwnd = Some(hwnd_str);
     } else {
-        let current = last_hwnd.read().await;
-        if current.is_some() {
-            drop(current);
+        let has_hwnd = ytm_arc.read().await.last_known_hwnd.is_some();
+        if has_hwnd {
             streams_arc.write().await.destroy_stream(STREAM_ID_YTM);
-            *last_hwnd.write().await = None;
+            ytm_arc.write().await.last_known_hwnd = None;
             log::info!("window disappeared, stream destroyed");
         }
     }

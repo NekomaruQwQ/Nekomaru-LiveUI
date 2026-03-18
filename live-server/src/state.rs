@@ -112,7 +112,6 @@ impl AppState {
         self.ytm.write().await
     }
 
-    #[expect(dead_code, reason = "API completeness — no YTM routes yet")]
     pub fn ytm_arc(&self) -> Arc<RwLock<YtmState>> {
         Arc::clone(&self.ytm)
     }
@@ -130,11 +129,11 @@ impl AppState {
         {
             let streams_arc = self.streams_arc();
             let strings_arc = self.strings_arc();
-            self.selector.write().await.stop(&streams_arc, &strings_arc);
+            self.selector.write().await.stop(&streams_arc, &strings_arc).await;
         }
         {
             let streams_arc = self.streams_arc();
-            self.ytm.write().await.stop(&streams_arc);
+            self.ytm.write().await.stop(&streams_arc).await;
         }
 
         // 2. Stop audio and KPM capture processes.

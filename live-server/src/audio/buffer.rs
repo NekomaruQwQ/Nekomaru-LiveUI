@@ -39,7 +39,7 @@ impl AudioBuffer {
         }
     }
 
-    pub const fn set_audio_params(&mut self, params: AudioParams) {
+    pub fn set_audio_params(&mut self, params: AudioParams) {
         self.audio_params = Some(params);
     }
 

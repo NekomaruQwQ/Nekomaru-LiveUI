@@ -113,10 +113,13 @@ async fn handle_video_ws(
         }
     }
 
-    // Send an initial catch-up batch.
+    // Send an initial catch-up batch and seed `current_gen` from the stream's
+    // actual generation (avoids a spurious gen-change on the first notification).
+    let mut current_gen: u32;
     {
         let registry = streams.read().await;
-        if let Some((buf, _, new_seq)) = serialize_frames(&registry, &id, last_seq) {
+        if let Some((buf, generation, new_seq)) = serialize_frames(&registry, &id, last_seq) {
+            current_gen = generation;
             if !buf.is_empty() {
                 last_seq = new_seq;
                 drop(registry);
@@ -128,10 +131,6 @@ async fn handle_video_ws(
             return;
         }
     }
-
-    // Track the current generation so we can reset the cursor when the
-    // capture process is replaced (buffer sequences restart at 1).
-    let mut current_gen: u32 = 0;
 
     // Main push loop: wait for notification, read buffer, send frames.
     loop {

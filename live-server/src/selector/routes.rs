@@ -47,7 +47,7 @@ async fn stop_selector(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     let mut sel = state.selector_mut().await;
     let streams_arc = state.streams_arc();
     let strings_arc = state.strings_arc();
-    sel.stop(&streams_arc, &strings_arc);
+    sel.stop(&streams_arc, &strings_arc).await;
     drop(sel);
     Json(serde_json::json!({ "ok": true }))
 }

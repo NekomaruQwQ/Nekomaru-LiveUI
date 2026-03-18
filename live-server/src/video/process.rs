@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::io::BufReader;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use job_object::JobObject;
 use tokio::sync::{broadcast, RwLock};
@@ -376,9 +377,11 @@ fn spawn_and_wire(
     (child, reader_handle)
 }
 
-/// Generate a short random ID (8 hex chars).
+/// Monotonic counter for generating unique stream IDs.
+static STREAM_COUNTER: AtomicU32 = AtomicU32::new(1);
+
+/// Generate a unique stream ID via atomic counter.
 fn short_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-    format!("{:08x}", t.as_nanos() as u32)
+    let n = STREAM_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("s-{n:08x}")
 }

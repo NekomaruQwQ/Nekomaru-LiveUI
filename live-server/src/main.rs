@@ -135,8 +135,9 @@ async fn main() {
         state.selector_mut().await.start(&selector_arc, &streams_arc, &strings_arc);
     }
     {
+        let ytm_arc = state.ytm_arc();
         let streams_arc = state.streams_arc();
-        state.ytm_mut().await.start(&streams_arc);
+        state.ytm_mut().await.start(&ytm_arc, &streams_arc);
     }
 
     let mut app = Router::new()
