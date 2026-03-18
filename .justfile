@@ -8,7 +8,7 @@ list:
     just --list
 push bookmark revision="@-":
     jj bookmark move {{bookmark}} --to={{revision}}
-    jj git push
+    jj git push --all
 pull:
     jj git fetch
     jj git new -r main
@@ -26,9 +26,13 @@ server *args:
     cargo run --release -p live-server -- {{args}}
 app *args:
     use .mod.nu run-app; \
-    run-app app \
-        -x 1280 -y 720 $"{{base_url}}" {{args}}
+    run-app app $"{{base_url}}" \
+        -x 1280 -y 720 \
+        -t "Nekomaru LiveUI v2" \
+        {{args}}
 youtube-music *args:
     use .mod.nu run-app; \
-    run-app youtube-music \
-        -x 1280 -y 720 -s 2 -t "YouTube Music" "https://music.youtube.com/" {{args}}
+    run-app youtube-music "https://music.youtube.com/" \
+        -x 1280 -y 720 -s 2 \
+        -t "YouTube Music - Nekomaru LiveUI v2" \
+        {{args}}

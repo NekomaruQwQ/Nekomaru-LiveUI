@@ -16,7 +16,7 @@ edition = "2024"
 
 [workspace.dependencies.nkcore]
 git = "git://nekomaru-ubuntu/Nekomaru-Rust.git"
-rev = "8e9853c8"
+branch = "main"
 
 [workspace.dependencies.ngd3dcompile]
 git = "git://nekomaru-ubuntu/Nekomaru-Graphics-2025.git"
@@ -25,7 +25,7 @@ package = "ngd3dcompile_macro"
 
 [workspace.dependencies.winrt-capture]
 git = "git://nekomaru-ubuntu/Nekomaru-Rust.git"
-rev = "8e9853c8"
+branch = "main"
 
 [workspace.dependencies]
 enumerate-windows = { path = "crates/enumerate-windows" }

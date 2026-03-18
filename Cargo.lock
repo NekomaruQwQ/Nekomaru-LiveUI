@@ -1421,7 +1421,7 @@ dependencies = [
 [[package]]
 name = "nkcore"
 version = "0.1.0"
-source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=8e9853c8#8e9853c8d611b8578114130280e232fea9765a93"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?branch=main#d9a27c28d24987cd8bfe75b082666855a0079aa2"
 dependencies = [
  "nkcore-base",
  "nkcore-debug",
@@ -1431,17 +1431,18 @@ dependencies = [
 [[package]]
 name = "nkcore-base"
 version = "0.1.0"
-source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=8e9853c8#8e9853c8d611b8578114130280e232fea9765a93"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?branch=main#d9a27c28d24987cd8bfe75b082666855a0079aa2"
 dependencies = [
  "anyhow",
  "euclid",
  "log",
+ "tap",
 ]
 
 [[package]]
 name = "nkcore-debug"
 version = "0.1.0"
-source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=8e9853c8#8e9853c8d611b8578114130280e232fea9765a93"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?branch=main#d9a27c28d24987cd8bfe75b082666855a0079aa2"
 dependencies = [
  "anyhow",
  "nkcore-debug-macros",
@@ -1451,7 +1452,7 @@ dependencies = [
 [[package]]
 name = "nkcore-debug-macros"
 version = "0.1.0"
-source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=8e9853c8#8e9853c8d611b8578114130280e232fea9765a93"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?branch=main#d9a27c28d24987cd8bfe75b082666855a0079aa2"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -1463,7 +1464,7 @@ dependencies = [
 [[package]]
 name = "nkcore-windows"
 version = "0.1.0"
-source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=8e9853c8#8e9853c8d611b8578114130280e232fea9765a93"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?branch=main#d9a27c28d24987cd8bfe75b082666855a0079aa2"
 dependencies = [
  "pretty_env_logger",
  "raw-window-handle",
@@ -3457,7 +3458,7 @@ dependencies = [
 [[package]]
 name = "winrt-capture"
 version = "0.1.0"
-source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?rev=8e9853c8#8e9853c8d611b8578114130280e232fea9765a93"
+source = "git+git://nekomaru-ubuntu/Nekomaru-Rust.git?branch=main#d9a27c28d24987cd8bfe75b082666855a0079aa2"
 dependencies = [
  "nkcore",
  "windows 0.62.2",
