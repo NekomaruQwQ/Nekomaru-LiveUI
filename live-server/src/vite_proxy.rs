@@ -1,9 +1,9 @@
 //! Reverse proxy to the Vite dev server.
 //!
-//! Active only in dev mode (`LIVE_VITE_PORT` set).  Forwards any request that
-//! doesn't match an API or WebSocket route to `http://localhost:LIVE_VITE_PORT`,
-//! so the browser loads frontend assets (HTML, JS, CSS, source maps,
-//! `/@vite/client`, etc.) from the core server's port.
+//! Forwards any request that doesn't match an API or WebSocket route to
+//! `http://localhost:LIVE_VITE_PORT`, so the browser loads frontend assets
+//! (HTML, JS, CSS, source maps, `/@vite/client`, etc.) from the core
+//! server's port.
 //!
 //! HMR WebSocket traffic is NOT proxied — Vite's `server.hmr.clientPort`
 //! tells the HMR client to connect directly to Vite.

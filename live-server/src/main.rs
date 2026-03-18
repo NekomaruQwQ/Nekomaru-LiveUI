@@ -72,10 +72,10 @@ struct Cli {
     #[arg(long, env = "LIVE_PORT")]
     port: u16,
 
-    /// Vite dev server port.  When set, spawns `bunx vite` as a child process
+    /// Vite dev server port.  Required — spawns `bunx vite` as a child process
     /// and proxies non-API requests to it for dev assets / HMR.
     #[arg(long, env = "LIVE_VITE_PORT")]
-    vite_port: Option<u16>,
+    vite_port: u16,
 
     /// Enable audio capture.  Off by default to avoid feedback loops
     /// during localhost development.
@@ -159,10 +159,8 @@ async fn main() {
         .merge(video::ws::router())
         .with_state(Arc::clone(&state));
 
-    // Fallback: dev → proxy to Vite, prod → serve dist/.
-    if let Some(vp) = cli.vite_port {
-        app = app.fallback(vite_proxy::fallback(vp));
-    }
+    // Fallback: proxy non-API requests to Vite for frontend assets.
+    app = app.fallback(vite_proxy::fallback(cli.vite_port));
 
     let addr = format!("0.0.0.0:{}", cli.port);
     log::info!("listening on {addr}");
@@ -171,9 +169,8 @@ async fn main() {
         .await
         .expect("failed to bind");
 
-    // Spawn Vite dev server as a child process if LIVE_VITE_PORT is set.
-    let mut vite_child = cli.vite_port
-        .and_then(|vp| spawn_vite(vp, cli.port, &job));
+    // Spawn Vite dev server as a child process.
+    let mut vite_child = spawn_vite(cli.vite_port, cli.port, &job);
 
     // Serve until Ctrl+C.
     axum::serve(listener, app)
