@@ -6,14 +6,16 @@
 //!
 //! ## Privacy-by-Design
 //!
-//! The hook callback **never** inspects key identity — no `vkCode`, `scanCode`,
-//! or `KBDLLHOOKSTRUCT` fields are read.  Only the *occurrence* of a key-down
-//! event is counted.
+//! The hook callback reads `vkCode` **only** to maintain a pressed/released
+//! bitset for auto-repeat suppression.  The key code is used as a transient
+//! index and is never logged, stored, or transmitted — making it structurally
+//! impossible for this process to act as a keylogger.
 
 use crate::constant::{KPM_BATCH_INTERVAL_MS, KPM_WINDOW_DURATION_MS};
 use crate::kpm::calculator::KpmCalculator;
 use crate::message_pump::MessagePump;
 
+use std::cell::Cell;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -28,6 +30,36 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 /// Keystroke counter shared between the hook callback (pump thread) and the
 /// timer task (tokio runtime).  The hook increments; the timer reads + resets.
 static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+thread_local! {
+    /// Bitset tracking which virtual key codes (0–255) are currently held down.
+    /// Used by the hook callback to suppress auto-repeat events — only the
+    /// initial key-down is counted.  Accessed exclusively on the pump thread.
+    static PRESSED_KEYS: Cell<[u64; 4]> = const { Cell::new([0u64; 4]) };
+}
+
+/// Mark a virtual key code as pressed.  Returns `true` if this is a new press
+/// (was not already held), `false` if it was already down (auto-repeat).
+fn mark_pressed(vk: usize) -> bool {
+    PRESSED_KEYS.with(|keys| {
+        let mut bits = keys.get();
+        let (word, bit) = (vk / 64, vk % 64);
+        let was_pressed = bits[word] & (1u64 << bit) != 0;
+        bits[word] |= 1u64 << bit;
+        keys.set(bits);
+        !was_pressed
+    })
+}
+
+/// Mark a virtual key code as released.
+fn mark_released(vk: usize) {
+    PRESSED_KEYS.with(|keys| {
+        let mut bits = keys.get();
+        let (word, bit) = (vk / 64, vk % 64);
+        bits[word] &= !(1u64 << bit);
+        keys.set(bits);
+    })
+}
 
 /// Install the low-level keyboard hook on the current thread.
 ///
@@ -64,11 +96,9 @@ pub fn take_keystroke_count() -> u32 {
 ///
 /// # Privacy-by-design
 ///
-/// This function **deliberately ignores all key identity fields** (`vkCode`,
-/// `scanCode`, `flags`) in the `KBDLLHOOKSTRUCT` pointed to by `lparam`.
-/// Only the event type (`wparam`) is inspected to distinguish key-down from
-/// key-up events.  This makes it structurally impossible for this process to
-/// act as a keylogger.
+/// This function reads `vkCode` solely to index a pressed/released bitset for
+/// auto-repeat suppression.  The key code is used as a transient array index
+/// and is never logged, stored, or transmitted.
 ///
 /// # Safety
 ///
@@ -81,14 +111,23 @@ unsafe extern "system" fn keyboard_hook_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     if ncode >= 0 {
-        // Count both regular and system key-downs (Alt+key combos).
-        // WM_KEYDOWN fires on initial press AND auto-repeat — we count both
-        // because holding a key IS typing activity for KPM purposes.
-        let is_keydown = wparam.0 == WM_KEYDOWN as usize
-            || wparam.0 == WM_SYSKEYDOWN as usize;
+        // SAFETY: `lparam` points to a valid `KBDLLHOOKSTRUCT` per the
+        // `WH_KEYBOARD_LL` contract.
+        let info = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
+        let vk = info.vkCode as usize;
 
-        if is_keydown {
-            COUNTER.fetch_add(1, Ordering::Relaxed);
+        if vk < 256 {
+            let is_keydown = wparam.0 == WM_KEYDOWN as usize
+                || wparam.0 == WM_SYSKEYDOWN as usize;
+            let is_keyup = wparam.0 == WM_KEYUP as usize
+                || wparam.0 == WM_SYSKEYUP as usize;
+
+            if is_keydown && mark_pressed(vk) {
+                // Initial press only — auto-repeats are suppressed.
+                COUNTER.fetch_add(1, Ordering::Relaxed);
+            } else if is_keyup {
+                mark_released(vk);
+            }
         }
     }
 
