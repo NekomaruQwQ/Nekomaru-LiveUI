@@ -6,9 +6,11 @@
  */
 
 import { Hono } from "hono";
-import { loadJson, saveJson, ensureDataDir } from "./persist";
+import { loadJson, saveJson, ensureDataDir, DATA_DIR } from "./persist";
 
-const CONFIG_PATH = "data/selector-config.json";
+import * as path from "node:path";
+
+const CONFIG_PATH = path.join(DATA_DIR, "selector-config.json");
 
 // ── Types ───────────────────────────────────────────────────────────────────
 

@@ -11,14 +11,14 @@
  */
 
 import { Hono } from "hono";
-import { loadJson, saveJson, ensureDataDir } from "./persist";
+import { loadJson, saveJson, ensureDataDir, DATA_DIR } from "./persist";
 
-import { mkdir, readFile, writeFile, unlink } from "node:fs/promises";
+import * as fs from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import * as path from "node:path";
 
-const STRINGS_FILE  = "data/strings.json";
-const STRINGS_DIR   = "data/strings";
+const STRINGS_FILE  = path.join(DATA_DIR, "strings.json");
+const STRINGS_DIR   = path.join(DATA_DIR, "strings");
 
 // ── State ───────────────────────────────────────────────────────────────────
 
@@ -53,16 +53,13 @@ export async function loadStrings(): Promise<void> {
     store = await loadJson(STRINGS_FILE, {});
 
     // Load multiline .md files.
-    await mkdir(STRINGS_DIR, { recursive: true });
-    const dir = Bun.file(STRINGS_DIR);
-    // Scan for .md files.
-    const { readdir } = await import("node:fs/promises");
+    await fs.mkdir(STRINGS_DIR, { recursive: true });
     try {
-        const files = await readdir(STRINGS_DIR);
+        const files = await fs.readdir(STRINGS_DIR);
         for (const file of files) {
             if (!file.endsWith(".md")) continue;
             const key = file.slice(0, -3);
-            const content = await readFile(join(STRINGS_DIR, file), "utf-8");
+            const content = await fs.readFile(path.join(STRINGS_DIR, file), "utf-8");
             store[key] = content;
         }
     } catch {
@@ -101,8 +98,8 @@ app.put("/:key", async (c) => {
 
     // Persist: multiline → .md file, single-line → JSON.
     if (value.includes("\n")) {
-        await mkdir(STRINGS_DIR, { recursive: true });
-        await writeFile(join(STRINGS_DIR, `${key}.md`), value);
+        await fs.mkdir(STRINGS_DIR, { recursive: true });
+        await fs.writeFile(path.join(STRINGS_DIR, `${key}.md`), value);
         // Remove from JSON if it was there.
         const json = await loadJson<Record<string, string>>(STRINGS_FILE, {});
         delete json[key];
@@ -110,8 +107,8 @@ app.put("/:key", async (c) => {
     } else {
         await persistSingleLine();
         // Remove .md file if it was multiline before.
-        const mdPath = join(STRINGS_DIR, `${key}.md`);
-        if (existsSync(mdPath)) await unlink(mdPath);
+        const mdPath = path.join(STRINGS_DIR, `${key}.md`);
+        if (existsSync(mdPath)) await fs.unlink(mdPath);
     }
 
     return c.json({ ok: true });
@@ -126,8 +123,8 @@ app.delete("/:key", async (c) => {
     await persistSingleLine();
 
     // Remove .md file if it exists.
-    const mdPath = join(STRINGS_DIR, `${key}.md`);
-    if (existsSync(mdPath)) await unlink(mdPath);
+    const mdPath = path.join(STRINGS_DIR, `${key}.md`);
+    if (existsSync(mdPath)) await fs.unlink(mdPath);
 
     return c.json({ ok: true });
 });
