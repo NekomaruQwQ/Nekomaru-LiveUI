@@ -9,10 +9,9 @@ import { H264Decoder } from "./decoder";
  * Video renderer for a well-known stream ID ("main" or "youtube-music").
  *
  * The stream loop owns the full decoder lifecycle: it creates a decoder,
- * fetches frames, and — when it detects a generation change — closes the
- * old decoder and creates a new one.  This lets the server replace the
- * underlying capture process (e.g. on window switch) without the component
- * remounting.
+ * receives `live-protocol` framed messages via WebSocket, and decodes frames.
+ * The server relays binary messages from the capture worker — each WS message
+ * is a complete `live-protocol` frame (8-byte header + payload).
  *
  * 404 responses are treated as retriable (the server may create the stream
  * shortly), so the component can be rendered before the stream exists.
@@ -116,14 +115,19 @@ function renderFrame(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, f
 }
 
 /**
- * Stream loop that owns decoder lifecycle, receives frames via WebSocket,
- * and handles generation changes (decoder reinitialization).
+ * Stream loop: receives `live-protocol` framed messages via WebSocket,
+ * decodes video frames, and handles codec parameter updates.
  *
  * Runs until the AbortSignal fires (component unmount / streamId change).
  * Reconnects with exponential backoff on disconnect.
  *
- * @param onFrame  Callback that renders a decoded VideoFrame.  Responsible
- *                 for closing the frame after use.
+ * Each WS message is a complete `live-protocol` frame:
+ * ```
+ * [u8: message_type][u8: flags][u16: reserved][u32 LE: payload_length][payload]
+ * ```
+ *
+ * Frame (0x02) payload: `[u64 LE: timestamp_us][avcc bytes]`
+ * CodecParams (0x01): triggers decoder reinitialization (rare — encoder is persistent).
  */
 async function startStreamLoop(
     streamId: string,
@@ -144,9 +148,6 @@ async function startStreamLoop(
     }
     if (signal.aborted) { decoder.close(); return; }
 
-    let lastSequence = 0;
-    let currentGeneration: number | null = null;
-
     const INITIAL_DELAY_MS = 100;
     const MAX_DELAY_MS = 5000;
     let delay = INITIAL_DELAY_MS;
@@ -158,19 +159,27 @@ async function startStreamLoop(
                 `/api/v1/ws/video/${streamId}`, signal);
             if (signal.aborted) break;
 
-            // Send cursor so the server sends a catch-up batch.
-            ws.send(JSON.stringify({ after: lastSequence }));
             delay = INITIAL_DELAY_MS; // Reset backoff on successful connect.
 
-            // Inner message loop — process frames until WS closes.
+            // Inner message loop — process live-protocol messages until WS closes.
             for await (const data of wsMessages(ws, signal)) {
-                const { generation, frames } = parseBinaryFrameResponse(
-                    new Uint8Array(data));
+                const buf = new Uint8Array(data);
+                if (buf.length < HEADER_SIZE) continue;
 
-                // Generation change: reinitialize decoder.
-                if (currentGeneration !== null && generation !== currentGeneration) {
-                    console.log("StreamLoop: Generation changed %d → %d, reinitializing decoder",
-                        currentGeneration, generation);
+                const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+                const msgType = view.getUint8(0);
+                const msgFlags = view.getUint8(1);
+
+                if (msgType === MSG_FRAME) {
+                    // Frame payload: [u64 LE: timestamp_us][avcc bytes]
+                    const timestamp = Number(view.getBigUint64(HEADER_SIZE, true));
+                    const isKeyframe = (msgFlags & FLAG_IS_KEYFRAME) !== 0;
+                    const avcc = buf.subarray(HEADER_SIZE + 8);
+                    decoder.decodeFrame(timestamp, isKeyframe, avcc);
+                } else if (msgType === MSG_CODEC_PARAMS) {
+                    // CodecParams: the encoder's SPS/PPS changed (rare — only on
+                    // hot-swap in auto mode).  Reinitialize the decoder.
+                    console.log("StreamLoop: CodecParams received, reinitializing decoder");
                     decoder.close();
                     decoder = new H264Decoder(streamId, onFrame);
                     while (!signal.aborted) {
@@ -182,14 +191,6 @@ async function startStreamLoop(
                             await sleep(1000);
                         }
                     }
-                    if (signal.aborted) break;
-                    lastSequence = 0;
-                }
-                currentGeneration = generation;
-
-                for (const { sequence, timestamp, isKeyframe, data: frameData } of frames) {
-                    lastSequence = Math.max(lastSequence, sequence);
-                    decoder.decodeFrame(timestamp, isKeyframe, frameData);
                 }
             }
         } catch {
@@ -213,45 +214,10 @@ function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// ── Binary frame response parser ─────────────────────────────────────────
+// ── live-protocol constants ─────────────────────────────────────────────
 
-interface FrameEntry {
-    sequence: number;
-    timestamp: number;
-    isKeyframe: boolean;
-    /// AVCC payload — directly feedable to EncodedVideoChunk.data.
-    data: Uint8Array;
-}
-
-interface BinaryFrameResponse {
-    generation: number;
-    frames: FrameEntry[];
-}
-
-/// Parse the binary blob returned by GET /:id/frames.
-///
-/// Layout (all little-endian):
-///   [u32: generation][u32: num_frames]
-///   per frame:
-///     [u32: sequence][u64: timestamp_us][u8: is_keyframe]
-///     [u32: avcc_payload_length][avcc bytes]
-function parseBinaryFrameResponse(buf: Uint8Array): BinaryFrameResponse {
-    const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-    let pos = 0;
-
-    const generation = view.getUint32(pos, true); pos += 4;
-    const numFrames = view.getUint32(pos, true);  pos += 4;
-
-    const frames: FrameEntry[] = [];
-    for (let i = 0; i < numFrames; i++) {
-        const sequence = view.getUint32(pos, true);                pos += 4;
-        const timestamp = Number(view.getBigUint64(pos, true));    pos += 8;
-        const isKeyframe = view.getUint8(pos) !== 0;               pos += 1;
-        const dataLen = view.getUint32(pos, true);                 pos += 4;
-        // subarray: zero-copy view into the same ArrayBuffer.
-        const data = buf.subarray(pos, pos + dataLen);             pos += dataLen;
-        frames.push({ sequence, timestamp, isKeyframe, data });
-    }
-
-    return { generation, frames };
-}
+/** Frame header size (bytes).  Matches `live-protocol` Rust crate. */
+const HEADER_SIZE       = 8;
+const MSG_CODEC_PARAMS  = 0x01;
+const MSG_FRAME         = 0x02;
+const FLAG_IS_KEYFRAME  = 1 << 0;
