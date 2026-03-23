@@ -2,7 +2,6 @@
 resolver = "3"
 members = [
     "live-app",
-    "live-audio",
     "live-server",
     "live-video",
     "crates/enumerate-windows",
@@ -32,7 +31,6 @@ enumerate-windows = { path = "crates/enumerate-windows" }
 set-dpi-awareness = { path = "crates/set-dpi-awareness" }
 job-object = { path = "crates/job-object" }
 live-video = { path = "live-video" }
-live-audio = { path = "live-audio" }
 anyhow = "1"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22.1"

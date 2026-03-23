@@ -47,9 +47,6 @@ pub const DEFAULT_CAPTURE_HEIGHT: u32 = 1200;
 /// Video frame buffer capacity (~1 second at 60fps).
 pub const FRAME_BUFFER_CAPACITY: usize = 60;
 
-/// Audio chunk buffer capacity (~1 second at 10ms/chunk).
-pub const AUDIO_BUFFER_CAPACITY: usize = 100;
-
 // ── Poll / Timer Intervals ──────────────────────────────────────────────────
 
 /// Auto-selector foreground window poll interval (milliseconds).

@@ -1,8 +1,8 @@
 //! `live-server` — Rust HTTP server for Nekomaru LiveUI.
 //!
-//! Replaces the TypeScript Hono server.  Manages video/audio capture processes,
-//! protocol parsing, frame buffering, auto-selector, YouTube Music manager,
-//! string store, and all HTTP API endpoints.
+//! Manages video capture processes, protocol parsing, frame buffering,
+//! auto-selector, YouTube Music manager, string store, and all HTTP API
+//! endpoints.
 //!
 //! ## Usage
 //!
@@ -16,12 +16,6 @@ mod state;
 mod vite_proxy;
 mod windows;
 
-mod audio {
-    pub mod buffer;
-    pub mod process;
-    pub mod routes;
-    pub mod ws;
-}
 mod kpm {
     pub mod calculator;
     pub mod hook;
@@ -77,15 +71,6 @@ struct Cli {
     /// and proxies non-API requests to it for dev assets / HMR.
     #[arg(long, env = "LIVE_VITE_PORT")]
     vite_port: u16,
-
-    /// Enable audio capture (any non-zero number = on, 0 or unset = off).
-    /// Off by default to avoid feedback loops during localhost development.
-    #[arg(long, env = "LIVE_AUDIO")]
-    audio: Option<u8>,
-
-    /// WASAPI capture device name for audio.
-    #[arg(long, default_value = "Loopback L + R (Focusrite USB Audio)")]
-    audio_device: String,
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────
@@ -103,9 +88,7 @@ async fn main() {
 
     // Resolve exe paths: if relative, look next to this binary.
     let video_exe = resolve_sibling_exe("live-video.exe");
-    let audio_exe = resolve_sibling_exe("live-audio.exe");
     log::info!("video exe: {video_exe}");
-    log::info!("audio exe: {audio_exe}");
 
     // Job object: all child processes assigned to it are killed when the
     // server exits — even on crash or Task Manager kill.
@@ -117,12 +100,6 @@ async fn main() {
     // Read revision timestamp from jj (non-fatal on failure).
     if let Some(ts) = read_jj_timestamp() {
         state.strings_mut().await.set_computed(constant::CSID_TIMESTAMP, ts);
-    }
-
-    // Start audio capture if enabled.
-    if cli.audio.is_some_and(|v| v != 0) {
-        let audio_arc = state.audio_arc();
-        state.audio_mut().await.start(&audio_exe, &cli.audio_device, &job, &audio_arc);
     }
 
     // Start KPM capture (always enabled, in-process keyboard hook).
@@ -146,14 +123,12 @@ async fn main() {
 
     let mut app = Router::new()
         // HTTP routes.
-        .merge(audio::routes::router())
         .merge(selector::routes::router())
         .merge(strings::routes::router())
         .merge(video::routes::router())
         .merge(windows::router())
         .route("/api/v1/refresh", post(refresh))
         // WebSocket routes.
-        .merge(audio::ws::router())
         .merge(kpm::ws::router())
         .merge(video::ws::router())
         .with_state(Arc::clone(&state));

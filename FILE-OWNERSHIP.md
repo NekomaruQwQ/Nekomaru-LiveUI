@@ -15,7 +15,6 @@ FILE-OWNERSHIP.md                           human
 # config files
 live-app/Cargo.toml                         human
 live-video/Cargo.toml                       human
-live-audio/Cargo.toml                       human
 live-kpm/Cargo.toml                         human
 live-server/Cargo.toml                      human
 crates/enumerate-windows/Cargo.toml         human
@@ -48,10 +47,6 @@ src/main.rs                                 agent
 src/resample.hlsl                           human
 src/resample.rs                             human
 
-# live-audio/
-src/lib.rs                                  agent
-src/main.rs                                 agent
-
 # live-kpm/
 src/lib.rs                                  agent
 src/main.rs                                 agent
@@ -63,9 +58,6 @@ src/windows.rs                              agent
 src/video/buffer.rs                         agent
 src/video/process.rs                        agent
 src/video/routes.rs                         agent
-src/audio/buffer.rs                         agent
-src/audio/process.rs                        agent
-src/audio/routes.rs                         agent
 src/kpm/calculator.rs                       agent
 src/kpm/process.rs                          agent
 src/kpm/routes.rs                           agent
@@ -107,10 +99,6 @@ marquee.tsx                                 agent
 # frontend/src/widgets/
 common.tsx                                  agent
 index.tsx                                   agent
-
-# frontend/src/audio/
-index.tsx                                   agent
-worklet.ts                                  agent
 
 # frontend/src/kpm/
 index.tsx                                   agent

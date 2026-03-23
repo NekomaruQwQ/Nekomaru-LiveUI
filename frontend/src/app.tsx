@@ -1,4 +1,3 @@
-import { AudioStream } from "@/audio";
 import { StreamRenderer } from "@/video";
 import { useStreamStatus } from "@/streams";
 import { useStrings } from "@/strings";
@@ -16,8 +15,6 @@ export function App() {
 
     return (
         <Grid rows="1fr 60px" gap="2" className="w-screen h-screen p-2">
-            {/* Global audio stream (renders nothing visible) */}
-            <AudioStream />
             {/* Everything other than the YouTube Music island */}
             <Grid columns="1fr 3fr 40px" gap="2">
                 {/* Side Column: User Info */}

@@ -3,7 +3,6 @@
 //! Wrapped in `Arc<AppState>` and passed to all Axum handlers via the `State`
 //! extractor.  Each subsystem owns its state behind a `tokio::sync::RwLock`.
 
-use crate::audio::process::AudioState;
 use crate::kpm::hook::KpmState;
 use crate::selector::manager::SelectorState;
 use crate::strings::store::StringStore;
@@ -19,7 +18,6 @@ use tokio::sync::RwLock;
 pub struct AppState {
     strings: Arc<RwLock<StringStore>>,
     streams: Arc<RwLock<StreamRegistry>>,
-    audio: Arc<RwLock<AudioState>>,
     kpm: Arc<RwLock<KpmState>>,
     selector: Arc<RwLock<SelectorState>>,
     ytm: Arc<RwLock<YtmState>>,
@@ -32,7 +30,6 @@ impl AppState {
         Self {
             strings: Arc::new(RwLock::new(StringStore::new())),
             streams: Arc::new(RwLock::new(StreamRegistry::new(video_exe_path, Arc::clone(&job)))),
-            audio: Arc::new(RwLock::new(AudioState::new())),
             kpm: Arc::new(RwLock::new(KpmState::new())),
             selector: Arc::new(RwLock::new(SelectorState::new())),
             ytm: Arc::new(RwLock::new(YtmState::new())),
@@ -66,20 +63,6 @@ impl AppState {
 
     pub fn streams_arc(&self) -> Arc<RwLock<StreamRegistry>> {
         Arc::clone(&self.streams)
-    }
-
-    // ── Audio ────────────────────────────────────────────────────────────
-
-    pub async fn audio(&self) -> tokio::sync::RwLockReadGuard<'_, AudioState> {
-        self.audio.read().await
-    }
-
-    pub async fn audio_mut(&self) -> tokio::sync::RwLockWriteGuard<'_, AudioState> {
-        self.audio.write().await
-    }
-
-    pub fn audio_arc(&self) -> Arc<RwLock<AudioState>> {
-        Arc::clone(&self.audio)
     }
 
     // ── KPM ──────────────────────────────────────────────────────────────
@@ -136,8 +119,7 @@ impl AppState {
             self.ytm.write().await.stop(&streams_arc).await;
         }
 
-        // 2. Stop audio and KPM capture.
-        self.audio.write().await.stop();
+        // 2. Stop KPM capture.
         self.kpm.write().await.stop();
 
         // 3. Destroy all video streams (kills child processes).
