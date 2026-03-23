@@ -270,22 +270,19 @@ fn main() {
         }
     };
 
-    let result = match mode {
-        CaptureMode::Auto { width, height } => {
-            let config_url = args.config_url.unwrap_or_else(|| {
-                eprintln!("error: --mode auto requires --config-url");
-                std::process::exit(1);
-            });
-            let event_url = args.event_url.unwrap_or_else(|| {
-                eprintln!("error: --mode auto requires --event-url");
-                std::process::exit(1);
-            });
-            run_auto(width, height, args.fps, config_url, event_url)
-        }
-        _ => {
-            let hwnd = args.hwnd.expect("base/crop modes require --hwnd");
-            run(hwnd, mode, args.fps)
-        }
+    let result = if let CaptureMode::Auto { width, height } = mode {
+        let config_url = args.config_url.unwrap_or_else(|| {
+            eprintln!("error: --mode auto requires --config-url");
+            std::process::exit(1);
+        });
+        let event_url = args.event_url.unwrap_or_else(|| {
+            eprintln!("error: --mode auto requires --event-url");
+            std::process::exit(1);
+        });
+        run_auto(width, height, args.fps, config_url, event_url)
+    } else {
+        let hwnd = args.hwnd.expect("base/crop modes require --hwnd");
+        run(hwnd, mode, args.fps)
     };
 
     if let Err(e) = result {
@@ -325,7 +322,7 @@ fn run(hwnd: isize, mode: CaptureMode, frame_rate: u32) -> anyhow::Result<()> {
                 output.width, output.height);
             (output, Some(crop))
         }
-        CaptureMode::Auto { .. } => unreachable!("auto mode dispatched to run_auto()"),
+        CaptureMode::Auto { .. } => anyhow::bail!("auto mode should use run_auto()"),
     };
 
     let staging_bgra8 =
@@ -451,7 +448,6 @@ fn run(hwnd: isize, mode: CaptureMode, frame_rate: u32) -> anyhow::Result<()> {
 /// Run in auto mode: the selector thread polls the foreground window and sends
 /// swap commands.  The capture loop replaces the `CaptureSession` on each swap
 /// while the encoder keeps running on the same staging texture.
-#[expect(clippy::too_many_lines)]
 fn run_auto(
     width: u32,
     height: u32,
@@ -505,7 +501,7 @@ fn run_auto(
         .spawn({
             let device = device.clone();
             let device_context = device_context.clone();
-            let frame_source = staging_bgra8.clone();
+            let frame_source = staging_bgra8;
             move || encoding_thread(&device, &device_context, &frame_source, frame_size, frame_rate)
         })
         .context("failed to spawn encoding thread")?;
@@ -514,7 +510,7 @@ fn run_auto(
     let swap_rx = selector::spawn_selector(selector::SelectorConfig {
         config_url,
         event_url,
-        poll_interval: Duration::from_millis(2000),
+        poll_interval: Duration::from_secs(2),
     });
 
     log::info!("auto mode: waiting for first selector match...");
@@ -584,10 +580,9 @@ fn run_auto(
                     list.ok_or_else(|| anyhow::anyhow!("command list is null"))?
                 };
                 // SAFETY: valid immediate context + command list.
-                unsafe {
-                    device_context.ExecuteCommandList(&command_list, true);
-                    device_context.Flush();
-                }
+                unsafe { device_context.ExecuteCommandList(&command_list, true); }
+                // SAFETY: valid immediate context.
+                unsafe { device_context.Flush(); }
                 thread::sleep(Duration::from_millis(5));
             }
             Ok(None) => {

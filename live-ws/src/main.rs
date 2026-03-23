@@ -84,7 +84,7 @@ async fn main() -> anyhow::Result<()> {
     let (tx, rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CAPACITY);
 
     // Stdin reader runs on a blocking thread (stdin is synchronous).
-    let stdin_handle = tokio::task::spawn_blocking(move || stdin_reader(tx));
+    let stdin_handle = tokio::task::spawn_blocking(move || stdin_reader(&tx));
 
     // WS writer runs on the async runtime.
     let ws_handle = tokio::spawn(ws_writer(rx, args.server, args.mode));
@@ -113,7 +113,7 @@ async fn main() -> anyhow::Result<()> {
 
 /// Blocking stdin reader.  Reads complete `live-protocol` framed messages
 /// and sends them to the channel.  Exits on EOF or broken channel.
-fn stdin_reader(tx: mpsc::Sender<Vec<u8>>) {
+fn stdin_reader(tx: &mpsc::Sender<Vec<u8>>) {
     let mut stdin = std::io::stdin().lock();
 
     loop {
@@ -143,6 +143,45 @@ fn stdin_reader(tx: mpsc::Sender<Vec<u8>>) {
 }
 
 // ── WS Writer ───────────────────────────────────────────────────────────────
+
+/// Replay cached CodecParams and keyframe on reconnect (video mode only).
+/// Returns `Err` if a send fails (caller should reconnect).
+async fn replay_cached<S>(
+    ws_write: &mut futures_util::stream::SplitSink<S, tungstenite::Message>,
+    cached_codec_params: Option<&Vec<u8>>,
+    cached_keyframe: Option<&Vec<u8>>,
+) -> Result<(), ()>
+where
+    S: futures_util::Sink<tungstenite::Message> + Unpin,
+{
+    if let Some(params) = cached_codec_params {
+        log::info!("replaying cached CodecParams ({}B)", params.len());
+        send_binary(ws_write, params.clone()).await?;
+    }
+    if let Some(keyframe) = cached_keyframe {
+        log::info!("replaying cached keyframe ({}B)", keyframe.len());
+        send_binary(ws_write, keyframe.clone()).await?;
+    }
+    Ok(())
+}
+
+/// Update the video-mode caches from an incoming raw message.
+fn update_video_cache(
+    raw: &[u8],
+    cached_codec_params: &mut Option<Vec<u8>>,
+    cached_keyframe: &mut Option<Vec<u8>>,
+) {
+    let Some(&[msg_type, msg_flags, ..]) = raw.first_chunk::<HEADER_SIZE>() else { return; };
+
+    if msg_type == MessageType::CodecParams as u8 {
+        *cached_codec_params = Some(raw.to_vec());
+    } else if msg_type == MessageType::Frame as u8
+        && (msg_flags & flags::IS_KEYFRAME) != 0 {
+        *cached_keyframe = Some(raw.to_vec());
+    } else {
+        // Not a cacheable message type.
+    }
+}
 
 /// Async WS writer.  Connects to the server, consumes messages from the
 /// channel, and sends them as WS binary messages.  Reconnects on failure.
@@ -180,19 +219,10 @@ async fn ws_writer(
         let (mut ws_write, _ws_read) = futures_stream_split(ws_stream);
 
         // ── Replay cached messages on reconnect (video mode) ────────
-        if mode == RelayMode::Video {
-            if let Some(ref params) = cached_codec_params {
-                log::info!("replaying cached CodecParams ({}B)", params.len());
-                if send_binary(&mut ws_write, params.clone()).await.is_err() {
-                    continue; // reconnect
-                }
-            }
-            if let Some(ref keyframe) = cached_keyframe {
-                log::info!("replaying cached keyframe ({}B)", keyframe.len());
-                if send_binary(&mut ws_write, keyframe.clone()).await.is_err() {
-                    continue; // reconnect
-                }
-            }
+        if mode == RelayMode::Video
+            && replay_cached(&mut ws_write, cached_codec_params.as_ref(), cached_keyframe.as_ref()).await.is_err()
+        {
+            continue; // reconnect
         }
 
         // ── Forward loop ────────────────────────────────────────────
@@ -203,17 +233,8 @@ async fn ws_writer(
                 return Ok(());
             };
 
-            // In video mode, cache for reconnect replay.
-            if mode == RelayMode::Video && raw.len() >= HEADER_SIZE {
-                let msg_type = raw[0];
-                let msg_flags = raw[1];
-
-                if msg_type == MessageType::CodecParams as u8 {
-                    cached_codec_params = Some(raw.clone());
-                } else if msg_type == MessageType::Frame as u8
-                    && (msg_flags & flags::IS_KEYFRAME) != 0 {
-                    cached_keyframe = Some(raw.clone());
-                }
+            if mode == RelayMode::Video {
+                update_video_cache(&raw, &mut cached_codec_params, &mut cached_keyframe);
             }
 
             if send_binary(&mut ws_write, raw).await.is_err() {
@@ -250,7 +271,7 @@ fn futures_stream_split<S>(stream: S) -> (
 ) where
     S: futures_util::Stream + futures_util::Sink<tungstenite::Message>,
 {
-    use futures_util::StreamExt;
+    use futures_util::StreamExt as _;
     stream.split()
 }
 
@@ -262,8 +283,8 @@ async fn send_binary<S>(
 where
     S: futures_util::Sink<tungstenite::Message> + Unpin,
 {
-    use futures_util::SinkExt;
+    use futures_util::SinkExt as _;
     sink.send(tungstenite::Message::Binary(data.into()))
         .await
-        .map_err(|_| ())
+        .map_err(|_err| ())
 }

@@ -94,7 +94,9 @@ pub fn read_frame_payload(data: &[u8]) -> io::Result<(u64, &[u8])> {
     if data.len() < 8 {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "truncated Frame payload"));
     }
-    let timestamp_us = u64::from_le_bytes(data[..8].try_into().unwrap());
+    let bytes: [u8; 8] = data[..8].try_into()
+        .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "truncated Frame payload"))?;
+    let timestamp_us = u64::from_le_bytes(bytes);
     Ok((timestamp_us, &data[8..]))
 }
 

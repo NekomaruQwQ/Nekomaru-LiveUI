@@ -26,7 +26,7 @@ use message_pump::MessagePump;
 
 use live_protocol::{MessageType, write_message};
 
-use std::io::{BufWriter, Write as _};
+use std::io::BufWriter;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // ── Constants ───────────────────────────────────────────────────────────────

@@ -69,6 +69,7 @@ impl KpmCalculator {
     }
 
     /// Clear all state (e.g. on process restart).
+    #[cfg(test)]
     pub fn reset(&mut self) {
         self.entries.clear();
     }

@@ -48,7 +48,7 @@ fn mark_released(vk: usize) {
         let (word, bit) = (vk / 64, vk % 64);
         bits[word] &= !(1u64 << bit);
         keys.set(bits);
-    })
+    });
 }
 
 /// Install the low-level keyboard hook on the current thread.
@@ -103,6 +103,8 @@ unsafe extern "system" fn keyboard_hook_proc(
                 COUNTER.fetch_add(1, Ordering::Relaxed);
             } else if is_keyup {
                 mark_released(vk);
+            } else {
+                // Neither keydown nor keyup — ignore.
             }
         }
     }

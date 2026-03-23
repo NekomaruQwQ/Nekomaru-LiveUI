@@ -17,8 +17,6 @@ pub struct SwapCommand {
     pub hwnd: isize,
     /// Human-readable label for the captured window.
     pub capture_info: String,
-    /// Mode tag from the matched pattern (e.g. "code", "game").
-    pub mode: Option<String>,
 }
 
 /// Configuration for the selector thread.
@@ -38,7 +36,7 @@ pub fn spawn_selector(config: SelectorConfig) -> mpsc::Receiver<SwapCommand> {
 
     std::thread::Builder::new()
         .name("selector".into())
-        .spawn(move || selector_loop(tx, config))
+        .spawn(move || selector_loop(&tx, &config))
         .expect("failed to spawn selector thread");
 
     rx
@@ -46,7 +44,10 @@ pub fn spawn_selector(config: SelectorConfig) -> mpsc::Receiver<SwapCommand> {
 
 /// Main selector loop.  Polls the foreground window, matches patterns,
 /// sends swap commands, and POSTs metadata to the server.
-fn selector_loop(tx: mpsc::Sender<SwapCommand>, config: SelectorConfig) {
+fn selector_loop(tx: &mpsc::Sender<SwapCommand>, config: &SelectorConfig) {
+    // Poll config on first iteration, then every ~10 iterations (20s at 2s poll).
+    const CONFIG_POLL_EVERY: u32 = 10;
+
     log::info!("selector started (poll: {:?}, config: {})",
         config.poll_interval, config.config_url);
 
@@ -54,14 +55,11 @@ fn selector_loop(tx: mpsc::Sender<SwapCommand>, config: SelectorConfig) {
     let mut preset_config: Option<PresetConfig> = None;
     let mut config_poll_counter: u32 = 0;
 
-    // Poll config on first iteration, then every ~10 iterations (20s at 2s poll).
-    const CONFIG_POLL_EVERY: u32 = 10;
-
     loop {
         std::thread::sleep(config.poll_interval);
 
         // Periodically refresh the preset config from the server.
-        if config_poll_counter % CONFIG_POLL_EVERY == 0 {
+        if config_poll_counter.is_multiple_of(CONFIG_POLL_EVERY) {
             match fetch_config(&config.config_url) {
                 Ok(cfg) => {
                     log::debug!("fetched selector config: preset=\"{}\"", cfg.preset);
@@ -98,13 +96,12 @@ fn selector_loop(tx: mpsc::Sender<SwapCommand>, config: SelectorConfig) {
             .filter(|d| !d.is_empty())
             .unwrap_or_else(|| info.title.clone());
 
-        log::info!("switching to HWND 0x{:X} ({})", hwnd, capture_info);
+        log::info!("switching to HWND 0x{hwnd:X} ({capture_info})");
 
         // Send swap command to the capture loop.
         let cmd = SwapCommand {
             hwnd,
             capture_info: capture_info.clone(),
-            mode: capture_match.mode.clone(),
         };
         if tx.send(cmd).is_err() {
             log::info!("capture loop closed, selector exiting");
@@ -114,7 +111,7 @@ fn selector_loop(tx: mpsc::Sender<SwapCommand>, config: SelectorConfig) {
         last_hwnd = Some(hwnd);
 
         // POST stream info to the server (best-effort, non-blocking).
-        post_stream_info(&config.event_url, hwnd, &info.title, &capture_info, &capture_match.mode);
+        post_stream_info(&config.event_url, hwnd, &info.title, &capture_info, capture_match.mode.as_ref());
     }
 }
 
@@ -136,7 +133,7 @@ fn post_stream_info(
     hwnd: isize,
     title: &str,
     file_description: &str,
-    mode: &Option<String>,
+    mode: Option<&String>,
 ) {
     let body = serde_json::json!({
         "hwnd": format!("0x{hwnd:X}"),

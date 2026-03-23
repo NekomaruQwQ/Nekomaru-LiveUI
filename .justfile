@@ -18,9 +18,9 @@ push bookmark revision="@-":
     jj bookmark move {{bookmark}} --to={{revision}}
     jj git push --all
 # Pull the latest changes from GitHub and reset the working copy to the main branch.
-pull:
+pull bookmark:
     jj git fetch
-    jj git new -r main
+    jj git new -r {{bookmark}}
 
 # == Recipes for the Bun/Hono server ==
 # Run the Bun/Hono server.

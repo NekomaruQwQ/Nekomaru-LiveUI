@@ -3,7 +3,7 @@
 //! Ported from `live-server/src/selector/config.rs`.  In M4 the config is
 //! polled from the server via HTTP — no local file I/O.
 //!
-//! Pattern format: `[@mode] <exePath>[@<windowTitle>]`
+//! Pattern format: `[@mode] <exePath>[@<windowTitle>]`.
 
 use std::collections::HashMap;
 
@@ -107,6 +107,8 @@ pub fn should_capture(
             }
         } else if result.is_none() && matches_parsed(&parsed, executable_path, title, false) {
             result = Some(CaptureMatch { mode: parsed.mode });
+        } else {
+            // Already matched or no match — skip.
         }
     }
 
