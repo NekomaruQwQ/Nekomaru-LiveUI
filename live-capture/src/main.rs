@@ -29,6 +29,7 @@ mod capture;
 mod converter;
 mod encoder;
 mod resample;
+mod selector;
 
 use capture::{CaptureSession, CropBox};
 use converter::NV12Converter;
@@ -54,6 +55,10 @@ use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::System::Com::*;
 
+/// Default capture resolution for auto mode.
+const DEFAULT_WIDTH: u32 = 1920;
+const DEFAULT_HEIGHT: u32 = 1200;
+
 // ── Constants ───────────────────────────────────────────────────────────────
 
 const BITRATE: u32 = 8_000_000; // 8 Mbps CBR
@@ -64,6 +69,11 @@ const BITRATE: u32 = 8_000_000; // 8 Mbps CBR
 #[derive(Parser)]
 #[command(name = "live-capture")]
 struct CliArgs {
+    /// Capture mode: base (default), auto (foreground polling + hot-swap),
+    /// or crop (fixed subrect extraction).
+    #[arg(long, value_parser = parse_capture_mode_arg, default_value = "base")]
+    mode: CaptureModeArg,
+
     /// List visible windows as JSON and exit.
     #[arg(long)]
     enumerate_windows: bool,
@@ -72,63 +82,75 @@ struct CliArgs {
     #[arg(long)]
     foreground_window: bool,
 
-    /// Window handle (decimal or 0x hex). Required for capture mode.
-    #[arg(long, value_parser = parse_hwnd,
-        required_unless_present_any = ["enumerate_windows", "foreground_window"])]
+    /// Window handle (decimal or 0x hex). Required for base and crop modes.
+    #[arg(long, value_parser = parse_hwnd)]
     hwnd: Option<isize>,
 
-    // ── Resample mode (base) ──────────────────────────────────────────────
-    // Conflicts with --crop-* args: you pick one mode or the other.
+    // ── Resample args (base mode) ─────────────────────────────────────────
 
-    /// Output width for resample mode (must be a multiple of 16).
-    #[arg(long, requires = "height",
-        conflicts_with_all = ["crop_min_x", "crop_min_y", "crop_max_x", "crop_max_y"])]
+    /// Output width (must be a multiple of 16).
+    #[arg(long, conflicts_with_all = ["crop_min_x", "crop_min_y", "crop_max_x", "crop_max_y"])]
     width: Option<u32>,
 
-    /// Output height for resample mode (must be a multiple of 16).
-    #[arg(long, requires = "width",
-        conflicts_with_all = ["crop_min_x", "crop_min_y", "crop_max_x", "crop_max_y"])]
+    /// Output height (must be a multiple of 16).
+    #[arg(long, conflicts_with_all = ["crop_min_x", "crop_min_y", "crop_max_x", "crop_max_y"])]
     height: Option<u32>,
 
-    // ── Crop mode ──────────────────────────────────────────────────────────
-    // Absolute bounding box in source pixels.  All four are required together.
-    // Non-16-aligned dimensions are accepted; the encoder output is padded
-    // to the next multiple of 16.
+    // ── Crop args ─────────────────────────────────────────────────────────
 
     /// Left edge of the crop rect (inclusive), in source pixels.
-    #[arg(long,
-        requires_all = ["crop_min_y", "crop_max_x", "crop_max_y"],
+    #[arg(long, requires_all = ["crop_min_y", "crop_max_x", "crop_max_y"],
         conflicts_with_all = ["width", "height"])]
     crop_min_x: Option<u32>,
 
     /// Top edge of the crop rect (inclusive), in source pixels.
-    #[arg(long,
-        requires_all = ["crop_min_x", "crop_max_x", "crop_max_y"],
+    #[arg(long, requires_all = ["crop_min_x", "crop_max_x", "crop_max_y"],
         conflicts_with_all = ["width", "height"])]
     crop_min_y: Option<u32>,
 
     /// Right edge of the crop rect (exclusive), in source pixels.
-    #[arg(long,
-        requires_all = ["crop_min_x", "crop_min_y", "crop_max_y"],
+    #[arg(long, requires_all = ["crop_min_x", "crop_min_y", "crop_max_y"],
         conflicts_with_all = ["width", "height"])]
     crop_max_x: Option<u32>,
 
     /// Bottom edge of the crop rect (exclusive), in source pixels.
-    #[arg(long,
-        requires_all = ["crop_min_x", "crop_min_y", "crop_max_x"],
+    #[arg(long, requires_all = ["crop_min_x", "crop_min_y", "crop_max_x"],
         conflicts_with_all = ["width", "height"])]
     crop_max_y: Option<u32>,
 
-    /// Encoder frame rate (1-60). Lower values save GPU cycles for
-    /// near-static content like the YouTube Music playback bar.
+    // ── Auto mode args ────────────────────────────────────────────────────
+
+    /// URL to poll for selector config (GET, returns JSON).
+    /// Required for --mode auto.
+    #[arg(long)]
+    config_url: Option<String>,
+
+    /// URL to POST stream info on capture switch.
+    /// Required for --mode auto.
+    #[arg(long)]
+    event_url: Option<String>,
+
+    // ── Common args ───────────────────────────────────────────────────────
+
+    /// Encoder frame rate (1-60).
     #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u32).range(1..=60))]
     fps: u32,
 
-    /// Stream ID tag for log output (e.g. "main", "youtube-music").
-    /// When set, log lines include `@<stream_id>` for disambiguation
-    /// when multiple instances write to the same inherited stderr.
+    /// Stream ID tag for log output.
     #[arg(long)]
     stream_id: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CaptureModeArg { Base, Auto, Crop }
+
+fn parse_capture_mode_arg(s: &str) -> Result<CaptureModeArg, String> {
+    match s {
+        "base" => Ok(CaptureModeArg::Base),
+        "auto" => Ok(CaptureModeArg::Auto),
+        "crop" => Ok(CaptureModeArg::Crop),
+        other => Err(format!("unknown mode '{other}' (expected 'base', 'auto', or 'crop')")),
+    }
 }
 
 /// Resolved capture mode after CLI validation.
@@ -138,6 +160,8 @@ enum CaptureMode {
     Resample { width: u32, height: u32 },
     /// Extract an absolute subrect at native resolution.
     Crop(CropBox),
+    /// Auto-selector: foreground polling + hot-swap (resolution is fixed).
+    Auto { width: u32, height: u32 },
 }
 
 // ── CLI parsers ─────────────────────────────────────────────────────────────
@@ -164,23 +188,37 @@ fn resolve_capture_mode(args: &CliArgs) -> anyhow::Result<Option<CaptureMode>> {
         return Ok(None);
     }
 
-    // Clap enforces mutual exclusivity, so at most one group is present.
-    if let (Some(w), Some(h)) = (args.width, args.height) {
-        anyhow::ensure!(
-            w.is_multiple_of(16) && h.is_multiple_of(16),
-            "width and height must be multiples of 16 (got {w}x{h})");
-        return Ok(Some(CaptureMode::Resample { width: w, height: h }));
+    match args.mode {
+        CaptureModeArg::Auto => {
+            let w = args.width.unwrap_or(DEFAULT_WIDTH);
+            let h = args.height.unwrap_or(DEFAULT_HEIGHT);
+            anyhow::ensure!(
+                w.is_multiple_of(16) && h.is_multiple_of(16),
+                "width and height must be multiples of 16 (got {w}x{h})");
+            Ok(Some(CaptureMode::Auto { width: w, height: h }))
+        }
+        CaptureModeArg::Crop => {
+            let (Some(min_x), Some(min_y), Some(max_x), Some(max_y)) =
+                (args.crop_min_x, args.crop_min_y, args.crop_max_x, args.crop_max_y)
+            else {
+                anyhow::bail!("crop mode requires --crop-min-x/y --crop-max-x/y");
+            };
+            anyhow::ensure!(args.hwnd.is_some(), "crop mode requires --hwnd");
+            anyhow::ensure!(max_x > min_x, "crop-max-x ({max_x}) must be greater than crop-min-x ({min_x})");
+            anyhow::ensure!(max_y > min_y, "crop-max-y ({max_y}) must be greater than crop-min-y ({min_y})");
+            Ok(Some(CaptureMode::Crop(CropBox { min_x, min_y, max_x, max_y })))
+        }
+        CaptureModeArg::Base => {
+            let (Some(w), Some(h)) = (args.width, args.height) else {
+                anyhow::bail!("base mode requires --width and --height");
+            };
+            anyhow::ensure!(args.hwnd.is_some(), "base mode requires --hwnd");
+            anyhow::ensure!(
+                w.is_multiple_of(16) && h.is_multiple_of(16),
+                "width and height must be multiples of 16 (got {w}x{h})");
+            Ok(Some(CaptureMode::Resample { width: w, height: h }))
+        }
     }
-
-    if let (Some(min_x), Some(min_y), Some(max_x), Some(max_y)) =
-        (args.crop_min_x, args.crop_min_y, args.crop_max_x, args.crop_max_y) {
-        anyhow::ensure!(max_x > min_x, "crop-max-x ({max_x}) must be greater than crop-min-x ({min_x})");
-        anyhow::ensure!(max_y > min_y, "crop-max-y ({max_y}) must be greater than crop-min-y ({min_y})");
-        return Ok(Some(CaptureMode::Crop(CropBox { min_x, min_y, max_x, max_y })));
-    }
-
-    anyhow::bail!(
-        "either --width/--height (resample) or --crop-min-x/y --crop-max-x/y (crop) is required");
 }
 
 // ── Logging ─────────────────────────────────────────────────────────────────
@@ -257,7 +295,6 @@ fn main() {
         return;
     }
 
-    let hwnd = args.hwnd.expect("clap should enforce --hwnd");
     let mode = match resolve_capture_mode(&args) {
         Ok(Some(m)) => m,
         Ok(None) => return,
@@ -267,7 +304,25 @@ fn main() {
         }
     };
 
-    if let Err(e) = run(hwnd, mode, args.fps) {
+    let result = match mode {
+        CaptureMode::Auto { width, height } => {
+            let config_url = args.config_url.unwrap_or_else(|| {
+                eprintln!("error: --mode auto requires --config-url");
+                std::process::exit(1);
+            });
+            let event_url = args.event_url.unwrap_or_else(|| {
+                eprintln!("error: --mode auto requires --event-url");
+                std::process::exit(1);
+            });
+            run_auto(width, height, args.fps, config_url, event_url)
+        }
+        _ => {
+            let hwnd = args.hwnd.expect("base/crop modes require --hwnd");
+            run(hwnd, mode, args.fps)
+        }
+    };
+
+    if let Err(e) = result {
         eprintln!("fatal: {e}");
         std::process::exit(1);
     }
@@ -304,6 +359,7 @@ fn run(hwnd: isize, mode: CaptureMode, frame_rate: u32) -> anyhow::Result<()> {
                 output.width, output.height);
             (output, Some(crop))
         }
+        CaptureMode::Auto { .. } => unreachable!("auto mode dispatched to run_auto()"),
     };
 
     let staging_bgra8 =
@@ -420,6 +476,164 @@ fn run(hwnd: isize, mode: CaptureMode, frame_rate: u32) -> anyhow::Result<()> {
                 log::error!("capture error: {e:?}");
                 thread::sleep(Duration::from_millis(100));
             },
+        }
+    }
+}
+
+// ── Auto mode (hot-swap capture loop) ────────────────────────────────────────
+
+/// Run in auto mode: the selector thread polls the foreground window and sends
+/// swap commands.  The capture loop replaces the `CaptureSession` on each swap
+/// while the encoder keeps running on the same staging texture.
+#[expect(clippy::too_many_lines)]
+fn run_auto(
+    width: u32,
+    height: u32,
+    frame_rate: u32,
+    config_url: String,
+    event_url: String,
+) -> anyhow::Result<()> {
+    // SAFETY: Called once at the start of the main thread before any COM usage.
+    unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
+        .ok()
+        .context("CoInitializeEx failed")?;
+
+    let frame_size = Size2D::new(width, height);
+    log::info!("auto mode: output={width}x{height}");
+
+    let (_, device, device_context) =
+        d3d11::create_device()
+            .context("failed to create D3D11 device")?;
+
+    // Staging texture and RTV — shared between capture and encoding threads.
+    // Fixed size: the encoder never needs reconfiguration on window switch.
+    let staging_bgra8 =
+        d3d11::create_texture_2d(
+            &device, frame_size, DXGI_FORMAT_B8G8R8A8_UNORM,
+            &[D3D11_BIND_SHADER_RESOURCE, D3D11_BIND_RENDER_TARGET])
+            .context("failed to create BGRA8 staging texture")?;
+    let staging_bgra8_rtv =
+        d3d11::create_rtv_for_texture_2d(&device, &staging_bgra8)
+            .context("failed to create BGRA8 staging RTV")?;
+
+    // SAFETY: valid D3D11 objects.
+    unsafe {
+        device_context.ClearRenderTargetView(
+            &staging_bgra8_rtv, &[0.16, 0.16, 0.16, 1.0]);
+    }
+
+    let deferred_context: ID3D11DeviceContext = {
+        let mut ctx = None;
+        // SAFETY: valid device.
+        unsafe { device.CreateDeferredContext(0, Some(&raw mut ctx)) }
+            .context("failed to create deferred context")?;
+        ctx.ok_or_else(|| anyhow::anyhow!("deferred context is null"))?
+    };
+
+    let resampler = Resampler::new(&device)
+        .context("failed to create resampler")?;
+
+    // Start encoding thread (same as base mode — reads from staging texture).
+    let encoding_handle = thread::Builder::new()
+        .name("encoding".to_owned())
+        .spawn({
+            let device = device.clone();
+            let device_context = device_context.clone();
+            let frame_source = staging_bgra8.clone();
+            move || encoding_thread(&device, &device_context, &frame_source, frame_size, frame_rate)
+        })
+        .context("failed to spawn encoding thread")?;
+
+    // Start the selector polling thread.
+    let swap_rx = selector::spawn_selector(selector::SelectorConfig {
+        config_url,
+        event_url,
+        poll_interval: Duration::from_millis(2000),
+    });
+
+    log::info!("auto mode: waiting for first selector match...");
+
+    // ── Hot-swap capture loop ───────────────────────────────────────
+    // No capture session initially — we wait for the selector to pick a window.
+    let mut capture: Option<CaptureSession> = None;
+
+    loop {
+        if encoding_handle.is_finished() {
+            anyhow::bail!("encoding thread exited unexpectedly");
+        }
+
+        // Check for a swap command from the selector.
+        if let Ok(cmd) = swap_rx.try_recv() {
+            let hwnd_handle = HWND(cmd.hwnd as _);
+
+            // Drop the old session before creating a new one.
+            drop(capture.take());
+
+            match CaptureSession::from_hwnd(&device, hwnd_handle) {
+                Ok(new_session) => {
+                    capture = Some(new_session);
+                    log::info!("hot-swap: now capturing HWND 0x{:X} ({})",
+                        cmd.hwnd, cmd.capture_info);
+                }
+                Err(e) => {
+                    log::error!("hot-swap: failed to create capture session: {e}");
+                    // Continue without a session — selector will retry.
+                }
+            }
+        }
+
+        // If no active session, sleep and check again.
+        let Some(ref mut cap) = capture else {
+            thread::sleep(Duration::from_millis(50));
+            continue;
+        };
+
+        // Capture + resample into staging texture (same as base mode resample path).
+        match cap.get_next_frame(&device_context) {
+            Ok(Some(frame)) => {
+                // SAFETY: valid D3D11 objects.
+                unsafe {
+                    deferred_context.ClearRenderTargetView(
+                        &staging_bgra8_rtv, &[0.16, 0.16, 0.16, 1.0]);
+                }
+
+                let viewport =
+                    capture::calculate_resample_viewport(frame.size, frame_size);
+                // SAFETY: valid deferred context.
+                unsafe { deferred_context.RSSetViewports(Some(&[viewport])); }
+
+                let source_srv =
+                    d3d11::create_srv_for_texture_2d(&device, &frame.raw_texture)
+                        .context("failed to create SRV for captured frame")?;
+                resampler.resample(&deferred_context, &source_srv, &staging_bgra8_rtv);
+
+                // SAFETY: valid deferred context.
+                unsafe { deferred_context.RSSetViewports(Some(&[])); }
+
+                let command_list = {
+                    let mut list = None;
+                    // SAFETY: valid deferred context with recorded commands.
+                    unsafe { deferred_context.FinishCommandList(false, Some(&raw mut list)) }
+                        .context("FinishCommandList failed")?;
+                    list.ok_or_else(|| anyhow::anyhow!("command list is null"))?
+                };
+                // SAFETY: valid immediate context + command list.
+                unsafe {
+                    device_context.ExecuteCommandList(&command_list, true);
+                    device_context.Flush();
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+            Ok(None) => {
+                thread::sleep(Duration::from_millis(1));
+            }
+            Err(e) => {
+                log::error!("capture error: {e:?}");
+                // Capture session might be stale (window closed). Drop it and
+                // let the selector pick a new one.
+                capture = None;
+                thread::sleep(Duration::from_millis(100));
+            }
         }
     }
 }

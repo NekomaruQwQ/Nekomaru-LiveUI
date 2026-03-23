@@ -8,6 +8,7 @@ pub mod converter;
 pub mod d3d11;
 pub mod encoder;
 pub mod resample;
+pub mod selector;
 
 // ── H.264 NAL Unit Types ────────────────────────────────────────────────────
 
