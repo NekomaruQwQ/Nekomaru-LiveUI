@@ -108,7 +108,7 @@ function runOneKpmConnection(
         if (signal.aborted) { resolve(false); return; }
 
         const proto = location.protocol === "https:" ? "wss:" : "ws:";
-        const ws = new WebSocket(`${proto}//${location.host}/api/v1/ws/kpm`);
+        const ws = new WebSocket(`${proto}//${location.host}/api/v1/kpm/ws`);
 
         const onAbort = () => ws.close();
         signal.addEventListener("abort", onAbort, { once: true });

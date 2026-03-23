@@ -156,7 +156,7 @@ async function startStreamLoop(
     while (!signal.aborted) {
         try {
             const ws = await openWebSocket(
-                `/api/v1/ws/video/${streamId}`, signal);
+                `/api/v1/streams/ws/${streamId}`, signal);
             if (signal.aborted) break;
 
             delay = INITIAL_DELAY_MS; // Reset backoff on successful connect.
