@@ -9,6 +9,7 @@
 ## Agent Rules
 
 - **Always use `--release`** when invoking `cargo build` or `cargo run`. All binaries in this project are release-built by default.
+- **Never hardcode `LIVE_PORT` or `LIVE_VITE_PORT`** values (e.g. `3000`, `5173`). When emitting Nushell scripts, use `$env.LIVE_PORT` and `$env.LIVE_VITE_PORT`.
 
 ---
 
@@ -60,19 +61,19 @@ just install
 # All require LIVE_PORT and LIVE_VITE_PORT environment variables.
 
 # 1. Start the TS relay server + Vite dev server
-LIVE_PORT=3000 LIVE_VITE_PORT=5173 just server
+just server
 
 # 2. Start the auto-selector capture pipeline (main stream)
-just auto
+just capture auto
 
 # 3. Start the YouTube Music crop capture pipeline
-just ytm
+just capture youtube-music
 
 # 4. Start the keystroke counter pipeline
 just kpm
 
 # Open the frontend — the server is the entry point.
-# http://localhost:3000
+# http://localhost:$LIVE_PORT
 
 # (Optional) Launch the webview host
 just app
@@ -81,7 +82,7 @@ just app
 just youtube-music
 ```
 
-Each capture pipeline is a Unix pipe: `live-capture ... | live-ws --mode video ...`. The Nushell orchestration scripts in `.mod.nu` handle the full command lines.
+Each capture pipeline is a Unix pipe: `live-capture ... | live-ws --mode video ...`. The Nushell orchestration scripts in `mod.nu` handle the full command lines.
 
 ---
 
@@ -152,8 +153,21 @@ graph LR
 | Keystroke counting | Rust (`live-kpm`, standalone) | `WH_KEYBOARD_LL` hook on a dedicated message pump thread. Privacy-by-design. |
 | HTTP/WS server | TypeScript (Bun/Hono) | Thin relay — no binary parsing, no process management. Fast iteration. |
 | Window discovery | Rust (`enumerate-windows`) | Lightweight binary for Nushell scripts. JSON output. |
-| Orchestration | Nushell (`.mod.nu`) | Launches pipelines, discovers YTM windows, manages service lifecycle. |
+| Orchestration | Nushell (`mod.nu`) | Launches pipelines, discovers YTM windows, manages service lifecycle. |
 | Frontend | React + WebCodecs | Pure viewer. Receives `live-protocol` framed messages via WS. Zero H.264 knowledge. |
+
+### Well-Known Stream IDs
+
+The system uses **fixed, well-known stream IDs** rather than dynamically generated ones.  Each pipeline is assigned its ID at launch (via `--stream-id` on `live-ws`), and the frontend hardcodes the same IDs.
+
+| Stream ID | Producer | Purpose |
+|-----------|----------|---------|
+| `"main"` | `live-capture --mode auto` | Foreground window (auto-selector) |
+| `"youtube-music"` | `live-capture --mode crop` | YouTube Music playback bar |
+
+**Why fixed IDs?**  The frontend is a pure viewer — it has zero stream management logic.  It renders `"main"` unconditionally and shows `"youtube-music"` when available (polled via `GET /api/v1/streams`).  No discovery protocol, no negotiation, no dynamic allocation.  When the auto-selector hot-swaps the captured window, the stream ID stays `"main"` — the server sends fresh CodecParams and a keyframe, and the frontend reinitializes its decoder.
+
+**Where IDs are assigned:**  Nushell orchestration (`mod.nu`) passes `--stream-id` to `live-ws`, which connects to `/api/v1/streams/ws/:id/input`.  The server creates the stream slot on first encoder connection.
 
 ### Design Principles
 
@@ -273,9 +287,9 @@ Served by the TS server (Bun/Hono). Port configured via `LIVE_PORT` (required). 
 
 #### Video Relay (WebSocket)
 
-**`WS /api/v1/ws/video/:id/input`** — Encoder input. Receives `live-protocol` binary messages from `live-ws`. The server peeks at header bytes 0-1 to cache CodecParams and keyframes, then fan-outs to all connected frontend clients.
+**`WS /api/v1/streams/ws/:id/input`** — Encoder input. Receives `live-protocol` binary messages from `live-ws`. The server peeks at header bytes 0-1 to cache CodecParams and keyframes, then fan-outs to all connected frontend clients.
 
-**`WS /api/v1/ws/video/:id`** — Frontend viewer. Pushes relayed binary messages. On connect, sends cached CodecParams + last keyframe for immediate playback.
+**`WS /api/v1/streams/ws/:id`** — Frontend viewer. Pushes relayed binary messages. On connect, sends cached CodecParams + last keyframe for immediate playback.
 
 **`GET /api/v1/streams`** — List active streams (derived from connected encoder WS sockets).
 
@@ -296,9 +310,9 @@ Served by the TS server (Bun/Hono). Port configured via `LIVE_PORT` (required). 
 
 #### KPM Relay (WebSocket)
 
-**`WS /api/v1/ws/kpm/input`** — KPM input from `live-kpm` via `live-ws`. Binary `live-protocol` messages.
+**`WS /api/v1/kpm/ws/input`** — KPM input from `live-kpm` via `live-ws`. Binary `live-protocol` messages.
 
-**`WS /api/v1/ws/kpm`** — Frontend KPM display. Pushes `{"kpm": N}` or `{"kpm": null}` JSON text. Initial value sent on connect.
+**`WS /api/v1/kpm/ws`** — Frontend KPM display. Pushes `{"kpm": N}` or `{"kpm": null}` JSON text. Initial value sent on connect.
 
 #### String Store
 
@@ -484,7 +498,7 @@ Widgets are rendered inside `SidePanel` (the left column island in `app.tsx`), w
 LiveUI/
 ├── Cargo.toml                       # Workspace root
 ├── .justfile                        # Task runner recipes (just)
-├── .mod.nu                          # Nushell orchestration module
+├── mod.nu                           # Nushell orchestration module
 │
 ├── docs/
 │   ├── README.md                    # This document
@@ -529,6 +543,7 @@ LiveUI/
 │   ├── package.json
 │   └── src/
 │       ├── index.ts                 # Entry point, route mounting, Vite child, shutdown
+│       ├── log.ts                   # Colored structured logging (markers, alignment, levels)
 │       ├── protocol.ts              # Hand-written constants matching live-protocol
 │       ├── video.ts                 # WS relay (encoder input → frontend), codec caching
 │       ├── codec.ts                 # build_codec_string, build_avcc_descriptor in TS
