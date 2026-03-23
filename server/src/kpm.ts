@@ -11,6 +11,9 @@
 import { Hono } from "hono";
 import { upgradeWebSocket } from "hono/bun";
 import { MessageType, HEADER_SIZE } from "./protocol";
+import { createLogger } from "./log";
+
+const log = createLogger("kpm");
 
 // ── State ───────────────────────────────────────────────────────────────────
 
@@ -28,7 +31,7 @@ app.get(
     "/ws/input",
     upgradeWebSocket(() => ({
         onOpen() {
-            console.log("[kpm] input connected");
+            log.info("input connected");
         },
 
         onMessage(event) {
@@ -54,7 +57,7 @@ app.get(
         },
 
         onClose() {
-            console.log("[kpm] input disconnected");
+            log.info("input disconnected");
             lastKpmValue = null;
             // Push null to frontends.
             const json = JSON.stringify({ kpm: null });
@@ -78,13 +81,13 @@ app.get(
             ws.send(JSON.stringify({ kpm: lastKpmValue }));
 
             (ws as any).__client = client;
-            console.log(`[kpm] frontend connected (${frontendClients.size} clients)`);
+            log.info(`frontend connected (${frontendClients.size} clients)`);
         },
 
         onClose(_event, ws) {
             const client = (ws as any).__client as KpmClient | undefined;
             if (client) frontendClients.delete(client);
-            console.log(`[kpm] frontend disconnected (${frontendClients.size} clients)`);
+            log.info(`frontend disconnected (${frontendClients.size} clients)`);
         },
     }))
 );

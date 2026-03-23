@@ -6,6 +6,9 @@
 
 import { Hono } from "hono";
 import { setComputed, clearComputed } from "./strings";
+import { createLogger } from "./log";
+
+const log = createLogger("core");
 
 const app = new Hono();
 
@@ -33,7 +36,7 @@ app.post("/streamInfo/:streamId", async (c) => {
         clearComputed("$liveMode");
     }
 
-    console.log(`[core] streamInfo: ${body.file_description || body.title} (mode: ${body.mode ?? "none"})`);
+    log.info(`streamInfo: ${body.file_description || body.title} (mode: ${body.mode ?? "none"})`);
     return c.json({ ok: true });
 });
 

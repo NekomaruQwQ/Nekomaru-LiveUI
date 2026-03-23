@@ -15,6 +15,7 @@ import { Hono } from "hono";
 import { upgradeWebSocket } from "hono/bun";
 import { MessageType, Flags, getMessageType, getFlags, HEADER_SIZE } from "./protocol";
 import { parseCodecParams, buildCodecString, buildAvccDescriptor } from "./codec";
+import { createStreamLogger } from "./log";
 
 // ── Per-Stream State ────────────────────────────────────────────────────────
 
@@ -97,7 +98,8 @@ app.get(
             onOpen(_event, ws) {
                 const state = getOrCreateStream(id);
                 state.encoderConnected = true;
-                console.log(`[video] encoder connected: ${id}`);
+                const log = createStreamLogger(id, "video");
+                log.info("encoder connected");
             },
 
             onMessage(event, _ws) {
@@ -134,7 +136,7 @@ app.get(
                 if (state) {
                     state.encoderConnected = false;
                     // Keep cached data for brief reconnects.
-                    console.log(`[video] encoder disconnected: ${id}`);
+                    createStreamLogger(id, "video").info("encoder disconnected");
                 }
             },
         };
@@ -160,7 +162,7 @@ app.get(
                     ws.send(state.cachedKeyframe.buffer as ArrayBuffer);
                 }
 
-                console.log(`[video] frontend connected: ${id} (${state.frontendClients.size} clients)`);
+                createStreamLogger(id, "video").info(`frontend connected (${state.frontendClients.size} clients)`);
 
                 // Store the client ref on the ws for cleanup in onClose.
                 (ws as any).__client = client;
@@ -171,7 +173,7 @@ app.get(
                 const client = (ws as any).__client;
                 if (state && client) {
                     state.frontendClients.delete(client);
-                    console.log(`[video] frontend disconnected: ${id} (${state.frontendClients.size} clients)`);
+                    createStreamLogger(id, "video").info(`frontend disconnected (${state.frontendClients.size} clients)`);
                 }
             },
         };

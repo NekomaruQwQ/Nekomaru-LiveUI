@@ -12,6 +12,9 @@
 
 import { Hono } from "hono";
 import { loadJson, saveJson, ensureDataDir, DATA_DIR } from "./persist";
+import { createLogger } from "./log";
+
+const log = createLogger("strings");
 
 import * as fs from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -66,7 +69,7 @@ export async function loadStrings(): Promise<void> {
         // Directory might not exist yet.
     }
 
-    console.log(`[strings] loaded ${Object.keys(store).length} strings`);
+    log.info(`loaded ${Object.keys(store).length} strings`);
 }
 
 /** Save single-line strings to disk. */

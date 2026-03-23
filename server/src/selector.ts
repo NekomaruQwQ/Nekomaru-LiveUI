@@ -7,6 +7,9 @@
 
 import { Hono } from "hono";
 import { loadJson, saveJson, ensureDataDir, DATA_DIR } from "./persist";
+import { createLogger } from "./log";
+
+const log = createLogger("selector");
 
 import * as path from "node:path";
 
@@ -44,7 +47,7 @@ let config: PresetConfig = { ...DEFAULT_CONFIG };
 export async function loadSelectorConfig(): Promise<void> {
     await ensureDataDir();
     config = await loadJson(CONFIG_PATH, DEFAULT_CONFIG);
-    console.log(`[selector] loaded config: preset="${config.preset}", ${Object.keys(config.presets).length} preset(s)`);
+    log.info(`loaded config: preset="${config.preset}", ${Object.keys(config.presets).length} preset(s)`);
 }
 
 // ── Routes ──────────────────────────────────────────────────────────────────

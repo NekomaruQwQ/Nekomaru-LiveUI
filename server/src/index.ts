@@ -19,6 +19,9 @@ import coreRoutes from "./core";
 
 import { loadStrings } from "./strings";
 import { loadSelectorConfig } from "./selector";
+import { createLogger } from "./log";
+
+const log = createLogger("server");
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -26,7 +29,7 @@ const PORT = Number(process.env.LIVE_PORT);
 const VITE_PORT = Number(process.env.LIVE_VITE_PORT);
 
 if (!PORT || !VITE_PORT) {
-    console.error("Both LIVE_PORT and LIVE_VITE_PORT are required");
+    log.error("Both LIVE_PORT and LIVE_VITE_PORT are required");
     process.exit(1);
 }
 
@@ -96,7 +99,7 @@ const viteProcess = Bun.spawn(
         stderr: "inherit",
     });
 
-console.log(`[server] spawned vite on port ${VITE_PORT} (pid ${viteProcess.pid})`);
+log.info(`spawned vite on port ${VITE_PORT} (pid ${viteProcess.pid})`);
 
 // Start the Bun HTTP + WS server.
 const server = Bun.serve({
@@ -105,12 +108,12 @@ const server = Bun.serve({
     websocket,
 });
 
-console.log(`[server] listening on http://localhost:${PORT}`);
+log.info(`listening on http://localhost:${PORT}`);
 
 // ── Graceful Shutdown ───────────────────────────────────────────────────────
 
 process.on("SIGINT", () => {
-    console.log("[server] shutting down...");
+    log.info("shutting down...");
     viteProcess?.kill();
     server.stop();
     process.exit(0);
