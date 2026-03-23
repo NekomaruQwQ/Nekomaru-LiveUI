@@ -12,12 +12,22 @@
 //! enumerate-windows --foreground
 //! ```
 
+use clap::Parser;
+
+/// List capturable windows as JSON.
+#[derive(Parser)]
+#[command(name = "enumerate-windows")]
+struct CliArgs {
+    /// Print only the current foreground window instead of all windows.
+    #[arg(long)]
+    foreground: bool,
+}
+
 fn main() {
     let _ = set_dpi_awareness::per_monitor_v2();
+    let args = CliArgs::parse();
 
-    let foreground = std::env::args().any(|a| a == "--foreground");
-
-    if foreground {
+    if args.foreground {
         let window = enumerate_windows::get_foreground_window();
         println!("{}", serde_json::to_string(&window).expect("JSON serialization failed"));
     } else {
