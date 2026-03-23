@@ -74,14 +74,6 @@ struct CliArgs {
     #[arg(long, value_parser = parse_capture_mode_arg, default_value = "base")]
     mode: CaptureModeArg,
 
-    /// List visible windows as JSON and exit.
-    #[arg(long)]
-    enumerate_windows: bool,
-
-    /// Print the current foreground window as JSON and exit.
-    #[arg(long)]
-    foreground_window: bool,
-
     /// Window handle (decimal or 0x hex). Required for base and crop modes.
     #[arg(long, value_parser = parse_hwnd)]
     hwnd: Option<isize>,
@@ -181,13 +173,7 @@ fn parse_hwnd(s: &str) -> Result<isize, String> {
 }
 
 /// Validate and resolve the CLI args into a `CaptureMode`.
-///
-/// Returns `None` for utility modes (enumerate / foreground).
-fn resolve_capture_mode(args: &CliArgs) -> anyhow::Result<Option<CaptureMode>> {
-    if args.enumerate_windows || args.foreground_window {
-        return Ok(None);
-    }
-
+fn resolve_capture_mode(args: &CliArgs) -> anyhow::Result<CaptureMode> {
     match args.mode {
         CaptureModeArg::Auto => {
             let w = args.width.unwrap_or(DEFAULT_WIDTH);
@@ -195,7 +181,7 @@ fn resolve_capture_mode(args: &CliArgs) -> anyhow::Result<Option<CaptureMode>> {
             anyhow::ensure!(
                 w.is_multiple_of(16) && h.is_multiple_of(16),
                 "width and height must be multiples of 16 (got {w}x{h})");
-            Ok(Some(CaptureMode::Auto { width: w, height: h }))
+            Ok(CaptureMode::Auto { width: w, height: h })
         }
         CaptureModeArg::Crop => {
             let (Some(min_x), Some(min_y), Some(max_x), Some(max_y)) =
@@ -206,7 +192,7 @@ fn resolve_capture_mode(args: &CliArgs) -> anyhow::Result<Option<CaptureMode>> {
             anyhow::ensure!(args.hwnd.is_some(), "crop mode requires --hwnd");
             anyhow::ensure!(max_x > min_x, "crop-max-x ({max_x}) must be greater than crop-min-x ({min_x})");
             anyhow::ensure!(max_y > min_y, "crop-max-y ({max_y}) must be greater than crop-min-y ({min_y})");
-            Ok(Some(CaptureMode::Crop(CropBox { min_x, min_y, max_x, max_y })))
+            Ok(CaptureMode::Crop(CropBox { min_x, min_y, max_x, max_y }))
         }
         CaptureModeArg::Base => {
             let (Some(w), Some(h)) = (args.width, args.height) else {
@@ -216,7 +202,7 @@ fn resolve_capture_mode(args: &CliArgs) -> anyhow::Result<Option<CaptureMode>> {
             anyhow::ensure!(
                 w.is_multiple_of(16) && h.is_multiple_of(16),
                 "width and height must be multiples of 16 (got {w}x{h})");
-            Ok(Some(CaptureMode::Resample { width: w, height: h }))
+            Ok(CaptureMode::Resample { width: w, height: h })
         }
     }
 }
@@ -228,21 +214,15 @@ fn resolve_capture_mode(args: &CliArgs) -> anyhow::Result<Option<CaptureMode>> {
 ///   go to `live-capture.encoder.log` next to the executable.
 /// - Warnings and errors from encoder code still go to stderr.
 /// - Everything else goes to stderr as usual.
-///
-/// `capture_mode` controls whether the encoder log file is created.  Utility
-/// modes (`--enumerate-windows`, `--foreground-window`) pass `false` to avoid
-/// truncating a log file that a concurrent capture process is writing to.
-fn init_logger(capture_mode: bool, stream_id: Option<String>) {
+fn init_logger(stream_id: Option<String>) {
     use pretty_env_logger::env_logger::fmt::Color;
 
-    let encoder_log_file: Option<Mutex<std::fs::File>> = if capture_mode {
+    let encoder_log_file: Option<Mutex<std::fs::File>> = {
         std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|d| d.join("live-capture.encoder.log")))
             .and_then(|p| std::fs::File::create(p).ok())
             .map(Mutex::new)
-    } else {
-        None
     };
 
     let tag = stream_id.map_or_else(String::new, |id| format!(" @{id}"));
@@ -280,24 +260,10 @@ fn main() {
     let _ = set_dpi_awareness::per_monitor_v2();
 
     let args = CliArgs::parse();
-    let is_capture_mode = !args.enumerate_windows && !args.foreground_window;
-    init_logger(is_capture_mode, args.stream_id.clone());
-
-    if args.enumerate_windows {
-        let windows = enumerate_windows::enumerate_windows();
-        println!("{}", serde_json::to_string(&windows).expect("JSON serialization failed"));
-        return;
-    }
-
-    if args.foreground_window {
-        let window = enumerate_windows::get_foreground_window();
-        println!("{}", serde_json::to_string(&window).expect("JSON serialization failed"));
-        return;
-    }
+    init_logger(args.stream_id.clone());
 
     let mode = match resolve_capture_mode(&args) {
-        Ok(Some(m)) => m,
-        Ok(None) => return,
+        Ok(m) => m,
         Err(e) => {
             eprintln!("error: {e}");
             std::process::exit(1);
