@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "live-app",
+    "live-protocol",
     "live-server",
     "live-video",
     "crates/enumerate-windows",
@@ -30,6 +31,7 @@ branch = "main"
 enumerate-windows = { path = "crates/enumerate-windows" }
 set-dpi-awareness = { path = "crates/set-dpi-awareness" }
 job-object = { path = "crates/job-object" }
+live-protocol = { path = "live-protocol" }
 live-video = { path = "live-video" }
 anyhow = "1"
 axum = { version = "0.8", features = ["ws"] }
