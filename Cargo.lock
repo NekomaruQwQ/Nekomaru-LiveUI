@@ -1255,6 +1255,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "live-capture"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "enumerate-windows",
+ "live-protocol",
+ "log",
+ "ngd3dcompile_macro",
+ "nkcore",
+ "pretty-name",
+ "pretty_env_logger",
+ "serde_json",
+ "set-dpi-awareness",
+ "widestring",
+ "windows 0.62.2",
+ "winrt-capture",
+]
+
+[[package]]
 name = "live-protocol"
 version = "0.1.0"
 
