@@ -1,4 +1,4 @@
-# Nekomaru LiveUI v2
+# Nekomaru LiveUI
 
 Nekomaru's streaming infrastructure. **Portfolio demonstration only.**
 

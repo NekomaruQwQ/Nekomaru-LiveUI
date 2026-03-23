@@ -2,8 +2,24 @@
 
 **Low-latency (<100ms) screen capture streaming from DirectX 11 to the browser**
 
-**Last Updated**: 2026-03-18
+**Last Updated**: 2026-03-23
 **Hardware**: RTX 5090 | Windows 11
+
+---
+
+## Milestones
+
+This project is not semantically versioned. Instead, we track **milestones** (Mx) — architectural evolution points.
+
+| Milestone | Architecture | Key Characteristics |
+|-----------|-------------|---------------------|
+| **M0** | Prototype | Auto-selector only — first proof of concept |
+| **M1** | Monolith | Single Rust/wry process: capture + encoding + HTTP + webview |
+| **M2** | Client-Server (TS) | TS server (Hono/Bun) + Rust capture children + React frontend + Rust webview host |
+| **M3** | Client-Server (Rust) | Full RIIR — Rust server (Axum) replaces TS server. **Current working state.** |
+| **M4** | Microservice | Rust capture workers as independent WS-connected processes, TS relay server (Hono/Bun). See [`M4-DESIGN.md`](M4-DESIGN.md). |
+
+**This document describes M3** — the current working architecture.
 
 ---
 
@@ -670,7 +686,7 @@ Within `live-video.exe`, the capture thread (main) and encoding thread share a s
 ## File Structure
 
 ```
-Nekomaru-LiveUI-v2/
+LiveUI/
 ├── Cargo.toml                       # Workspace root
 ├── .justfile                        # Task runner recipes (just)
 ├── .mod.nu                          # Nushell module: copy-and-run helper for live-app

@@ -28,11 +28,11 @@ app *args:
     use .mod.nu run-app; \
     run-app app $"{{base_url}}" \
         -x 1280 -y 720 \
-        -t "Nekomaru LiveUI v2" \
+        -t "Nekomaru LiveUI" \
         {{args}}
 youtube-music *args:
     use .mod.nu run-app; \
     run-app youtube-music "https://music.youtube.com/" \
         -x 1280 -y 720 -s 2 \
-        -t "YouTube Music - Nekomaru LiveUI v2" \
+        -t "YouTube Music - Nekomaru LiveUI" \
         {{args}}

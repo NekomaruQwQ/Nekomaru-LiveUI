@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn matches_title_case_insensitive() {
         let p = parse_pattern("Code.exe@liveui");
-        assert!(matches_parsed(&p, "C:\\Code.exe", "Nekomaru LiveUI v2", false));
+        assert!(matches_parsed(&p, "C:\\Code.exe", "Nekomaru LiveUI", false));
         assert!(!matches_parsed(&p, "C:\\Code.exe", "Some Other Window", false));
     }
 

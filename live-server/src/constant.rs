@@ -67,7 +67,7 @@ pub const KPM_WINDOW_DURATION_MS: u64 = 5000;
 // ── YouTube Music ───────────────────────────────────────────────────────────
 
 /// Expected YouTube Music window title.
-pub const YOUTUBE_MUSIC_WINDOW_TITLE: &str = "YouTube Music - Nekomaru LiveUI v2";
+pub const YOUTUBE_MUSIC_WINDOW_TITLE: &str = "YouTube Music - Nekomaru LiveUI";
 
 /// Compute the crop box for the YouTube Music playback bar.
 ///

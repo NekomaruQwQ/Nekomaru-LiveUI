@@ -1,7 +1,7 @@
 //! YouTube Music stream manager.
 //!
 //! Polls `enumerate_windows::enumerate_windows()` every 5 seconds looking for
-//! a window titled "YouTube Music - Nekomaru LiveUI v2".  When found, creates
+//! a window titled "YouTube Music - Nekomaru LiveUI".  When found, creates
 //! (or replaces) a crop-mode stream capturing the bottom playback bar.  When
 //! the window disappears, the stream is destroyed.
 

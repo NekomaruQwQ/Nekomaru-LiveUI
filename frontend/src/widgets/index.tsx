@@ -99,7 +99,7 @@ export function AboutWidget({ strings }: { strings: Record<string, string> }) {
     const timestamp = strings.$timestamp ?? "";
     return <div className="text-xs">
         <LiveWidget
-            name="Nekomaru LiveUI v2"
+            name="Nekomaru LiveUI"
             icon={<InfoIcon size={30} />}>
             <div className="text-xs opacity-50">
                 {timestamp && <span>Build {timestamp.slice(0, 16)}</span>}
