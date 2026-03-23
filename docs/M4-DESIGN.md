@@ -196,7 +196,40 @@ Instead of one parameterized `live-core` or separate binaries per behavior, a si
 
 Each mode is a self-contained worker. No inter-process GPU sharing.
 
-### Step 11: Remove live-audio
+### Step 11: Shared Protocol Crate (live-protocol)
+
+All components need a common binary framing protocol. Rather than each crate defining its own wire format (as in M3, where `live-video/src/lib.rs` defined the stdout protocol), a shared `live-protocol` lib crate provides a single 8-byte aligned frame header and message type enum used by all producers and consumers.
+
+The header is 4-byte aligned (unlike M3's 5-byte header) for clean DataView access:
+
+```
+Offset  Field            Size    Notes
+0       message_type     u8      0x01=CodecParams, 0x02=Frame, 0x10=KpmUpdate, ...
+1       flags            u8      bit 0: IS_KEYFRAME (video), bits 1-7: reserved
+2       reserved         u16     zero for now
+4       payload_length   u32 LE
+```
+
+Metadata like `is_keyframe` moves from the payload into the header `flags` field, so routing decisions (in `live-ws` and the server) only need to read bytes 0-1 — no payload inspection.
+
+### Step 12: Stdout-First Producers + live-ws Relay
+
+**Insight**: Capture and KPM processes don't need to know about WebSocket. They write `live-protocol` framed messages to stdout. A separate `live-ws` binary reads stdin and relays each message as a WS binary message to the server.
+
+```
+live-capture ... | live-ws --mode video --server ws://machineA:3000/.../input
+live-kpm        | live-ws --server ws://machineA:3000/.../kpm/input
+```
+
+**Benefits**:
+- Producers have one code path (stdout). No WS client, no reconnect logic, no networking dependencies.
+- `live-ws` is reusable for any framed stream. One reconnect/backoff implementation.
+- Testing: `live-capture > dump.bin` IS the production code path.
+- Clean separation of concerns: capture = GPU/encoding, relay = networking.
+
+**`live-ws --mode video`** additionally caches the last `CodecParams` message and last keyframe (identified via header `message_type` and `flags.IS_KEYFRAME`). On WS reconnect, it replays cached messages before resuming the live stream, so the server immediately has valid codec state.
+
+### Step 13: Remove live-audio
 
 live-audio (WASAPI capture → network → browser playback) has been the most fragile part of the project. Choppy audio is a disaster for livestreaming.
 
@@ -204,7 +237,7 @@ With YouTube Music on the streaming machine, OBS captures audio directly from th
 
 **live-audio is eliminated entirely.**
 
-### Step 12: TypeScript Server
+### Step 14: TypeScript Server
 
 The M3 RIIR (Rewrite It In Rust) rationale for the server was:
 1. Eliminate protocol duplication (TS had hand-written binary parsers mirroring Rust types)
@@ -227,55 +260,50 @@ A TypeScript server (Bun/Hono) would offer:
 ## M4 Final Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│ Machine A (Streaming)                                    │
-│                                                          │
-│   ┌──────────────────┐    WS (video)   ┌──────────┐    │
-│   │ live-capture      │ ─────────────→ │          │    │
-│   │ --mode crop       │                │  Server  │    │
-│   │ (youtube-music)   │                │  (TS)    │    │
-│   └──────────────────┘                  │          │    │
-│                          WS (video)     │          │ WS │
-│   ┌──────────────────┐ ──────────────→ │          │ ──→│ Frontend
-│   │ live-capture      │    (from LAN)  │          │    │ / OBS
-│   │ --mode auto       │                │          │    │
-│   │ (main, Machine B) │                │          │    │
-│   └──────────────────┘                  │          │    │
-│                          HTTP (kpm)     │          │    │
-│   ┌──────────┐ ────────────────────── → │          │    │
-│   │ live-kpm  │        (from LAN)       └──────────┘    │
-│   │(Machine B)│                              ↑          │
-│   └──────────┘                    HTTP (config poll)    │
-│                                              │          │
-│   YouTube Music ← audio captured by OBS      │          │
-│   OBS ← captures everything                  │          │
-│   live-app (wry webview)                     │          │
-└──────────────────────────────────────────────┼──────────┘
-                                               │
-┌──────────────────────────────────────────────┼──────────┐
-│ Machine B (Working)                          │          │
-│                                              │          │
-│   ┌──────────────────┐  WS (video frames)    │          │
-│   │ live-capture      │ ────────────────────┘          │
-│   │ --mode auto       │                                  │
-│   │ --stream-id main  │                                  │
-│   │ --server machineA │  HTTP (kpm)                      │
-│   └──────────────────┘                                   │
-│                           ┌──────────┐                   │
-│   ┌──────────┐            │ live-kpm  │ HTTP ──→ machineA│
-│   │ Coding   │            └──────────┘                   │
-│   │ Sessions │                                           │
-│   └──────────┘                                           │
-└──────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│ Machine A (Streaming)                                            │
+│                                                                  │
+│   live-capture --mode crop | live-ws ──WS──→ ┌──────────┐      │
+│   (youtube-music, local)                      │          │      │
+│                                               │  Server  │      │
+│                              WS (from LAN) ─→ │  (TS)    │ ──WS─→ Frontend
+│   live-capture --mode auto | live-ws ─────┘  │          │       │  / OBS
+│   (main, Machine B)                           │          │      │
+│                              WS (from LAN) ─→ │          │      │
+│   live-kpm | live-ws ────────────────────┘    └──────────┘      │
+│   (Machine B)                                      ↑             │
+│                                         HTTP (config poll)       │
+│   YouTube Music ← audio captured by OBS            │             │
+│   OBS ← captures everything                       │             │
+│   live-app (wry webview)                           │             │
+└────────────────────────────────────────────────────┼─────────────┘
+                                                     │
+┌────────────────────────────────────────────────────┼─────────────┐
+│ Machine B (Working)                                │             │
+│                                                    │             │
+│   live-capture --mode auto ─→ stdout ─→ live-ws ──WS──→ machineA│
+│   (foreground polling, hot-swap encoder)                         │
+│                                    HTTP (config poll) ──→ machineA│
+│                                    HTTP (streamInfo)  ──→ machineA│
+│                                                                  │
+│   live-kpm ─→ stdout ─→ live-ws ──WS──→ machineA                │
+│                                                                  │
+│   ┌──────────┐                                                   │
+│   │ Coding   │                                                   │
+│   │ Sessions │                                                   │
+│   └──────────┘                                                   │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ### Component Summary
 
 | Component | Language | Role | Input | Output |
 |---|---|---|---|---|
-| **Server** | TypeScript (Bun/Hono) | HTTP/WS hub, relay, string store, config | WS (video), HTTP (worker events) | WS (frontend), HTTP API |
-| **live-capture** | Rust | Capture + encode (base/auto/crop modes) | CLI args (mode, HWND, resolution, server URL) | WS binary frames + HTTP POSTs (auto mode) |
-| **live-kpm** | Rust | Keystroke counter | CLI args (server URL) | HTTP POST (KPM value) |
+| **live-protocol** | Rust (lib) | Shared binary frame header + message types | — | Used by all Rust crates |
+| **live-capture** | Rust | Capture + encode (base/auto/crop modes) | CLI args (mode, HWND, resolution) | stdout (live-protocol framed) + HTTP POSTs (auto mode metadata) |
+| **live-kpm** | Rust | Keystroke counter | — | stdout (live-protocol framed) |
+| **live-ws** | Rust | stdin → WS relay | stdin (live-protocol framed) | WS binary messages to server |
+| **Server** | TypeScript (Bun/Hono) | HTTP/WS hub, relay, string store, config | WS (video, kpm), HTTP (worker events) | WS (frontend), HTTP API |
 | **live-app** | Rust (wry) | Webview host | CLI args (URL) | — |
 | **Frontend** | React + Vite | Viewer UI | WS (video, strings, kpm) | — |
 
@@ -283,35 +311,54 @@ A TypeScript server (Bun/Hono) would offer:
 
 ## Component Design
 
+### live-protocol (Rust, lib crate)
+
+Shared binary framing protocol used by all Rust components. Defines the 8-byte frame header, message types, flags, and read/write helpers.
+
+**Types**:
+- `MessageType` enum (`#[repr(u8)]`): `CodecParams = 0x01`, `Frame = 0x02`, `KpmUpdate = 0x10`, `Error = 0xFF`
+- `Flags` constants: bit 0 = `IS_KEYFRAME`
+- `FrameHeader`: `message_type: u8`, `flags: u8`, `reserved: u16`, `payload_length: u32`
+- Read/write: `write_message()`, `read_message()`
+- AVCC helpers: `strip_start_code()`, `serialize_avcc_payload()`, `build_codec_string()`, `build_avcc_descriptor()` — moved from `live-server/src/video/buffer.rs`
+
+**Video payload layouts** (documented for TS server interop):
+- `CodecParams (0x01)`: `[u16 LE: width][u16 LE: height][u16 LE: sps_len][sps][u16 LE: pps_len][pps]`
+- `Frame (0x02)`: `[u64 LE: timestamp_us][avcc bytes]` (is_keyframe is in the header flags, not in the payload)
+
 ### live-capture (Rust, library + binary)
 
-The foundational capture unit. Compiles to both a library and a binary.
+The foundational capture unit. Compiles to both a library and a binary. **Always outputs to stdout** via `live-protocol` framing — no networking code.
 
 **Library** (`live-capture/src/lib.rs`): Reusable capture + encode pipeline.
 - WinRT `CaptureSession` wrapper
 - GPU resampler (fullscreen quad shader) and cropper (`CopySubresourceRegion`)
 - BGRA→NV12 converter (`ID3D11VideoProcessor`)
 - NVENC H.264 encoder (async MFT)
-- Annex B → AVCC conversion (server receives opaque AVCC bytes)
+- Annex B → AVCC conversion (via `live-protocol` helpers)
 - "Bakery model": capture thread writes to staging texture, encoding thread reads at fixed FPS
 - D3D11 device and texture helpers
-- Binary frame protocol types (carried from M3)
-- WS client for pushing encoded frames
 
-**Binary** (`live-capture/src/main.rs`): Three capture modes selected by `--mode`.
+**Binary** (`live-capture/src/main.rs`): Three capture modes selected by `--mode`. All modes write `live-protocol` framed messages to stdout. Pipe through `live-ws` for network delivery.
 
 ```bash
 # Base mode (default when --mode is omitted) — capture a specific window, resample to target resolution
-live-capture.exe --server ws://machineA:3000 --stream-id my-stream --hwnd 0x1A2B --width 1920 --height 1200
+live-capture.exe --hwnd 0x1A2B --width 1920 --height 1200 \
+  | live-ws --mode video --server ws://machineA:3000/api/v1/ws/video/my-stream/input
 
 # Auto mode — auto-selector polls foreground, hot-swaps capture, resampling implied
-live-capture.exe --mode auto --server ws://machineA:3000 --stream-id main --width 1920 --height 1200 --config-url http://machineA:3000/api/v1/streams/auto/config
+live-capture.exe --mode auto --width 1920 --height 1200 \
+  --config-url http://machineA:3000/api/v1/streams/auto/config \
+  --event-url http://machineA:3000/api/core/streamInfo/main \
+  | live-ws --mode video --server ws://machineA:3000/api/v1/ws/video/main/input
 
 # Crop mode — extract an absolute subrect at native resolution
-live-capture.exe --mode crop --server ws://machineA:3000 --stream-id youtube-music --hwnd 0x1A2B --crop-min-x 0 --crop-min-y 600 --crop-max-x 1920 --crop-max-y 700
+live-capture.exe --mode crop --hwnd 0x1A2B \
+  --crop-min-x 0 --crop-min-y 600 --crop-max-x 1920 --crop-max-y 700 \
+  | live-ws --mode video --server ws://machineA:3000/api/v1/ws/video/youtube-music/input
 
-# Stdout mode for testing (any mode, replaces --server)
-live-capture.exe --stdout --hwnd 0x1A2B --width 1920 --height 1200 > dump.bin
+# Dump to file for testing (production code path, no special test mode)
+live-capture.exe --hwnd 0x1A2B --width 1920 --height 1200 > dump.bin
 ```
 
 **Hot-swap support** (auto mode): The library exposes a method to replace the `CaptureSession` targeting a new HWND while keeping the encoder running. The staging texture dimensions don't change (fixed per stream).
@@ -320,26 +367,49 @@ live-capture.exe --stdout --hwnd 0x1A2B --width 1920 --height 1200 > dump.bin
 - Polls foreground window every 2s (`enumerate_windows::get_foreground_window()`)
 - Matches against selector config (polled from `--config-url`)
 - Hot-swaps capture session on match (via library)
-- POSTs stream info to server on each switch (`POST /api/core/streamInfo/:streamId`)
-- Pushes encoded frames via WS
+- POSTs stream info to server on each switch (`POST /api/core/streamInfo/:streamId`) — the only HTTP live-capture does
+- Writes encoded frames to stdout (live-protocol framing)
 
 **Thread model** (all modes):
-- Tokio runtime: WS client (all modes), HTTP client + selector timer (auto mode)
-- Encoding thread: reads staging texture, converts, encodes (from library)
+- Encoding thread: reads staging texture, converts, encodes, writes to stdout
 - Capture callback: WinRT thread pool, writes staging texture
+- HTTP client thread (auto mode only): selector timer + config polling + event POSTs
 
-### live-kpm (Rust binary)
+### live-ws (Rust, binary)
 
-Standalone keystroke counter. Same privacy-by-design: never reads key identity.
+Stdin-to-WebSocket relay. Reads `live-protocol` framed messages from stdin and forwards each as a WS binary message to the server.
 
 ```bash
-live-kpm.exe --server http://machineA:3000
+# Default mode — dumb framed forwarding with auto-reconnect
+live-kpm | live-ws --server ws://machineA:3000/api/v1/ws/kpm/input
+
+# Video mode — additionally caches CodecParams + last keyframe for reconnect replay
+live-capture ... | live-ws --mode video --server ws://machineA:3000/api/v1/ws/video/main/input
+```
+
+**Architecture**:
+- Stdin reader: blocking thread reads `live_protocol::read_message()` in a loop, sends to a channel
+- WS writer: tokio task consumes channel, sends to WS. On disconnect: drain/discard channel, reconnect with exponential backoff, replay cache if `--mode video`, resume.
+
+**`--mode video`**: peeks at `message_type` and `flags.IS_KEYFRAME` in the header to cache:
+- Last `CodecParams` message (for codec state on reconnect)
+- Last keyframe (for a clean entry point on reconnect)
+
+On reconnect, replays cached messages before resuming the live stream. This means the encoder doesn't need to know about WS state — it just writes to stdout continuously.
+
+### live-kpm (Rust, binary)
+
+Standalone keystroke counter. Same privacy-by-design: never reads key identity. **Outputs to stdout** via `live-protocol` framing. Pipe through `live-ws` for network delivery.
+
+```bash
+live-kpm | live-ws --server ws://machineA:3000/api/v1/ws/kpm/input
+# Or dump to file for testing:
+live-kpm > kpm.bin
 ```
 
 **Architecture**:
 - Message pump thread: `WH_KEYBOARD_LL` hook, atomic counter
-- Tokio runtime: 50ms batch timer, sliding window calculator, HTTP POST on value change
-- POSTs `{ "kpm": N }` to `POST /api/core/kpm`
+- Timer thread: 50ms batch polling, sliding window calculator, writes `MessageType::KpmUpdate` messages to stdout on value change
 
 ### Server (TypeScript, Bun/Hono)
 
@@ -355,33 +425,50 @@ Thin HTTP/WS hub. No Win32, no GPU, no binary protocol parsing.
 **Other endpoints** (carried from M3):
 - `GET/PUT/DELETE /api/v1/strings/:key` — string store
 - `WS /api/v1/ws/strings` — string store push
-- `WS /api/v1/ws/kpm` — KPM push (fed by worker HTTP POSTs)
+- `WS /api/v1/ws/kpm` — KPM push (fed by `WS /api/v1/ws/kpm/input` from live-kpm via live-ws)
 - `GET/PUT /api/v1/streams/auto/config` — selector config (auto mode polls this)
 - `GET /api/v1/streams/:id/init` — codec string + avcC descriptor (built from cached params)
 - `GET /api/v1/streams` — list active streams (derived from connected encoder WS sockets)
 
-**Internal endpoints** (for capture workers):
-- `POST /api/core/ready` — worker announces itself + stream metadata
+**Internal WS endpoints** (for live-ws relay):
+- `WS /api/v1/ws/video/:id/input` — binary frames from live-capture via live-ws
+- `WS /api/v1/ws/kpm/input` — KPM updates from live-kpm via live-ws
+
+**Internal HTTP endpoints** (for live-capture auto mode):
 - `POST /api/core/streamInfo/:streamId` — capture switch metadata
-- `POST /api/core/kpm` — KPM value update
 
 ---
 
 ## IPC Protocols
 
-### Capture Worker → Server (WebSocket, binary)
+### live-protocol Frame Header (shared by all components)
 
-Same binary frame protocol as M3 — the server doesn't parse it, just relays. The capture worker performs Annex B → AVCC conversion before sending, so the server relays truly opaque bytes.
+All binary IPC uses the `live-protocol` 8-byte aligned frame header:
 
 ```
-[u8:  message_type]         0x01 = CodecParams, 0x02 = Frame, 0xFF = Error
-[u32 LE: payload_length]
-[payload_length bytes]
+Offset  Field            Size    Notes
+0       message_type     u8      0x01=CodecParams, 0x02=Frame, 0x10=KpmUpdate, 0xFF=Error
+1       flags            u8      bit 0: IS_KEYFRAME (video), bits 1-7: reserved
+2       reserved         u16     zero for now
+4       payload_length   u32 LE
+[payload_length bytes follow]
 ```
 
-The server peeks at `message_type` (byte 0) via `DataView` to identify CodecParams (cache for `/init`) and keyframes (byte 9, `is_keyframe`, cache for late joiners). No full payload parsing.
+This header is used on stdout (live-capture → live-ws), on WebSocket (live-ws → server → frontend), and in dump files. Every consumer reads the same format.
 
-### Capture Worker → Server (HTTP, JSON)
+The server peeks at bytes 0-1 via `DataView` to identify message type and keyframe flag. No payload inspection needed for routing decisions.
+
+### Producer → stdout (live-protocol framed binary)
+
+**live-capture** writes `CodecParams` (0x01) and `Frame` (0x02) messages. Frame payloads contain AVCC data (Annex B → AVCC conversion happens in the encoding thread).
+
+**live-kpm** writes `KpmUpdate` (0x10) messages. Payload is `[i64 LE: kpm_value]`.
+
+### live-ws → Server (WebSocket, binary)
+
+`live-ws` forwards each stdin message as one WS binary message (header included, no stripping). The server receives the same 8-byte header + payload.
+
+### live-capture → Server (HTTP, JSON — auto mode only)
 
 **`POST /api/core/streamInfo/:streamId`**
 ```json
@@ -393,14 +480,11 @@ The server peeks at `message_type` (byte 0) via `DataView` to identify CodecPara
 }
 ```
 
-**`POST /api/core/kpm`**
-```json
-{ "kpm": 342 }
-```
+### Server → Frontend (WebSocket, binary)
 
-### Server → Frontend (WebSocket)
+The server relays `live-protocol` framed messages directly to frontend WS clients. The frontend reads the same 8-byte header format. This differs from M3 (which used a server-specific `[generation][num_frames][...]` envelope) — the M4 frontend parses `live-protocol` messages directly.
 
-Unchanged from M3. The frontend doesn't know or care whether frames came from a local pipe or a remote WS.
+For late-joining clients, the server sends cached CodecParams + last keyframe immediately on WS connect.
 
 ---
 
@@ -427,10 +511,10 @@ A TypeScript relay server (Bun/Hono) offers:
 The server does NOT buffer frames. It relays them.
 
 ```
-Encoder WS ──→ [peek message type] ──→ broadcast to frontend WS clients
+live-ws ──WS──→ [DataView: read header bytes 0-1] ──→ broadcast to frontend WS clients
                     │
-                    ├─ CodecParams? → cache for /init endpoint
-                    └─ Keyframe?    → cache for late-joining clients
+                    ├─ CodecParams (0x01)? → cache for /init endpoint
+                    └─ Frame (0x02) + IS_KEYFRAME? → cache for late-joining clients
 ```
 
 No circular buffer. No sequence numbers. No `after=N` cursor. No generation tracking. The complexity that existed in M3's `StreamBuffer` and `StreamRegistry` is eliminated because the encoder is persistent and frames flow through immediately.
@@ -464,12 +548,12 @@ Machine B (working):    live-capture --mode auto (main)
 
 ### Why This Works
 
-Each component is an independent executable with CLI args for the server URL:
-- `live-capture --mode auto --server ws://machineA:3000 --stream-id main` (Machine B)
-- `live-capture --mode crop --server ws://machineA:3000 --stream-id youtube-music --hwnd 0x...` (Machine A)
-- `live-kpm --server http://machineA:3000` (either machine)
+Each producer is a stdout-first executable piped through `live-ws` for network delivery:
+- `live-capture --mode auto ... | live-ws --mode video --server ws://machineA:3000/.../main/input` (Machine B)
+- `live-capture --mode crop ... | live-ws --mode video --server ws://machineA:3000/.../youtube-music/input` (Machine A)
+- `live-kpm | live-ws --server ws://machineA:3000/.../kpm/input` (either machine)
 
-No process assumes it was spawned by another. No pipes. No shared memory across machines. Just HTTP and WebSocket.
+No process assumes it was spawned by another. Producers write to stdout. `live-ws` handles all networking. Just pipes and WebSocket.
 
 ---
 
@@ -486,8 +570,8 @@ These M3 components are battle-tested and will be refactored in-place for M4:
 | `live-video/src/capture.rs` | WinRT `CaptureSession` + `CropBox` | Add hot-swap method for session replacement |
 | `live-video/src/resample.rs` + `.hlsl` | GPU fullscreen quad resampler | None — unchanged |
 | `live-video/src/d3d11.rs` | D3D11 device + texture helpers | Extract to shared helper crate |
-| `live-video/src/lib.rs` | Binary frame protocol types | Move to live-capture library |
-| `live-server/src/video/buffer.rs` | Annex B → AVCC conversion logic | Move conversion to live-capture (capture worker outputs AVCC) |
+| `live-video/src/lib.rs` | Binary frame protocol types | Move payload types to live-protocol; frame header replaced by new 8-byte aligned header |
+| `live-server/src/video/buffer.rs` | Annex B → AVCC conversion logic | Move AVCC helpers to live-protocol (shared by capture worker and TS server) |
 | `live-server/src/selector/config.rs` | Pattern parsing, `PresetConfig`, `should_capture()` | Move to live-capture (used by `--mode auto`) |
 | `live-server/src/kpm/calculator.rs` | Sliding window KPM calculator | Move to live-kpm |
 | `live-server/src/kpm/hook.rs` | `WH_KEYBOARD_LL` hook + message pump | Move to live-kpm |
@@ -536,33 +620,35 @@ Each component gets all its configuration from CLI args and HTTP. No stdin comma
 
 Exception: `live-capture --mode auto` polls config from the server, but this is read-only polling of an HTTP endpoint, not a command channel.
 
-### 3. Independently Runnable
+### 3. Stdout-First Producers
 
-Every component can run standalone for testing and debugging:
-- `live-capture --stdout --hwnd 0x... --width 1920 --height 1200 > dump.bin` — pipe to file
-- `live-capture --server ws://localhost:3000 --stream-id test --hwnd 0x...` — push to server
-- `live-capture --mode auto --server ws://localhost:3000 --stream-id main` — full auto-selector
-- `live-capture --mode crop --server ws://localhost:3000 --stream-id ytm --hwnd 0x... --crop-min-x 0 ...` — crop capture
-- `live-kpm --server http://localhost:3000` — standalone keystroke counter
-- Server runs with or without any workers connected
+Producers (`live-capture`, `live-kpm`) always write to stdout via `live-protocol` framing. They have zero networking dependencies. This means:
+- `live-capture --hwnd 0x... --width 1920 --height 1200 > dump.bin` — pipe to file for testing
+- `live-capture ... | live-ws --mode video --server ws://...` — network delivery via relay
+- `live-kpm > kpm.bin` — dump for testing
+- `live-kpm | live-ws --server ws://...` — network delivery via relay
 
-No component assumes it was spawned by another.
+The production code path and the test code path are the same — only the downstream consumer differs.
 
-### 4. HTTP/WS Everywhere
+### 4. Independently Runnable
 
-All inter-process communication is HTTP or WebSocket. No pipes, no shared memory (except DX shared textures within the same machine for future optimization, if needed). This enables distributed deployment naturally.
+Every component can run standalone for testing and debugging. No component assumes it was spawned by another. Server runs with or without any workers connected.
 
-### 5. Server is a Relay, Not a Manager
+### 5. Pipes + WS Everywhere
+
+Producers communicate via stdout pipes to `live-ws`, which relays to the server via WebSocket. `live-capture --mode auto` additionally uses HTTP for low-frequency metadata (config polling, capture switch events). This enables distributed deployment naturally — just point `live-ws` at a remote server URL.
+
+### 6. Server is a Relay, Not a Manager
 
 The server doesn't spawn processes, doesn't manage lifecycles, doesn't know which machines workers run on. It receives connections and relays data. Workers are responsible for their own lifecycle and reconnection.
 
 In production, the server MAY spawn local workers for convenience — but this is an operational choice, not an architectural requirement.
 
-### 6. Errors Go to stderr
+### 7. Errors Go to stderr
 
 No error protocol between components. Each process logs to stderr via the standard logging crate. When components are co-located, stderr is inherited and logs interleave naturally. When distributed, each process logs locally.
 
-### 7. Fixed Resolutions
+### 8. Fixed Resolutions
 
 Each stream has a fixed output resolution determined at capture time. The resampler always outputs to the same dimensions regardless of source window. This means the encoder never needs reconfiguration on window switch — the staging texture is the same size, the NV12 converter is the same size, the MFT media types don't change.
 
@@ -576,9 +662,9 @@ These questions were identified during the initial design session (2026-03-18) a
 
 **Decision**: Bun + Hono. Familiar from the M2 TS server, lightweight, well-suited for the relay pattern.
 
-### 2. Binary Frame Relay → DataView
+### 2. Binary Frame Relay → DataView on live-protocol Header
 
-**Decision**: `DataView` on `ArrayBuffer` is sufficient. The server only peeks at byte 0 (`message_type`) and byte 9 (`is_keyframe`) — two byte reads per message. No heavy computation, no native addon needed.
+**Decision**: `DataView` on `ArrayBuffer` is sufficient. The 8-byte `live-protocol` header puts `message_type` at byte 0 and `flags` (including `IS_KEYFRAME`) at byte 1 — two byte reads per message. No payload inspection, no native addon needed.
 
 ### 3. AVCC Conversion → Capture Worker
 
@@ -592,10 +678,18 @@ These questions were identified during the initial design session (2026-03-18) a
 
 **Decision**: The server tracks active streams by connected encoder WS connections. A stream exists when an encoder WS is connected for that stream ID. `GET /api/v1/streams` derives its response from this — same endpoint, different source of truth compared to M3's process-based tracking.
 
-### 6. Reconnection → Auto-Reconnect, Encoder Keeps Running
+### 6. Reconnection → live-ws Handles It, Encoder Doesn't Know
 
-**Decision**: Auto-reconnect with exponential backoff. The encoder keeps running during disconnect and discards frames — restarting the encoder would cause the same teardown problem M4 is designed to avoid. On reconnect, the encoder forces an IDR keyframe so the server (and late-joining clients) have a clean entry point.
+**Decision**: `live-ws` handles auto-reconnect with exponential backoff. The encoder writes to stdout continuously — it doesn't know about WS state. During disconnect, `live-ws` discards incoming messages. In `--mode video`, `live-ws` caches the last CodecParams and last keyframe; on reconnect, it replays cached messages before resuming the live stream. This gives the server a clean codec state and a valid keyframe without any back-channel to the encoder.
+
+### 7. Shared Protocol → live-protocol Crate
+
+**Decision**: A shared `live-protocol` lib crate defines the 8-byte aligned frame header used by all Rust components. The TS server hand-writes matching constants (a few byte offsets and enum values — simple enough that code generation is unnecessary).
+
+### 8. Stdout-First Producers → live-ws Relay
+
+**Decision**: Producers (`live-capture`, `live-kpm`) always write `live-protocol` framed messages to stdout. A separate `live-ws` binary reads stdin and relays to the server via WebSocket. This gives producers one code path (stdout), makes testing trivial (`> dump.bin`), and centralizes all networking/reconnection logic in one reusable binary.
 
 ---
 
-*This document captures the design discussion of 2026-03-18, with open questions resolved 2026-03-23. It should be treated as a foundation — not a specification. Implementation decisions will evolve as M4 development progresses.*
+*This document captures the design discussion of 2026-03-18, with open questions resolved 2026-03-23 and the live-protocol/live-ws additions from 2026-03-23. It should be treated as a foundation — not a specification. Implementation decisions will evolve as M4 development progresses.*
