@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "live-app",
     "live-capture",
+    "live-kpm",
     "live-protocol",
     "live-server",
     "live-video",
