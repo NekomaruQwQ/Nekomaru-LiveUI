@@ -689,6 +689,8 @@ name = "enumerate-windows"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
+ "set-dpi-awareness",
  "windows 0.62.2",
 ]
 
