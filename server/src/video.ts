@@ -12,11 +12,9 @@
  */
 
 import { Hono } from "hono";
-import { createBunWebSocket } from "hono/bun";
+import { upgradeWebSocket } from "hono/bun";
 import { MessageType, Flags, getMessageType, getFlags, HEADER_SIZE } from "./protocol";
 import { parseCodecParams, buildCodecString, buildAvccDescriptor } from "./codec";
-
-const { upgradeWebSocket } = createBunWebSocket();
 
 // ── Per-Stream State ────────────────────────────────────────────────────────
 

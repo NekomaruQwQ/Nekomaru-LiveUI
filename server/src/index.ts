@@ -9,8 +9,7 @@
  */
 
 import { Hono } from "hono";
-import { createBunWebSocket } from "hono/bun";
-import { Subprocess } from "bun";
+import { websocket } from "hono/bun";
 
 import videoRoutes from "./video";
 import kpmRoutes from "./kpm";
@@ -18,7 +17,7 @@ import selectorRoutes from "./selector";
 import stringsRoutes from "./strings";
 import coreRoutes from "./core";
 
-import { loadStrings, getAllStrings } from "./strings";
+import { loadStrings } from "./strings";
 import { loadSelectorConfig } from "./selector";
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -26,14 +25,12 @@ import { loadSelectorConfig } from "./selector";
 const PORT = Number(process.env.LIVE_PORT);
 const VITE_PORT = Number(process.env.LIVE_VITE_PORT);
 
-if (!PORT) {
-    console.error("LIVE_PORT is required");
+if (!PORT || !VITE_PORT) {
+    console.error("Both LIVE_PORT and LIVE_VITE_PORT are required");
     process.exit(1);
 }
 
 // ── App ─────────────────────────────────────────────────────────────────────
-
-const { websocket } = createBunWebSocket();
 
 const app = new Hono();
 
@@ -57,29 +54,27 @@ app.post("/api/v1/refresh", async (c) => {
 // ── Vite Proxy Fallback ─────────────────────────────────────────────────────
 
 // Non-API requests are reverse-proxied to the Vite dev server.
-if (VITE_PORT) {
-    app.all("/*", async (c) => {
-        const url = new URL(c.req.url);
-        const viteUrl = `http://localhost:${VITE_PORT}${url.pathname}${url.search}`;
+app.all("/*", async (c) => {
+    const url = new URL(c.req.url);
+    const viteUrl = `http://localhost:${VITE_PORT}${url.pathname}${url.search}`;
 
-        try {
-            const resp = await fetch(viteUrl, {
-                method: c.req.method,
-                headers: c.req.raw.headers,
-                body: c.req.method !== "GET" && c.req.method !== "HEAD"
-                    ? c.req.raw.body
-                    : undefined,
-            });
+    try {
+        const resp = await fetch(viteUrl, {
+            method: c.req.method,
+            headers: c.req.raw.headers,
+            body: c.req.method !== "GET" && c.req.method !== "HEAD"
+                ? c.req.raw.body
+                : undefined,
+        });
 
-            return new Response(resp.body, {
-                status: resp.status,
-                headers: resp.headers,
-            });
-        } catch {
-            return c.text("Vite dev server not available", 502);
-        }
-    });
-}
+        return new Response(resp.body, {
+            status: resp.status,
+            headers: resp.headers,
+        });
+    } catch {
+        return c.text("Vite dev server not available", 502);
+    }
+});
 
 // ── Start ───────────────────────────────────────────────────────────────────
 
@@ -88,24 +83,20 @@ await loadStrings();
 await loadSelectorConfig();
 
 // Spawn Vite dev server as a child process.
-let viteProcess: Subprocess | null = null;
+const frontendDir = new URL("../../frontend", import.meta.url).pathname
+    // Bun on Windows returns /C:/path — strip the leading slash.
+    .replace(/^\/([A-Z]:)/, "$1");
 
-if (VITE_PORT) {
-    const frontendDir = new URL("../../frontend", import.meta.url).pathname
-        // Bun on Windows returns /C:/path — strip the leading slash.
-        .replace(/^\/([A-Z]:)/, "$1");
+const viteProcess = Bun.spawn(
+    ["bunx", "--bun", "vite", "--port", String(VITE_PORT)],
+    {
+        cwd: frontendDir,
+        env: { ...process.env, LIVE_VITE_PORT: String(VITE_PORT) },
+        stdout: "inherit",
+        stderr: "inherit",
+    });
 
-    viteProcess = Bun.spawn(
-        ["bunx", "--bun", "vite", "--port", String(VITE_PORT)],
-        {
-            cwd: frontendDir,
-            env: { ...process.env, LIVE_VITE_PORT: String(VITE_PORT) },
-            stdout: "inherit",
-            stderr: "inherit",
-        });
-
-    console.log(`[server] spawned vite on port ${VITE_PORT} (pid ${viteProcess.pid})`);
-}
+console.log(`[server] spawned vite on port ${VITE_PORT} (pid ${viteProcess.pid})`);
 
 // Start the Bun HTTP + WS server.
 const server = Bun.serve({

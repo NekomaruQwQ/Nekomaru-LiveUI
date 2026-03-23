@@ -9,10 +9,8 @@
  */
 
 import { Hono } from "hono";
-import { createBunWebSocket } from "hono/bun";
+import { upgradeWebSocket } from "hono/bun";
 import { MessageType, HEADER_SIZE } from "./protocol";
-
-const { upgradeWebSocket } = createBunWebSocket();
 
 // ── State ───────────────────────────────────────────────────────────────────
 
