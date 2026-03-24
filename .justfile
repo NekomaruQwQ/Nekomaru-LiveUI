@@ -22,15 +22,22 @@ pull bookmark="dev":
     jj new -r {{bookmark}}@origin
 
 # == Recipes for server RESTful APIs ==
-# Make an HTTP request to the server with the specified method, path and arguments.
-http method path *args:
-    use . *; http {{method}} (get-url "{{path}}") {{args}}
+# Make an HTTP GET request
+get path *args:
+    use . *; http get (get-url "{{path}}") {{args}}
+# Make an HTTP PUT request with the specified data.
+put path data *args:
+    use . *; http put (get-url "{{path}}") "{{data}}" {{args}}
+# Make an HTTP POST request with the specified data.
+post path data *args:
+    use . *; http post (get-url "{{path}}") "{{data}}" {{args}}
 # Trigger the server to refresh its configuration.
 refresh:
-    just http post "/api/v1/refresh" ""
-# Update the current preset of the auto-selector.
-preset name:
-    just http put  "/api/v1/streams/auto/config/preset" "{{name}}"
+    just post "/api/refresh" ""
+get-string:
+    just get "/api/strings"
+set-string key value:
+    just put "/api/strings/{{key}}" "{{value}}"
 
 # == Recipes for spawning microservices ==
 # Run the main server.
@@ -48,3 +55,6 @@ capture name *args:
 # Start the keystroke counter pipeline.
 kpm:
     use . *; run-kpm
+# Start the microphone status monitor (polls for Cubase window).
+microphone:
+    use . *; run-microphone
