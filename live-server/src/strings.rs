@@ -14,6 +14,7 @@
 //! - `PUT    /api/strings/:key`      — set a value (403 for `$`-prefixed keys)
 //! - `DELETE /api/strings/:key`      — delete a value (403 for `$`-prefixed keys)
 //! - `PUT    /internal/strings/:key` — set a computed string (key must start with `$`)
+//! - `DELETE /internal/strings/:key` — remove a computed string (key must start with `$`)
 
 use crate::state::AppState;
 
@@ -201,7 +202,7 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/strings", get(get_all))
         .route("/api/strings/{key}", get(get_one).put(put_one).delete(delete_one))
-        .route("/internal/strings/{key}", put(put_computed))
+        .route("/internal/strings/{key}", put(put_computed).delete(delete_computed))
 }
 
 /// `GET /api/strings` — return all entries as a flat JSON object.
@@ -278,5 +279,21 @@ async fn put_computed(
             Json(serde_json::json!({ "error": "key must start with $" }))).into_response();
     }
     state.strings.write().await.set_computed(&key, body.value);
+    Json(serde_json::json!({ "ok": true })).into_response()
+}
+
+/// `DELETE /internal/strings/:key` — remove a computed string.
+///
+/// Key must start with `$` (returns 400 otherwise).  Used by external scripts
+/// to signal absence (e.g. `$microphone` is deleted when Cubase is not running).
+async fn delete_computed(
+    State(state): State<Arc<AppState>>,
+    Path(key): Path<String>,
+) -> impl IntoResponse {
+    if !key.starts_with('$') {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "key must start with $" }))).into_response();
+    }
+    state.strings.write().await.clear_computed(&key);
     Json(serde_json::json!({ "ok": true })).into_response()
 }

@@ -74,9 +74,9 @@ export function LiveModeWidget({ strings }: { strings: Record<string, string> })
 
 // ── Microphone ───────────────────────────────────────────────────────────────
 
-/// Shows mic on/off status from the computed string `$microphone`.
+/// Shows mic status from the computed string `$microphone` (present = on, absent = off).
 export function MicrophoneWidget({ strings }: { strings: Record<string, string> }) {
-    const micOn = strings.$microphone === "on";
+    const micOn = "$microphone" in strings;
     return <LiveWidget
         name="Microphone"
         icon={<DynamicIcon name={micOn ? "mic" : "mic-off"} size={36} />}>
