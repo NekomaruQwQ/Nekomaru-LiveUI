@@ -10,6 +10,7 @@
 
 - **Always use `--release`** when invoking `cargo build` or `cargo run`. All binaries in this project are release-built by default.
 - **Never hardcode `LIVE_PORT` or `LIVE_VITE_PORT`** values (e.g. `3000`, `5173`). When emitting Nushell scripts, use `$env.LIVE_PORT` and `$env.LIVE_VITE_PORT`.
+- **Always write "YouTube Music" or "youtube-music"** (full words) — never abbreviate to "YTM" or "ytm" in code, comments, docs, or identifiers.
 
 ---
 
@@ -62,13 +63,13 @@ M4 splits the system into independently runnable components connected via stdout
 graph LR
     subgraph producers["Rust Producers (stdout)"]
         capture_auto["<b>live-capture</b><br/>--mode auto (main)<br/>GPU capture → NVENC<br/>→ AVCC → stdout"]
-        capture_crop["<b>live-capture</b><br/>--mode crop (ytm)<br/>Subrect → NVENC<br/>→ AVCC → stdout"]
+        capture_youtube_music["<b>live-capture-youtube-music</b><br/>window finder + DPI crop<br/>spawns live-capture --mode crop<br/>→ stdout"]
         kpm["<b>live-kpm</b><br/>WH_KEYBOARD_LL hook<br/>Sliding window KPM<br/>→ stdout"]
     end
 
     subgraph relays["live-ws Relays"]
         ws_main["<b>live-ws</b><br/>--mode video<br/>keyframe cache"]
-        ws_ytm["<b>live-ws</b><br/>--mode video<br/>keyframe cache"]
+        ws_youtube_music["<b>live-ws</b><br/>--mode video<br/>keyframe cache"]
         ws_kpm["<b>live-ws</b>"]
     end
 
@@ -83,11 +84,11 @@ graph LR
     end
 
     capture_auto -- "stdout" --> ws_main
-    capture_crop -- "stdout" --> ws_ytm
+    capture_youtube_music -- "stdout" --> ws_youtube_music
     kpm -- "stdout" --> ws_kpm
 
     ws_main -- "WS binary" --> relay
-    ws_ytm -- "WS binary" --> relay
+    ws_youtube_music -- "WS binary" --> relay
     ws_kpm -- "WS binary" --> relay
 
     capture_auto -. "HTTP (config poll)" .-> config
@@ -103,7 +104,7 @@ graph LR
 |-----------|----------|------|-----|
 | **`live-protocol`** | Rust (lib) | Shared 8-byte frame header + AVCC helpers | Used by all Rust crates |
 | **`live-capture`** | Rust | GPU capture + NVENC encode | stdout (live-protocol framed) |
-| **`live-capture-youtube-music`** | Rust | YTM window finder + DPI-aware crop + auto-restart wrapper around `live-capture` | stdout (live-protocol framed) |
+| **`live-capture-youtube-music`** | Rust | YouTube Music window finder + DPI-aware crop + auto-restart wrapper around `live-capture` | stdout (live-protocol framed) |
 | **`live-ws`** | Rust | stdin → WS relay | stdin → WS binary messages |
 | **`live-kpm`** | Rust | Keystroke counter | stdout (live-protocol framed) |
 | **`enumerate-windows`** | Rust | Window discovery (JSON) | stdout JSON |
@@ -120,7 +121,7 @@ graph LR
 | Keystroke counting | Rust (`live-kpm`, standalone) | `WH_KEYBOARD_LL` hook on a dedicated message pump thread. Privacy-by-design. |
 | HTTP/WS server | Rust (Axum) | Thin relay — uses `live-protocol` directly, no process management. Single toolchain. |
 | Window discovery | Rust (`enumerate-windows`) | Lightweight binary for Nushell scripts. JSON output. |
-| YTM capture | Rust (`live-capture-youtube-music`) | DPI-independent crop calculation from CSS constants, auto-restart on window loss. Stdout-first — piped through `live-ws` like any other producer. |
+| YouTube Music capture | Rust (`live-capture-youtube-music`) | DPI-independent crop calculation from CSS constants, auto-restart on window loss. Stdout-first — piped through `live-ws` like any other producer. |
 | Orchestration | Nushell (`mod.nu`) | Launches pipelines, manages service lifecycle. |
 | Frontend | React + WebCodecs | Pure viewer. Receives `live-protocol` framed messages via WS. Zero H.264 knowledge. |
 
@@ -435,7 +436,7 @@ In **auto mode**, the capture session can be hot-swapped without restarting the 
 
 - **`base`** (default): captures a specific window by HWND, resamples to `--width x --height`.
 - **`auto`**: foreground polling + pattern matching + hot-swap capture session. The encoder never restarts — only the `CaptureSession` is replaced on window switch.
-- **`crop`**: extracts an absolute subrect via `--crop-min-x/y --crop-max-x/y`. Used for YouTube Music playback bar.
+- **`crop`**: extracts an absolute subrect via `--crop-min-x/y --crop-max-x/y`. Used for YouTube Music playback bar.  Typically launched by `live-capture-youtube-music` which computes the crop rect from CSS layout constants and actual DPI.
 
 All modes output to stdout via `live-protocol` framing. Pipe through `live-ws` for network delivery.
 
@@ -453,7 +454,7 @@ The auto-selector matches foreground windows against patterns from the server co
 M4's microservice design enables splitting components across machines.  Each producer is a stdout-first executable piped through `live-ws` — just point `live-ws` at a remote server URL.
 
 ```
-Machine A (streaming):  server + live-capture --mode crop (ytm) + YouTube Music + OBS + live-app
+Machine A (streaming):  server + live-capture-youtube-music + YouTube Music + OBS + live-app
 Machine B (working):    live-capture --mode auto (main) + live-kpm
 ```
 
@@ -591,10 +592,10 @@ LiveUI/
 │           ├── mod.rs               # Selector thread, swap commands, HTTP client
 │           └── config.rs            # PresetConfig, ParsedPattern, should_capture()
 │
-├── live-capture-youtube-music/       # YTM player bar capture wrapper (Rust)
+├── live-capture-youtube-music/       # YouTube Music player bar capture wrapper (Rust)
 │   └── src/
 │       ├── main.rs                  # CLI, retry loop, child process spawning
-│       └── crop.rs                  # DPI-aware CSS-based crop rect computation
+│       └── crop.rs                  # DPI-aware crop: CSS layout → empirical title bar offset
 │
 ├── live-ws/                         # stdin → WebSocket relay (Rust)
 │   └── src/main.rs                  # CLI, stdin reader, WS client, --mode video caching

@@ -38,7 +38,7 @@ const LOG_PREFIX: &str = "[@youtube-music]";
 
 /// Stdout-first YouTube Music capture producer.
 ///
-/// Finds the YTM window by title prefix, computes the player bar crop rect
+/// Finds the YouTube Music window by title prefix, computes the player bar crop rect
 /// from CSS layout constants and actual DPI, and spawns live-capture in
 /// crop mode.  Restarts automatically when the window disappears.
 #[derive(Parser)]
@@ -67,7 +67,7 @@ struct CliArgs {
 ///
 /// Uses the `enumerate-windows` crate for robust window filtering (visibility,
 /// cloaked, owned-window checks).  Warns to stderr if multiple matches exist.
-fn find_ytm_window(prefix: &str) -> Option<enumerate_windows::WindowInfo> {
+fn find_youtube_music_window(prefix: &str) -> Option<enumerate_windows::WindowInfo> {
     let windows = enumerate_windows::enumerate_windows();
     let mut matches: Vec<_> = windows
         .into_iter()
@@ -151,8 +151,8 @@ fn main() -> anyhow::Result<()> {
 
     #[expect(clippy::infinite_loop, reason = "This process is designed to run indefinitely, respawning the capture child as needed.")]
     loop {
-        // Step 1: find the YTM window.
-        let Some(window) = find_ytm_window(&args.title) else {
+        // Step 1: find the YouTube Music window.
+        let Some(window) = find_youtube_music_window(&args.title) else {
             log::info!("{LOG_PREFIX} waiting for window \"{}\"\u{2026}", args.title);
             std::thread::sleep(poll_interval);
             continue;

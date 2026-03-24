@@ -22,6 +22,7 @@ live-app/Cargo.toml                         human
 live-protocol/Cargo.toml                    human
 live-ws/Cargo.toml                          human
 live-capture/Cargo.toml                     human
+live-capture-youtube-music/Cargo.toml       human
 live-kpm/Cargo.toml                         human
 live-server/Cargo.toml                      human
 crates/enumerate-windows/Cargo.toml         human
@@ -31,7 +32,7 @@ crates/job-object/Cargo.toml                human
 ## docs/
 ARCHIVE-0-Prototype.md                      agent
 ARCHIVE-1-StreamID.md                       agent
-M4-DESIGN.md                               agent
+M4-DESIGN.md                                agent
 PLAN-UI-AudioMeter.md                       agent
 PLAN-UI-KPMMeter.md                         agent
 README.md                                   agent
@@ -49,6 +50,10 @@ src/video.rs                                agent
 
 ## live-ws/
 src/main.rs                                 agent
+
+## live-capture-youtube-music/
+src/main.rs                                 agent
+src/crop.rs                                 agent
 
 ## live-capture/
 src/main.rs                                 agent
@@ -107,17 +112,15 @@ strings.ts                                  agent
 strings-api.ts                              agent
 ws.ts                                       agent
 app.tsx                                     human
+kpm.tsx                                     agent
 
 ## frontend/src/components/
 grid.tsx                                    human
 marquee.tsx                                 agent
 
 ## frontend/src/widgets/
-common.tsx                                  agent
-index.tsx                                   agent
-
-## frontend/src/kpm/
-index.tsx                                   agent
+common.tsx                                  human
+index.tsx                                   human
 
 ## frontend/src/video/
 chroma-key.ts                               agent

@@ -42,7 +42,6 @@ export function App() {
     );
 }
 
-
 function SidePanel() {
     const strings = useStrings();
     return <div className="flex! w-full h-full flex-col gap-2">

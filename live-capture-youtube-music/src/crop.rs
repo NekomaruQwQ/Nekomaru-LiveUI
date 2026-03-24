@@ -1,13 +1,13 @@
 //! CSS-based crop rect computation for the YouTube Music player bar.
 //!
-//! Derives the crop rectangle from YTM's CSS layout constants and the actual
+//! Derives the crop rectangle from YouTube Music's CSS layout constants and the actual
 //! window DPI, rather than hardcoded pixel margins.  This makes the crop
 //! DPI-independent — it works at any display scale factor.
 //!
 //! ## Coordinate pipeline
 //!
 //! 1. CSS viewport size = `GetClientRect` physical pixels / scale factor
-//! 2. Bar bounding box in CSS pixels (from YTM's known CSS layout)
+//! 2. Bar bounding box in CSS pixels (from YouTube Music's known CSS layout)
 //! 3. Shrink inward by [`PADDING`] to avoid window-border artifacts
 //! 4. Scale back to physical client-area pixels
 //! 5. Offset into captured-texture space (which is `DWMWA_EXTENDED_FRAME_BOUNDS`,
@@ -19,7 +19,7 @@ use windows::Win32::Foundation::*;
 use windows::Win32::UI::HiDpi::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-// ── YTM CSS layout constants ────────────────────────────────────────────────
+// ── YouTube Music CSS layout constants ───────────────────────────────────────
 
 /// Height of the player bar at the bottom of the viewport in CSS pixels.
 const PLAYER_BAR_HEIGHT: f32 = 72.0;
@@ -90,7 +90,7 @@ fn get_frame_offset(hwnd: HWND, window_rect: &RECT) -> anyhow::Result<Vector2D<u
 
 // ── Crop rect computation ───────────────────────────────────────────────────
 
-/// Compute the crop rectangle for the YTM player bar in captured-texture
+/// Compute the crop rectangle for the YouTube Music player bar in captured-texture
 /// coordinates (`GetWindowRect` space).
 ///
 /// Returns a `Box2D<u32>` with min (inclusive) / max (exclusive) corners
