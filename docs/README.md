@@ -359,7 +359,7 @@ Server-managed key-value store. Keys prefixed with `$` are **computed strings** 
 
 **`GET /api/strings/:key`** — Single string value.
 
-**`PUT /api/strings/:key`** — Set a string value. Returns 403 for `$`-prefixed keys.
+**`PUT /api/strings/:key`** — Set a string value (plain text body). Returns 403 for `$`-prefixed keys.
 
 **`DELETE /api/strings/:key`** — Delete a string. Returns 403 for `$`-prefixed keys.
 
@@ -387,7 +387,7 @@ The server stores the selector config; `live-capture --mode auto` polls it.
 
 ##### Computed Strings
 
-**`PUT /internal/strings/:key`** — Set a computed string (`$`-prefixed) from an external process.  Returns 400 if the key doesn't start with `$`.
+**`PUT /internal/strings/:key`** — Set a computed string (`$`-prefixed) from an external process (plain text body).  Returns 400 if the key doesn't start with `$`.
 
 **`DELETE /internal/strings/:key`** — Remove a computed string (`$`-prefixed).  Returns 400 if the key doesn't start with `$`.  Used by `run-microphone` to signal absence (e.g. Cubase not running).
 

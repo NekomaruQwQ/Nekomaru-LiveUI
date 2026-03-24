@@ -62,8 +62,8 @@ fn parse_mode(s: &str) -> Result<RelayMode, String> {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-const INITIAL_BACKOFF_MS: u64 = 100;
-const MAX_BACKOFF_MS: u64 = 5000;
+const INITIAL_BACKOFF_MS: u64 = 500;
+const MAX_BACKOFF_MS: u64 = 4000;
 
 /// Channel capacity — large enough to absorb burst frames while the WS
 /// writer is reconnecting.  At 60fps each frame is ~10-50KB; 120 frames
