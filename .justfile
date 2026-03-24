@@ -6,11 +6,10 @@ alias i := install
 # List all recipes.
 list:
     just --list
-# Build all Rust binaries and install all Bun dependencies.
+# Build all Rust binaries and install frontend dependencies.
 install:
     cargo build -r
     cd frontend; bun i
-    cd server; bun i
 
 # == Recipes for JJ version control ==
 # Move the specified bookmark to the specified revision and push all changes to GitHub.
@@ -22,8 +21,8 @@ pull bookmark:
     jj git fetch
     jj git new -r {{bookmark}}
 
-# == Recipes for the Bun/Hono server ==
-# Run the Bun/Hono server.
+# == Recipes for live-server ==
+# Run the main server.
 server *args:
     use . *; run-server {{args}}
 

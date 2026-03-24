@@ -2,7 +2,7 @@
 
 **Nekomaru's livestreaming infrastructure.**
 
-**Last Updated**: 2026-03-23
+**Last Updated**: 2026-03-24
 
 ---
 
@@ -23,7 +23,7 @@ This project is not semantically versioned. Instead, we track **milestones** (Mx
 | **M1** | Monolith | Single Rust/wry process: capture + encoding + HTTP + webview |
 | **M2** | Client-Server (TS) | TS server (Hono/Bun) + Rust capture children + React frontend + Rust webview host |
 | **M3** | Client-Server (Rust) | Full RIIR — Rust server (Axum) replaces TS server |
-| **M4** | Microservice | Stdout-first Rust capture workers → `live-ws` relay → TS server (Hono/Bun). **Current architecture.** |
+| **M4** | Microservice | Stdout-first Rust capture workers → `live-ws` relay → Rust server (Axum). **Current architecture.** |
 
 **This document describes M4.** For the design journey from M3 to M4, see [`M4-DESIGN.md`](M4-DESIGN.md).
 
@@ -54,13 +54,13 @@ This project is not semantically versioned. Instead, we track **milestones** (Mx
 ## Quick Start
 
 ```bash
-# Install: build all Rust crates + frontend + server dependencies
+# Install: build all Rust crates + frontend dependencies
 just install
 
 # Each service runs in its own terminal.
 # All require LIVE_PORT and LIVE_VITE_PORT environment variables.
 
-# 1. Start the TS relay server + Vite dev server
+# 1. Start the relay server + Vite dev server
 just server
 
 # 2. Start the auto-selector capture pipeline (main stream)
@@ -90,7 +90,7 @@ Each capture pipeline is a Unix pipe: `live-capture ... | live-ws --mode video .
 
 ### Microservice Design
 
-M4 splits the system into independently runnable components connected via stdout pipes and WebSocket.  Producers (`live-capture`, `live-kpm`) write binary frames to stdout using the `live-protocol` framing format.  `live-ws` reads stdin and relays each message as a WS binary message to the server.  The server is a thin TS relay — no binary parsing, no process management, no circular buffering.
+M4 splits the system into independently runnable components connected via stdout pipes and WebSocket.  Producers (`live-capture`, `live-kpm`) write binary frames to stdout using the `live-protocol` framing format.  `live-ws` reads stdin and relays each message as a WS binary message to the server.  The server is a thin Rust relay — no process management, no circular buffering.
 
 ```mermaid
 graph LR
@@ -106,7 +106,7 @@ graph LR
         ws_kpm["<b>live-ws</b>"]
     end
 
-    subgraph server["Server (Bun/Hono)"]
+    subgraph server["Server (Axum)"]
         relay["<b>WS Relay</b><br/>peek header bytes 0-1<br/>cache CodecParams + keyframe<br/>fan-out to clients"]
         strings["<b>String Store</b><br/>file-backed + computed<br/>($captureInfo, $liveMode)"]
         config["<b>Selector Config</b><br/>polled by auto mode"]
@@ -140,7 +140,7 @@ graph LR
 | **`live-ws`** | Rust | stdin → WS relay | stdin → WS binary messages |
 | **`live-kpm`** | Rust | Keystroke counter | stdout (live-protocol framed) |
 | **`enumerate-windows`** | Rust | Window discovery (JSON) | stdout JSON |
-| **Server** | TypeScript (Bun/Hono) | WS relay, string store, config | WS ↔ WS, HTTP |
+| **Server** | Rust (Axum) | WS relay, string store, config | WS ↔ WS, HTTP |
 | **Frontend** | React + Vite | Viewer UI | WS (video, kpm), HTTP (strings) |
 | **`live-app`** | Rust (wry) | Optional webview host | — |
 
@@ -151,10 +151,26 @@ graph LR
 | GPU capture + encoding | Rust (`live-capture`) | Requires `unsafe` Windows APIs, hardware access, zero-copy GPU pipelines. |
 | Network transport | `live-ws` (separate binary) | Producers have one code path (stdout). No WS client, no reconnect logic in capture code. `live-ws` handles all networking. |
 | Keystroke counting | Rust (`live-kpm`, standalone) | `WH_KEYBOARD_LL` hook on a dedicated message pump thread. Privacy-by-design. |
-| HTTP/WS server | TypeScript (Bun/Hono) | Thin relay — no binary parsing, no process management. Fast iteration. |
+| HTTP/WS server | Rust (Axum) | Thin relay — uses `live-protocol` directly, no process management. Single toolchain. |
 | Window discovery | Rust (`enumerate-windows`) | Lightweight binary for Nushell scripts. JSON output. |
 | Orchestration | Nushell (`mod.nu`) | Launches pipelines, discovers YTM windows, manages service lifecycle. |
 | Frontend | React + WebCodecs | Pure viewer. Receives `live-protocol` framed messages via WS. Zero H.264 knowledge. |
+
+#### Why Rust for the Server?
+
+The initial M4 design chose a TypeScript server (Bun/Hono) because the three M3 RIIR rationales no longer applied in a microservice architecture (see [`M4-DESIGN.md` § Why TypeScript Again](M4-DESIGN.md#why-typescript-again)).  During implementation, the balance tipped back to Rust.
+
+**What changed:** the "opaque relay" assumption broke down.  The server's `/init` endpoint must parse CodecParams and build `avc1.*` codec strings + avcC descriptors — the same logic in `live-protocol/src/avcc.rs`.  In TypeScript this meant maintaining `codec.ts` as a hand-written mirror (~100 lines) that had to stay in sync.  In Rust, the server calls `live-protocol` directly — zero duplication.
+
+| TS Benefit (from M4 design) | Reassessment |
+|---|---|
+| Faster iteration (HMR) | Full server restart preferred — HMR can leave stale state.  Compile time is not an issue since every `just` recipe runs `cargo build --release` anyway. |
+| Native Vite integration | `vite_proxy.rs` from M3 already solves this — a Rust reverse proxy to the Vite dev server. |
+| No binary parsing | Not true — `codec.ts` duplicated `live-protocol` for the `/init` endpoint. |
+| WS ergonomics | Overstated — Axum's `WebSocketUpgrade` extractor + `tokio::sync::broadcast` handles the relay fan-out pattern cleanly. |
+| Portfolio (full-stack TS) | Frontend is still React/TypeScript/Bun, so the project remains hybrid. |
+
+**The decisive gain:** single toolchain.  `cargo build --release` builds every binary in the project.  No Bun, no `node_modules`, no second package manager for the server.
 
 ### Well-Known Stream IDs
 
@@ -283,7 +299,7 @@ enumerate-windows --foreground
 
 ### HTTP & WebSocket API
 
-Served by the TS server (Bun/Hono). Port configured via `LIVE_PORT` (required). All endpoints prefixed with `/api/v1`.
+Served by the Rust server (Axum). Port configured via `LIVE_PORT` (required). All endpoints prefixed with `/api/v1`.
 
 #### Video Relay (WebSocket)
 
@@ -297,7 +313,7 @@ Served by the TS server (Bun/Hono). Port configured via `LIVE_PORT` (required). 
 [{ "id": "main" }, { "id": "youtube-music" }]
 ```
 
-**`GET /api/v1/streams/:id/init`** — Pre-built decoder configuration. The server parses cached CodecParams to build the `avc1.PPCCLL` codec string and avcC descriptor.
+**`GET /api/v1/streams/:id/init`** — Pre-built decoder configuration. The server parses cached CodecParams via `live-protocol` to build the `avc1.PPCCLL` codec string and avcC descriptor.
 
 ```json
 {
@@ -539,19 +555,16 @@ LiveUI/
 │       ├── calculator.rs            # Sliding window KPM calculator (5s window)
 │       └── message_pump.rs          # Reusable Win32 message pump (dedicated OS thread)
 │
-├── server/                          # TS relay server (Bun/Hono)
-│   ├── package.json
+├── live-server/                     # M4 relay server (Rust, Axum)
 │   └── src/
-│       ├── index.ts                 # Entry point, route mounting, Vite child, shutdown
-│       ├── log.ts                   # Colored structured logging (markers, alignment, levels)
-│       ├── protocol.ts              # Hand-written constants matching live-protocol
-│       ├── video.ts                 # WS relay (encoder input → frontend), codec caching
-│       ├── codec.ts                 # build_codec_string, build_avcc_descriptor in TS
-│       ├── kpm.ts                   # KPM WS relay (binary input → JSON frontend push)
-│       ├── strings.ts               # String store (file-backed + computed)
-│       ├── selector.ts              # Selector config storage + routes
-│       ├── core.ts                  # Worker event endpoints (streamInfo)
-│       └── persist.ts               # JSON file I/O helpers
+│       ├── main.rs                  # Entry point, Axum router, Vite spawn, jj timestamp
+│       ├── state.rs                 # Shared AppState (strings, selector, video, kpm)
+│       ├── video.rs                 # Video WS relay, codec caching, /init, /streams
+│       ├── kpm.rs                   # KPM WS relay (binary input → JSON frontend push)
+│       ├── strings.rs               # String store (file-backed + computed) + routes
+│       ├── selector.rs              # Selector config storage + routes
+│       ├── events.rs                # Worker event endpoints (streamInfo)
+│       └── vite_proxy.rs            # Reverse proxy to Vite dev server
 │
 ├── live-app/                        # Optional webview host (wry)
 │   └── src/main.rs
@@ -579,9 +592,6 @@ LiveUI/
 │           ├── index.tsx            # <StreamRenderer> (WS push, live-protocol parser)
 │           ├── decoder.ts           # H264Decoder (thin WebCodecs wrapper)
 │           └── chroma-key.ts        # WebGL2 chroma-key renderer
-│
-├── live-video/                      # [M3 artifact, pending removal]
-└── live-server/                     # [M3 artifact, pending removal]
 ```
 
 ---

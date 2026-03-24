@@ -1,8 +1,8 @@
-//! `live-server` — Rust HTTP server for Nekomaru LiveUI.
+//! `live-server` — M4 relay server for Nekomaru LiveUI.
 //!
-//! Manages video capture processes, protocol parsing, frame buffering,
-//! auto-selector, YouTube Music manager, string store, and all HTTP API
-//! endpoints.
+//! Thin HTTP/WS relay.  All capture intelligence lives in the Rust workers
+//! (`live-capture`, `live-kpm`).  The server relays binary frames, stores
+//! config, and proxies frontend assets from Vite.
 //!
 //! ## Usage
 //!
@@ -10,39 +10,13 @@
 //! LIVE_PORT=3000 LIVE_VITE_PORT=5173 live-server
 //! ```
 
-mod constant;
-mod message_pump;
+mod events;
+mod kpm;
+mod selector;
 mod state;
+mod strings;
+mod video;
 mod vite_proxy;
-mod windows;
-
-mod kpm {
-    pub mod calculator;
-    pub mod hook;
-    pub mod ws;
-}
-
-mod selector {
-    pub mod config;
-    pub mod manager;
-    pub mod routes;
-}
-
-mod strings {
-    pub mod routes;
-    pub mod store;
-}
-
-mod video {
-    pub mod buffer;
-    pub mod process;
-    pub mod routes;
-    pub mod ws;
-}
-
-mod youtube_music {
-    pub mod manager;
-}
 
 use state::AppState;
 
@@ -51,34 +25,31 @@ use axum::extract::State;
 use axum::response::Json;
 use axum::routing::post;
 use clap::Parser;
-use job_object::JobObject;
 
+use std::path::PathBuf;
 use std::process::Child;
 use std::sync::Arc;
 
-// ── CLI ─────────────────────────────────────────────────────────────────────
+// ── CLI ─────────────────────────────────────────────────────────────────
 
-/// Nekomaru LiveUI server.
+/// Nekomaru LiveUI — M4 relay server.
 #[derive(Parser)]
 #[command(name = "live-server")]
 struct Cli {
-    /// HTTP server port.  Required — reads from LIVE_PORT env if not
-    /// passed as a flag.
+    /// HTTP server port.
     #[arg(long, env = "LIVE_PORT")]
     port: u16,
 
-    /// Vite dev server port.  Required — spawns `bunx vite` as a child process
-    /// and proxies non-API requests to it for dev assets / HMR.
+    /// Vite dev server port.  Spawns `bunx vite` as a child process
+    /// and proxies non-API requests to it.
     #[arg(long, env = "LIVE_VITE_PORT")]
     vite_port: u16,
 }
 
-// ── Main ────────────────────────────────────────────────────────────────────
+// ── Main ────────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() {
-    let _ = set_dpi_awareness::per_monitor_v2();
-
     pretty_env_logger::formatted_builder()
         .filter_level(log::LevelFilter::Info)
         .parse_default_env()
@@ -86,55 +57,29 @@ async fn main() {
 
     let cli = Cli::parse();
 
-    // Resolve exe paths: if relative, look next to this binary.
-    let video_exe = resolve_sibling_exe("live-video.exe");
-    log::info!("video exe: {video_exe}");
+    let data_dir = resolve_data_dir();
+    log::info!("data dir: {}", data_dir.display());
 
-    // Job object: all child processes assigned to it are killed when the
-    // server exits — even on crash or Task Manager kill.
-    let job = Arc::new(
-        JobObject::new().expect("failed to create job object"));
-
-    let state = Arc::new(AppState::new(video_exe, Arc::clone(&job)));
+    let state = Arc::new(AppState::new(data_dir));
 
     // Read revision timestamp from jj (non-fatal on failure).
     if let Some(ts) = read_jj_timestamp() {
-        state.strings_mut().await.set_computed(constant::CSID_TIMESTAMP, ts);
+        state.strings.write().await.set_computed("$timestamp", ts);
     }
 
-    // Start KPM capture (always enabled, in-process keyboard hook).
-    {
-        let kpm_arc = state.kpm_arc();
-        state.kpm_mut().await.start(&kpm_arc);
-    }
+    // ── Router ──────────────────────────────────────────────────────
 
-    // Start auto-selector and YouTube Music manager.
-    {
-        let selector_arc = state.selector_arc();
-        let streams_arc = state.streams_arc();
-        let strings_arc = state.strings_arc();
-        state.selector_mut().await.start(&selector_arc, &streams_arc, &strings_arc);
-    }
-    {
-        let ytm_arc = state.ytm_arc();
-        let streams_arc = state.streams_arc();
-        state.ytm_mut().await.start(&ytm_arc, &streams_arc);
-    }
-
-    let mut app = Router::new()
-        // HTTP routes.
-        .merge(selector::routes::router())
-        .merge(strings::routes::router())
-        .merge(video::routes::router())
-        .merge(windows::router())
+    let app = Router::new()
+        .merge(video::router())
+        .merge(kpm::router())
+        .merge(strings::router())
+        .merge(selector::router())
+        .merge(events::router())
         .route("/api/v1/refresh", post(refresh))
-        // WebSocket routes.
-        .merge(kpm::ws::router())
-        .merge(video::ws::router())
-        .with_state(Arc::clone(&state));
+        .with_state(Arc::clone(&state))
+        .fallback(vite_proxy::fallback(cli.vite_port));
 
-    // Fallback: proxy non-API requests to Vite for frontend assets.
-    app = app.fallback(vite_proxy::fallback(cli.vite_port));
+    // ── Start ───────────────────────────────────────────────────────
 
     let addr = format!("0.0.0.0:{}", cli.port);
     log::info!("listening on {addr}");
@@ -143,98 +88,68 @@ async fn main() {
         .await
         .expect("failed to bind");
 
-    // Spawn Vite dev server as a child process.
-    let mut vite_child = spawn_vite(cli.vite_port, cli.port, &job);
+    let mut vite_child = spawn_vite(cli.vite_port);
 
-    // Serve until Ctrl+C.
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
-            log::info!("Ctrl+C received");
+            log::info!("Ctrl+C received, shutting down");
         })
         .await
         .expect("server error");
 
-    // Server has stopped accepting connections — clean up all subsystems.
-    state.shutdown().await;
-
+    // Cleanup.
     if let Some(ref mut child) = vite_child {
         let _ = child.kill();
         let _ = child.wait();
         log::info!("vite stopped");
     }
-
-    // `job` drops here, killing any straggler child processes.
 }
 
-// ── Refresh ─────────────────────────────────────────────────────────────────
+// ── Refresh ─────────────────────────────────────────────────────────────
 
 /// `POST /api/v1/refresh` — reload string store and selector config from disk.
 async fn refresh(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    state.strings_mut().await.reload();
-    state.selector_mut().await.reload_config();
+    state.strings.write().await.reload();
+    state.selector.write().await.reload();
     Json(serde_json::json!({ "ok": true }))
 }
 
-// ── Exe Resolution ──────────────────────────────────────────────────────────
+// ── Data Dir Resolution ─────────────────────────────────────────────────
 
-/// Resolve an executable name to a full path.  If the name is a bare filename
-/// (no directory separators), look for it next to the current binary (the
-/// `target/debug/` or `target/release/` directory from `cargo build`).
-fn resolve_sibling_exe(name: &str) -> String {
-    let path = std::path::Path::new(name);
-    if path.parent().is_some_and(|p| p != std::path::Path::new("")) {
-        // Already has a directory component — use as-is.
-        return name.to_owned();
-    }
-
-    // Bare name: look next to this binary.
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent() {
-            let candidate = dir.join(name);
-            // On Windows, try with .exe suffix.
-            let with_ext = candidate.with_extension("exe");
-            if with_ext.exists() {
-                return with_ext.to_string_lossy().into_owned();
-            }
-            if candidate.exists() {
-                return candidate.to_string_lossy().into_owned();
-            }
-        }
-
-    // Fallback: hope it's on PATH.
-    name.to_owned()
+/// Resolve the `data/` directory relative to the repo root.
+///
+/// The binary lives at `<repo>/target/release/live-server.exe`, so we
+/// walk up three parents to reach the repo root.  Falls back to `./data`
+/// if resolution fails.
+fn resolve_data_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent()?.parent()?.parent().map(|d| d.join("data")))
+        .unwrap_or_else(|| PathBuf::from("data"))
 }
 
-// ── Vite Dev Server ─────────────────────────────────────────────────────────
+// ── Vite Dev Server ─────────────────────────────────────────────────────
 
-/// Spawn `bunx vite` as a child process.  The core server proxies non-API
-/// requests to Vite for dev assets; Vite no longer proxies back to us.
-///
-/// Returns the child process handle for explicit cleanup on shutdown.
-/// The child is also assigned to the job object so it dies on crash.
-fn spawn_vite(vite_port: u16, _core_port: u16, job: &JobObject) -> Option<Child> {
+/// Spawn `bunx vite` as a child process.  The server proxies non-API
+/// requests to Vite for frontend assets.
+fn spawn_vite(vite_port: u16) -> Option<Child> {
     let frontend_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent()?.parent()?.parent().map(|d| d.join("frontend")))
-        .unwrap_or_else(|| std::path::PathBuf::from("frontend"));
+        .unwrap_or_else(|| PathBuf::from("frontend"));
 
-    log::info!("spawning vite dev server on port {vite_port} (frontend dir: {})", frontend_dir.display());
+    log::info!("spawning vite on port {vite_port} (frontend: {})",
+        frontend_dir.display());
 
-    let child = std::process::Command::new("bunx")
+    match std::process::Command::new("bunx")
         .arg("--bun")
         .arg("vite")
         .current_dir(&frontend_dir)
         .env("LIVE_VITE_PORT", vite_port.to_string())
-        .spawn();
-
-    match child {
-        Ok(child) => {
-            if let Err(e) = job.assign(&child) {
-                log::warn!("failed to assign vite to job object: {e}");
-            }
-            Some(child)
-        }
+        .spawn()
+    {
+        Ok(child) => Some(child),
         Err(e) => {
             log::error!("failed to spawn vite: {e}");
             None
@@ -242,12 +157,9 @@ fn spawn_vite(vite_port: u16, _core_port: u16, job: &JobObject) -> Option<Child>
     }
 }
 
-// ── Jujutsu Timestamp ────────────────────────────────────────────────────────
+// ── Jujutsu Timestamp ───────────────────────────────────────────────────
 
 /// Read the committer timestamp of the `@-` revision via `jj log`.
-///
-/// Returns `None` (with a warning log) if `jj` is not available or the repo
-/// is not a jj repository.  The server continues without a timestamp.
 fn read_jj_timestamp() -> Option<String> {
     let output = std::process::Command::new("jj")
         .args(["log", "-r", "@-", "--no-graph", "-T", "self.committer().timestamp()"])

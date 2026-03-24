@@ -11,10 +11,6 @@ const BINARY_DIR = (
     path self
         | path dirname
         | path join "target" "release")
-const SERVER_DIR = (
-    path self
-        | path dirname
-        | path join "server")
 
 def check-env [var: string]: nothing -> nothing {
     if ($env | get -o $var) == null {
@@ -38,14 +34,14 @@ def --env patch-env [var: string, value: string]: nothing -> nothing {
     }
 }
 
-# ── Launcher for the Bun/Hono server ───────────────────────────────────────────────────────────────────
+# ── Launcher for live-server ────────────────────────────────────────────────────────────────────────────
 
-# Start the M4 TS relay server (Bun/Hono) with Vite dev server.
+# Start the Rust/Axum server with Vite dev server proxied.
 # Requires LIVE_PORT and LIVE_VITE_PORT environment variables.
 export def --wrapped run-server [...args]: nothing -> nothing {
     check-env "LIVE_PORT"
     check-env "LIVE_VITE_PORT"
-    cd $SERVER_DIR; bun run src/index.ts ...$args
+    ^$"($BINARY_DIR)/live-server.exe" ...$args
 }
 
 # ── Launcher for live-app ──────────────────────────────────────────────────────────────────────

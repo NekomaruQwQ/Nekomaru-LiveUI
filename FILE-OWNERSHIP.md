@@ -7,7 +7,7 @@
 # config files at repo root
 .gitignore                                  human
 .justfile                                   human
-.mod.nu                                     human
+mod.nu                                      human
 biome.json                                  human
 Cargo.toml                                  human
 FILE-OWNERSHIP.md                           human
@@ -18,11 +18,10 @@ live-capture/Cargo.toml                     human
 live-kpm/Cargo.toml                         human
 live-protocol/Cargo.toml                    human
 live-ws/Cargo.toml                          human
+live-server/Cargo.toml                      human
 crates/enumerate-windows/Cargo.toml         human
 crates/set-dpi-awareness/Cargo.toml         human
 crates/job-object/Cargo.toml                human
-server/package.json                         human
-server/tsconfig.json                        human
 frontend/package.json                       human
 frontend/tsconfig.json                      human
 frontend/vite.config.ts                     human
@@ -77,17 +76,6 @@ src/lib.rs                                  human
 # crates/job-object/
 src/lib.rs                                  agent
 
-# server/
-src/index.ts                                agent
-src/core.ts                                 agent
-src/protocol.ts                             agent
-src/codec.ts                                agent
-src/video.ts                                agent
-src/kpm.ts                                  agent
-src/strings.ts                              agent
-src/selector.ts                             agent
-src/persist.ts                              agent
-
 # frontend/
 debug.ts                                    human
 global.css                                  human
@@ -120,40 +108,13 @@ chroma-key.ts                               agent
 decoder.ts                                  agent
 index.tsx                                   agent
 
-# --- M3 artifacts (pending removal) ---
-
-# live-video/ [M3]
-Cargo.toml                                  human
-src/main.rs                                 agent
-src/lib.rs                                  agent
-src/capture.rs                              agent
-src/converter.rs                            agent
-src/d3d11.rs                                agent
-src/encoder.rs                              agent
-src/encoder/debug.rs                        agent
-src/encoder/helper.rs                       agent
-src/resample.hlsl                           human
-src/resample.rs                             human
-
-# live-server/ [M3]
-Cargo.toml                                  human
+# live-server/
 src/main.rs                                 agent
 src/state.rs                                agent
-src/constant.rs                             agent
-src/windows.rs                              agent
-src/message_pump.rs                         agent
+src/video.rs                                agent
+src/kpm.rs                                  agent
+src/strings.rs                              agent
+src/selector.rs                             agent
+src/events.rs                               agent
 src/vite_proxy.rs                           agent
-src/video/buffer.rs                         agent
-src/video/process.rs                        agent
-src/video/routes.rs                         agent
-src/video/ws.rs                             agent
-src/strings/store.rs                        agent
-src/strings/routes.rs                       agent
-src/selector/config.rs                      agent
-src/selector/manager.rs                     agent
-src/selector/routes.rs                      agent
-src/kpm/hook.rs                             agent
-src/kpm/calculator.rs                       agent
-src/kpm/ws.rs                               agent
-src/youtube_music/manager.rs                agent
 ```

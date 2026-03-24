@@ -6,7 +6,6 @@ members = [
     "live-kpm",
     "live-protocol",
     "live-server",
-    "live-video",
     "live-ws",
     "crates/enumerate-windows",
     "crates/job-object",
@@ -32,7 +31,6 @@ branch = "main"
 
 [workspace.dependencies]
 live-protocol = { path = "live-protocol" }
-live-video = { path = "live-video" }
 
 enumerate-windows = { path = "crates/enumerate-windows" }
 job-object = { path = "crates/job-object" }

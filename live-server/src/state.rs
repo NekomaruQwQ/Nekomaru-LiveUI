@@ -1,130 +1,32 @@
-//! Top-level shared application state.
+//! Shared application state for the M4 relay server.
 //!
-//! Wrapped in `Arc<AppState>` and passed to all Axum handlers via the `State`
-//! extractor.  Each subsystem owns its state behind a `tokio::sync::RwLock`.
+//! Wrapped in `Arc<AppState>` and injected into Axum handlers via `State`.
+//! Each subsystem owns its state behind a separate lock — no global
+//! contention.
 
-use crate::kpm::hook::KpmState;
-use crate::selector::manager::SelectorState;
-use crate::strings::store::StringStore;
-use crate::video::process::StreamRegistry;
-use crate::youtube_music::manager::YtmState;
+use crate::kpm::KpmState;
+use crate::selector::SelectorConfig;
+use crate::strings::StringStore;
+use crate::video::VideoState;
 
-use std::sync::Arc;
-
-use job_object::JobObject;
+use std::path::PathBuf;
 use tokio::sync::RwLock;
 
-/// Shared state for the entire server.
+/// Top-level server state shared across all Axum handlers.
 pub struct AppState {
-    strings: Arc<RwLock<StringStore>>,
-    streams: Arc<RwLock<StreamRegistry>>,
-    kpm: Arc<RwLock<KpmState>>,
-    selector: Arc<RwLock<SelectorState>>,
-    ytm: Arc<RwLock<YtmState>>,
-    #[expect(dead_code, reason = "kept alive for RAII — dropping kills all assigned children")]
-    job: Arc<JobObject>,
+    pub strings: RwLock<StringStore>,
+    pub selector: RwLock<SelectorConfig>,
+    pub video: VideoState,
+    pub kpm: KpmState,
 }
 
 impl AppState {
-    pub fn new(video_exe_path: String, job: Arc<JobObject>) -> Self {
+    pub fn new(data_dir: PathBuf) -> Self {
         Self {
-            strings: Arc::new(RwLock::new(StringStore::new())),
-            streams: Arc::new(RwLock::new(StreamRegistry::new(video_exe_path, Arc::clone(&job)))),
-            kpm: Arc::new(RwLock::new(KpmState::new())),
-            selector: Arc::new(RwLock::new(SelectorState::new())),
-            ytm: Arc::new(RwLock::new(YtmState::new())),
-            job,
+            strings: RwLock::new(StringStore::new(data_dir.clone())),
+            selector: RwLock::new(SelectorConfig::load(data_dir)),
+            video: VideoState::new(),
+            kpm: KpmState::new(),
         }
-    }
-
-    // ── Strings ──────────────────────────────────────────────────────────
-
-    pub async fn strings(&self) -> tokio::sync::RwLockReadGuard<'_, StringStore> {
-        self.strings.read().await
-    }
-
-    pub async fn strings_mut(&self) -> tokio::sync::RwLockWriteGuard<'_, StringStore> {
-        self.strings.write().await
-    }
-
-    pub fn strings_arc(&self) -> Arc<RwLock<StringStore>> {
-        Arc::clone(&self.strings)
-    }
-
-    // ── Streams ──────────────────────────────────────────────────────────
-
-    pub async fn streams(&self) -> tokio::sync::RwLockReadGuard<'_, StreamRegistry> {
-        self.streams.read().await
-    }
-
-    pub async fn streams_mut(&self) -> tokio::sync::RwLockWriteGuard<'_, StreamRegistry> {
-        self.streams.write().await
-    }
-
-    pub fn streams_arc(&self) -> Arc<RwLock<StreamRegistry>> {
-        Arc::clone(&self.streams)
-    }
-
-    // ── KPM ──────────────────────────────────────────────────────────────
-
-    pub async fn kpm_mut(&self) -> tokio::sync::RwLockWriteGuard<'_, KpmState> {
-        self.kpm.write().await
-    }
-
-    pub fn kpm_arc(&self) -> Arc<RwLock<KpmState>> {
-        Arc::clone(&self.kpm)
-    }
-
-    // ── Selector ─────────────────────────────────────────────────────────
-
-    pub async fn selector(&self) -> tokio::sync::RwLockReadGuard<'_, SelectorState> {
-        self.selector.read().await
-    }
-
-    pub async fn selector_mut(&self) -> tokio::sync::RwLockWriteGuard<'_, SelectorState> {
-        self.selector.write().await
-    }
-
-    pub fn selector_arc(&self) -> Arc<RwLock<SelectorState>> {
-        Arc::clone(&self.selector)
-    }
-
-    // ── YTM ──────────────────────────────────────────────────────────────
-
-    pub async fn ytm_mut(&self) -> tokio::sync::RwLockWriteGuard<'_, YtmState> {
-        self.ytm.write().await
-    }
-
-    pub fn ytm_arc(&self) -> Arc<RwLock<YtmState>> {
-        Arc::clone(&self.ytm)
-    }
-
-    // ── Shutdown ──────────────────────────────────────────────────────────
-
-    /// Gracefully stop all subsystems.  Called once on Ctrl+C.
-    ///
-    /// Order matters: stop managers first (they create/replace streams),
-    /// then capture processes, then destroy remaining streams.
-    pub async fn shutdown(&self) {
-        log::info!("shutting down...");
-
-        // 1. Stop polling managers so they don't spawn new streams.
-        {
-            let streams_arc = self.streams_arc();
-            let strings_arc = self.strings_arc();
-            self.selector.write().await.stop(&streams_arc, &strings_arc).await;
-        }
-        {
-            let streams_arc = self.streams_arc();
-            self.ytm.write().await.stop(&streams_arc).await;
-        }
-
-        // 2. Stop KPM capture.
-        self.kpm.write().await.stop();
-
-        // 3. Destroy all video streams (kills child processes).
-        self.streams.write().await.destroy_all();
-
-        log::info!("all subsystems stopped");
     }
 }

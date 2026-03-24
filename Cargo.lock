@@ -1351,36 +1351,13 @@ dependencies = [
  "axum",
  "base64",
  "clap",
- "enumerate-windows",
- "job-object",
- "live-video",
+ "live-protocol",
  "log",
  "pretty_env_logger",
  "reqwest",
  "serde",
  "serde_json",
- "set-dpi-awareness",
  "tokio",
- "win32-version-info",
- "windows 0.62.2",
-]
-
-[[package]]
-name = "live-video"
-version = "0.1.0"
-dependencies = [
- "clap",
- "enumerate-windows",
- "log",
- "ngd3dcompile_macro",
- "nkcore",
- "pretty-name",
- "pretty_env_logger",
- "serde_json",
- "set-dpi-awareness",
- "widestring",
- "windows 0.62.2",
- "winrt-capture",
 ]
 
 [[package]]
