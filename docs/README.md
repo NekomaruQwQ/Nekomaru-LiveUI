@@ -624,7 +624,7 @@ LiveUI/
 │       ├── strings-api.ts           # fetch() wrapper for /api/strings
 │       ├── strings.ts               # useStrings() hook (polls string store)
 │       ├── kpm.tsx                  # useKpm() hook (WS push) + <KpmMeter> VU bar
-│       ├── widgets/                 # SidePanel widgets (Clock, Mode, Capture, About)
+│       ├── widgets/                 # SidePanel widgets (Clock, Mode, Microphone, Capture, About)
 │       └── video/                   # Video stream module
 │           ├── index.tsx            # <StreamRenderer> (WS push, live-protocol parser)
 │           ├── decoder.ts           # H264Decoder (thin WebCodecs wrapper)

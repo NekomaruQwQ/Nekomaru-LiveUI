@@ -3,7 +3,7 @@ import { useStreamStatus } from "@/streams";
 import { useStrings } from "@/strings";
 import Marquee from "@/components/marquee";
 import Grid from "@/components/grid";
-import { ClockWidget, LiveModeWidget, CaptureWidget, AboutWidget } from "./widgets";
+import { ClockWidget, LiveModeWidget, MicrophoneWidget, CaptureWidget, AboutWidget } from "./widgets";
 import { KpmMeter } from "@/kpm";
 
 /// Pure viewer shell.  Stream lifecycle is fully server-managed — the
@@ -50,7 +50,10 @@ function SidePanel() {
             <ClockWidget />
         </div>
         <div className="island px-2 py-1.5">
-            <LiveModeWidget strings={strings} />
+            <Grid columns="1fr 1fr" gap="2">
+                <LiveModeWidget strings={strings} />
+                <MicrophoneWidget strings={strings} />
+            </Grid>
             <CaptureWidget strings={strings} />
         </div>
         <div className="island px-3 py-2 flex-1">

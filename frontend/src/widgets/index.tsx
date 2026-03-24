@@ -72,6 +72,18 @@ export function LiveModeWidget({ strings }: { strings: Record<string, string> })
     </LiveWidget>;
 }
 
+// ── Microphone ───────────────────────────────────────────────────────────────
+
+/// Shows mic on/off status from the string store (`microphone` key).
+export function MicrophoneWidget({ strings }: { strings: Record<string, string> }) {
+    const micOn = strings.microphone === "on";
+    return <LiveWidget
+        name="Microphone"
+        icon={<DynamicIcon name={micOn ? "mic" : "mic-off"} size={36} />}>
+        <span className="text-md">{micOn ? "On" : "Muted"}</span>
+    </LiveWidget>;
+}
+
 // ── Capture ──────────────────────────────────────────────────────────────────
 
 /// Large widget showing the current capture target and mode (AUTO/LOCKED).
