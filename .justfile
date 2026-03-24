@@ -19,7 +19,7 @@ push bookmark="dev" revision="@-":
 # Pull the latest changes from GitHub and reset the working copy to the main branch.
 pull bookmark="dev":
     jj git fetch
-    jj new -r {{bookmark}}
+    jj new -r {{bookmark}}@origin
 
 # == Recipes for server RESTful APIs ==
 # Make an HTTP request to the server with the specified method, path and arguments.

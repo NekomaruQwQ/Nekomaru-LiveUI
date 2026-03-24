@@ -88,7 +88,6 @@ export def --wrapped run-app [...args]: nothing -> nothing {
 
 export def --wrapped run-youtube-music [...args]: nothing -> nothing {
     (^(get-exe "live-app" --copy "youtube-music")
-        "youtube-music"
         "https://music.youtube.com/"
         -x 1280 -y 720 -s 2
         -t "YouTube Music - Nekomaru LiveUI"
