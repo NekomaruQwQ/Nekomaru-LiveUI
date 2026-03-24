@@ -188,6 +188,7 @@ The system is launched via **`just`** recipes (`.justfile`) backed by **Nushell*
 | `just capture auto` | Start the auto-selector capture pipeline |
 | `just capture youtube-music` | Start the YouTube Music crop capture pipeline |
 | `just kpm` | Start the keystroke counter pipeline |
+| `just microphone` | Start the microphone status monitor (polls for Cubase window) |
 | `just app` | Launch the webview host |
 | `just youtube-music` | Launch YouTube Music in a webview |
 | `just http <method> <path>` | HTTP request helper (e.g. `just http get /api/strings`) |
@@ -208,6 +209,7 @@ The system is launched via **`just`** recipes (`.justfile`) backed by **Nushell*
 | `run-capture auto` | Launch the auto-selector pipeline (`live-capture \| live-ws`) |
 | `run-capture youtube-music` | Poll for YTM window, launch crop pipeline, restart on exit |
 | `run-kpm` | Launch the KPM pipeline (`live-kpm \| live-ws`) |
+| `run-microphone` | Poll for Cubase window, update `$microphone` computed string (~60s interval) |
 | `find-ytm-window` | Find the YouTube Music window via `enumerate-windows` |
 | `ytm-crop-geometry` | Compute crop coordinates for the YTM playback bar |
 
@@ -349,6 +351,7 @@ Server-managed key-value store. Keys prefixed with `$` are **computed strings** 
 | `$captureInfo` | `POST /internal/streams/:id/event` | Human-readable label for the captured window |
 | `$captureMode` | `POST /internal/streams/:id/event` | Current capture mode (e.g. `"auto"`) |
 | `$liveMode` | `POST /internal/streams/:id/event` | Mode tag from matched pattern (e.g. `"code"`, `"game"`) |
+| `$microphone` | `PUT /internal/strings/$microphone` | Mic status (`"on"` when Cubase is running, `"off"` otherwise) |
 | `$timestamp` | Server startup | Revision timestamp via `jj log` |
 
 **`GET /api/strings`** — All key-value pairs (file-backed + computed).
@@ -380,6 +383,10 @@ The server stores the selector config; `live-capture --mode auto` polls it.
 **`WS /internal/streams/:id`** — Encoder input. Receives `live-protocol` binary messages from `live-ws`. The server peeks at header bytes 0-1 to cache CodecParams and keyframes, then fan-outs to all connected frontend clients.
 
 **`WS /internal/kpm`** — KPM input from `live-kpm` via `live-ws`. Binary `live-protocol` messages.
+
+##### Computed Strings
+
+**`PUT /internal/strings/:key`** — Set a computed string (`$`-prefixed) from an external process.  Returns 400 if the key doesn't start with `$`.  Used by `run-microphone` to update `$microphone`.
 
 ##### Worker Events
 

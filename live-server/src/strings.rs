@@ -9,10 +9,11 @@
 //!
 //! ## Routes
 //!
-//! - `GET    /api/strings`      — all key-value pairs (user + computed)
-//! - `GET    /api/strings/:key` — single entry
-//! - `PUT    /api/strings/:key` — set a value (403 for `$`-prefixed keys)
-//! - `DELETE /api/strings/:key` — delete a value (403 for `$`-prefixed keys)
+//! - `GET    /api/strings`           — all key-value pairs (user + computed)
+//! - `GET    /api/strings/:key`      — single entry
+//! - `PUT    /api/strings/:key`      — set a value (403 for `$`-prefixed keys)
+//! - `DELETE /api/strings/:key`      — delete a value (403 for `$`-prefixed keys)
+//! - `PUT    /internal/strings/:key` — set a computed string (key must start with `$`)
 
 use crate::state::AppState;
 
@@ -20,7 +21,7 @@ use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json};
-use axum::routing::get;
+use axum::routing::{get, put};
 use serde::Deserialize;
 
 use std::collections::BTreeMap;
@@ -200,6 +201,7 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/strings", get(get_all))
         .route("/api/strings/{key}", get(get_one).put(put_one).delete(delete_one))
+        .route("/internal/strings/{key}", put(put_computed))
 }
 
 /// `GET /api/strings` — return all entries as a flat JSON object.
@@ -259,4 +261,22 @@ async fn delete_one(
             (StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({ "error": "invalid key" }))).into_response(),
     }
+}
+
+/// `PUT /internal/strings/:key` — set a computed string from an external process.
+///
+/// Key must start with `$` (returns 400 otherwise).  This is the bridge for
+/// external scripts (e.g. Nushell) to write `$`-prefixed computed strings that
+/// are readonly via the public API.
+async fn put_computed(
+    State(state): State<Arc<AppState>>,
+    Path(key): Path<String>,
+    Json(body): Json<PutBody>,
+) -> impl IntoResponse {
+    if !key.starts_with('$') {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "key must start with $" }))).into_response();
+    }
+    state.strings.write().await.set_computed(&key, body.value);
+    Json(serde_json::json!({ "ok": true })).into_response()
 }
