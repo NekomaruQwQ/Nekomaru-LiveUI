@@ -13,28 +13,13 @@
 
 ---
 
-## Milestones
-
-This project is not semantically versioned. Instead, we track **milestones** (Mx) — architectural evolution points.
-
-| Milestone | Architecture | Key Characteristics |
-|-----------|-------------|---------------------|
-| **M0** | Prototype | Auto-selector only — first proof of concept |
-| **M1** | Monolith | Single Rust/wry process: capture + encoding + HTTP + webview |
-| **M2** | Client-Server (TS) | TS server (Hono/Bun) + Rust capture children + React frontend + Rust webview host |
-| **M3** | Client-Server (Rust) | Full RIIR — Rust server (Axum) replaces TS server |
-| **M4** | Microservice | Stdout-first Rust capture workers → `live-ws` relay → Rust server (Axum). **Current architecture.** |
-
-**This document describes M4.** For the design journey from M3 to M4, see [`M4-DESIGN.md`](M4-DESIGN.md).
-
----
-
 ## Table of Contents
 
-- [Quick Start](#quick-start)
+- **[Milestones](#milestones)**
 - **[Architecture](#architecture)** — components, principles, file ownership
   - [Microservice Design](#microservice-design)
   - [Design Principles](#design-principles)
+  - [Orchestration](#orchestration)
 - **[Communication](#communication)** — wire protocol, HTTP/WS endpoints, CLI
   - [Wire Protocol (live-protocol)](#wire-protocol-live-protocol)
   - [HTTP & WebSocket API](#http--websocket-api)
@@ -51,38 +36,19 @@ This project is not semantically versioned. Instead, we track **milestones** (Mx
 
 ---
 
-## Quick Start
+## Milestones
 
-```bash
-# Install: build all Rust crates + frontend dependencies
-just install
+This project is not semantically versioned. Instead, we track **milestones** (Mx) — architectural evolution points.
 
-# Each service runs in its own terminal.
-# All require LIVE_PORT and LIVE_VITE_PORT environment variables.
+| Milestone | Architecture | Key Characteristics |
+|-----------|-------------|---------------------|
+| **M0** | Prototype | Auto-selector only — first proof of concept |
+| **M1** | Monolith | Single Rust/wry process: capture + encoding + HTTP + webview |
+| **M2** | Client-Server (TS) | TS server (Hono/Bun) + Rust capture children + React frontend + Rust webview host |
+| **M3** | Client-Server (Rust) | Full RIIR — Rust server (Axum) replaces TS server |
+| **M4** | Microservice | Stdout-first Rust capture workers → `live-ws` relay → Rust server (Axum). **Current architecture.** |
 
-# 1. Start the relay server + Vite dev server
-just server
-
-# 2. Start the auto-selector capture pipeline (main stream)
-just capture auto
-
-# 3. Start the YouTube Music crop capture pipeline
-just capture youtube-music
-
-# 4. Start the keystroke counter pipeline
-just kpm
-
-# Open the frontend — the server is the entry point.
-# http://localhost:$LIVE_PORT
-
-# (Optional) Launch the webview host
-just app
-
-# (Optional) Launch YouTube Music in a webview
-just youtube-music
-```
-
-Each capture pipeline is a Unix pipe: `live-capture ... | live-ws --mode video ...`. The Nushell orchestration scripts in `mod.nu` handle the full command lines.
+**This document describes M4.** For the design journey from M3 to M4, see [`M4-DESIGN.md`](M4-DESIGN.md).
 
 ---
 
@@ -156,7 +122,7 @@ graph LR
 | Orchestration | Nushell (`mod.nu`) | Launches pipelines, discovers YTM windows, manages service lifecycle. |
 | Frontend | React + WebCodecs | Pure viewer. Receives `live-protocol` framed messages via WS. Zero H.264 knowledge. |
 
-#### Why Rust for the Server?
+### Why Rust for the Server?
 
 The initial M4 design chose a TypeScript server (Bun/Hono) because the three M3 RIIR rationales no longer applied in a microservice architecture (see [`M4-DESIGN.md` § Why TypeScript Again](M4-DESIGN.md#why-typescript-again)).  During implementation, the balance tipped back to Rust.
 
@@ -208,6 +174,46 @@ These principles guide M4 development and operation.
 ### File Ownership
 
 Each source file has a primary owner — **agent** (Claude) or **human** (Nekomaru). See [`FILE-OWNERSHIP.md`](../FILE-OWNERSHIP.md) for the full per-file breakdown.
+
+### Orchestration
+
+The system is launched via **`just`** recipes (`.justfile`) backed by **Nushell** commands (`mod.nu`).  `just` is the user-facing entry point; `mod.nu` contains the implementation.
+
+#### Just Recipes
+
+| Recipe | Description |
+|--------|-------------|
+| `just install` | Build all Rust binaries (`cargo build -r`) + install frontend deps (`bun i`) |
+| `just server` | Start the Axum server (requires `LIVE_PORT`, `LIVE_VITE_PORT`) |
+| `just capture auto` | Start the auto-selector capture pipeline |
+| `just capture youtube-music` | Start the YouTube Music crop capture pipeline |
+| `just kpm` | Start the keystroke counter pipeline |
+| `just app` | Launch the webview host |
+| `just youtube-music` | Launch YouTube Music in a webview |
+| `just http <method> <path>` | HTTP request helper (e.g. `just http get /api/strings`) |
+| `just push [bookmark] [revision]` | Move a jj bookmark and push to GitHub |
+| `just pull [bookmark]` | Fetch from GitHub and create a new working copy |
+
+#### `mod.nu` Exported Commands
+
+| Command | Description |
+|---------|-------------|
+| `get-exe <name> [--copy <id>]` | Build a binary and return its path. `--copy` creates a named copy for concurrent use. |
+| `get-url [path] [--ws]` | Build an HTTP or WS URL from `LIVE_HOST`/`LIVE_PORT` |
+| `check-env <var>` | Error if an environment variable is not set |
+| `patch-env <var> <default>` | Prompt to set an environment variable if missing |
+| `run-server` | Launch `live-server` (builds first via `get-exe`) |
+| `run-app` | Launch `live-app` webview (builds + copies via `get-exe`) |
+| `run-youtube-music` | Launch YouTube Music webview (builds + copies via `get-exe`) |
+| `run-capture auto` | Launch the auto-selector pipeline (`live-capture \| live-ws`) |
+| `run-capture youtube-music` | Poll for YTM window, launch crop pipeline, restart on exit |
+| `run-kpm` | Launch the KPM pipeline (`live-kpm \| live-ws`) |
+| `find-ytm-window` | Find the YouTube Music window via `enumerate-windows` |
+| `ytm-crop-geometry` | Compute crop coordinates for the YTM playback bar |
+
+#### Build Freshness & Copy Rule
+
+Every binary invocation goes through `get-exe`, which runs `cargo build --release --bin <name>` to ensure the binary is up-to-date.  Binaries that may run concurrently across launchers (`live-capture`, `live-ws`, `live-app`) use `get-exe --copy <id>` to copy the exe before spawning — this prevents file locking from blocking subsequent builds on Windows.
 
 ---
 
@@ -455,6 +461,25 @@ Machine B (working):    live-capture --mode auto (main) + live-kpm
 - On reconnect, `live-ws --mode video` replays the cached last CodecParams + last keyframe so the server immediately has valid codec state and a clean entry point.
 - Exponential backoff (100ms → 5s) prevents reconnection storms.
 - The encoder never restarts — avoiding the NVENC teardown that M4 was designed to eliminate.
+
+### Codec & Keyframe Caching
+
+H.264 decoders need two things before they can produce frames: **CodecParams** (SPS/PPS — the encoder's configuration) to initialize, and a **keyframe** (IDR) as a decode entry point.  Without caching, anything that missed these must wait up to 2 seconds (one full GOP of 120 frames at 60fps) for the next naturally-occurring IDR.
+
+Two independent caches at different points in the pipeline eliminate this wait:
+
+**`live-ws` cache — reconnect replay.**  The encoder never restarts (core M4 principle — avoiding NVENC teardown).  When the WS connection drops, `live-ws` reconnects and replays the cached CodecParams + keyframe *before* resuming normal forwarding.  The server instantly has valid codec state and a clean decode entry point.  This cache lives outside the server process, so it also survives server restarts — `live-ws` reconnects and replays, warming the server immediately.
+
+**Server cache — late-joiner init.**  The server fans out to multiple frontend clients.  A browser tab can open at any time — mid-stream, after a refresh, on a second monitor.  On viewer connect, the server sends cached CodecParams + keyframe for immediate playback.  The same CodecParams cache also powers the `GET /api/v1/streams/:id/init` endpoint, which parses the SPS/PPS to build the `avc1.PPCCLL` codec string and avcC descriptor for `VideoDecoder.configure()`.
+
+| Scenario | `live-ws` cache | Server cache |
+|----------|:---:|:---:|
+| WS drops, `live-ws` reconnects | Replays to server | — |
+| Server restarts | Replays to server | Rebuilt from replay |
+| New browser tab connects | — | Sends to viewer |
+| Hot-swap (new SPS/PPS) | Updates cache | Updates cache |
+
+Neither cache is redundant.  Removing the `live-ws` cache means the server loses codec state on reconnect.  Removing the server cache means every new viewer waits for the next keyframe.
 
 ### Widgets
 
