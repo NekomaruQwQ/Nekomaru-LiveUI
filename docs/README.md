@@ -103,6 +103,7 @@ graph LR
 |-----------|----------|------|-----|
 | **`live-protocol`** | Rust (lib) | Shared 8-byte frame header + AVCC helpers | Used by all Rust crates |
 | **`live-capture`** | Rust | GPU capture + NVENC encode | stdout (live-protocol framed) |
+| **`live-capture-youtube-music`** | Rust | YTM window finder + DPI-aware crop + auto-restart wrapper around `live-capture` | stdout (live-protocol framed) |
 | **`live-ws`** | Rust | stdin → WS relay | stdin → WS binary messages |
 | **`live-kpm`** | Rust | Keystroke counter | stdout (live-protocol framed) |
 | **`enumerate-windows`** | Rust | Window discovery (JSON) | stdout JSON |
@@ -119,7 +120,8 @@ graph LR
 | Keystroke counting | Rust (`live-kpm`, standalone) | `WH_KEYBOARD_LL` hook on a dedicated message pump thread. Privacy-by-design. |
 | HTTP/WS server | Rust (Axum) | Thin relay — uses `live-protocol` directly, no process management. Single toolchain. |
 | Window discovery | Rust (`enumerate-windows`) | Lightweight binary for Nushell scripts. JSON output. |
-| Orchestration | Nushell (`mod.nu`) | Launches pipelines, discovers YTM windows, manages service lifecycle. |
+| YTM capture | Rust (`live-capture-youtube-music`) | DPI-independent crop calculation from CSS constants, auto-restart on window loss. Stdout-first — piped through `live-ws` like any other producer. |
+| Orchestration | Nushell (`mod.nu`) | Launches pipelines, manages service lifecycle. |
 | Frontend | React + WebCodecs | Pure viewer. Receives `live-protocol` framed messages via WS. Zero H.264 knowledge. |
 
 ### Why Rust for the Server?
@@ -207,11 +209,9 @@ The system is launched via **`just`** recipes (`.justfile`) backed by **Nushell*
 | `run-app` | Launch `live-app` webview (builds + copies via `get-exe`) |
 | `run-youtube-music` | Launch YouTube Music webview (builds + copies via `get-exe`) |
 | `run-capture auto` | Launch the auto-selector pipeline (`live-capture \| live-ws`) |
-| `run-capture youtube-music` | Poll for YTM window, launch crop pipeline, restart on exit |
+| `run-capture youtube-music` | Launch `live-capture-youtube-music \| live-ws` pipeline |
 | `run-kpm` | Launch the KPM pipeline (`live-kpm \| live-ws`) |
 | `run-microphone` | Poll for Cubase window, update `$microphone` computed string (~60s interval) |
-| `find-ytm-window` | Find the YouTube Music window via `enumerate-windows` |
-| `ytm-crop-geometry` | Compute crop coordinates for the YTM playback bar |
 
 #### Build Freshness & Copy Rule
 
@@ -351,7 +351,7 @@ Server-managed key-value store. Keys prefixed with `$` are **computed strings** 
 | `$captureInfo` | `POST /internal/streams/:id/event` | Human-readable label for the captured window |
 | `$captureMode` | `POST /internal/streams/:id/event` | Current capture mode (e.g. `"auto"`) |
 | `$liveMode` | `POST /internal/streams/:id/event` | Mode tag from matched pattern (e.g. `"code"`, `"game"`) |
-| `$microphone` | `PUT /internal/strings/$microphone` | Mic status (`"on"` when Cubase is running, `"off"` otherwise) |
+| `$microphone` | `PUT`/`DELETE /internal/strings/$microphone` | Mic status (present with value `"on"` when Cubase is running, absent otherwise) |
 | `$timestamp` | Server startup | Revision timestamp via `jj log` |
 
 **`GET /api/strings`** — All key-value pairs (file-backed + computed).
@@ -386,7 +386,9 @@ The server stores the selector config; `live-capture --mode auto` polls it.
 
 ##### Computed Strings
 
-**`PUT /internal/strings/:key`** — Set a computed string (`$`-prefixed) from an external process.  Returns 400 if the key doesn't start with `$`.  Used by `run-microphone` to update `$microphone`.
+**`PUT /internal/strings/:key`** — Set a computed string (`$`-prefixed) from an external process.  Returns 400 if the key doesn't start with `$`.
+
+**`DELETE /internal/strings/:key`** — Remove a computed string (`$`-prefixed).  Returns 400 if the key doesn't start with `$`.  Used by `run-microphone` to signal absence (e.g. Cubase not running).
 
 ##### Worker Events
 
@@ -589,6 +591,11 @@ LiveUI/
 │           ├── mod.rs               # Selector thread, swap commands, HTTP client
 │           └── config.rs            # PresetConfig, ParsedPattern, should_capture()
 │
+├── live-capture-youtube-music/       # YTM player bar capture wrapper (Rust)
+│   └── src/
+│       ├── main.rs                  # CLI, retry loop, child process spawning
+│       └── crop.rs                  # DPI-aware CSS-based crop rect computation
+│
 ├── live-ws/                         # stdin → WebSocket relay (Rust)
 │   └── src/main.rs                  # CLI, stdin reader, WS client, --mode video caching
 │
@@ -658,6 +665,12 @@ LiveUI/
 **Problem**: All P-frames were 12 bytes (black frames). Resampler didn't set viewport → GPU clipped fullscreen triangle → empty output.
 
 **Fix**: Always set `RSSetViewports()` before draw calls.
+
+### Bug #3: `get-url` Prompt Blocks Pipeline Setup
+
+**Problem**: In a Nushell pipeline like `(^producer args | ^consumer --server (get-url --ws ...))`, the `get-url` call may trigger `patch-env`'s interactive prompt (to set `LIVE_HOST`).  While the prompt waits for user input, the producer has already started and is writing to stdout.  But the consumer hasn't started yet (its argument is still being evaluated), so there's no reader on the pipe.  The producer hits a broken pipe and exits before the pipeline is fully assembled.
+
+**Fix**: Ensure `get-url` / `patch-env` is called *before* the pipeline expression — either in a `let` binding or a preceding statement — so the interactive prompt resolves before any process is spawned.
 
 ---
 
