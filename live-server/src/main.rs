@@ -88,7 +88,14 @@ async fn main() {
         .await
         .expect("failed to bind");
 
-    let mut vite_child = spawn_vite(cli.vite_port);
+    // Job object auto-kills child processes (Vite) when this process exits,
+    // including crashes and Task Manager kills — not just graceful shutdown.
+    let _job = job_object::JobObject::new().ok();
+
+    let vite_child = spawn_vite(cli.vite_port);
+    if let (Some(job), Some(ref child)) = (_job.as_ref(), vite_child.as_ref()) {
+        let _ = job.assign(child);
+    }
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
@@ -98,12 +105,7 @@ async fn main() {
         .await
         .expect("server error");
 
-    // Cleanup.
-    if let Some(ref mut child) = vite_child {
-        let _ = child.kill();
-        let _ = child.wait();
-        log::info!("vite stopped");
-    }
+    // _job is dropped here → kills Vite if still running.
 }
 
 // ── Refresh ─────────────────────────────────────────────────────────────
