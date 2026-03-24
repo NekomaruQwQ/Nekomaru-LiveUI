@@ -16,6 +16,14 @@
 # `get-exe --copy <id>` to copy the exe before spawning — this prevents file
 # locking from blocking subsequent builds on Windows.
 
+# ── Constants ──
+
+const YOUTUBE_MUSIC_TITLE = "YouTube Music - Nekomaru LiveUI"
+const CUBASE_WINDOW_TITLE = "Cubase Pro Project - Practice-0"
+const CUBASE_EXECUTABLE_PATH = 'C:\Program Files\Steinberg\Cubase 14\Cubase14.exe'
+const MIC_POLL_INTERVAL = 60sec
+const MIC_LOG_PREFIX = "[@microphone nushell]"
+
 # ── Utility Commands ──
 
 # Build the specified Rust binary, optionally copy it with a new name, and
@@ -80,6 +88,9 @@ export def --wrapped run-server [...args]: nothing -> nothing {
 # ── Launcher for live-app ──
 
 export def --wrapped run-app [...args]: nothing -> nothing {
+    # Ensure LIVE_HOST is set for URL parsing.
+    get-url | ignore
+
     (^(get-exe "live-app" --copy "app") (get-url)
         -x 1280 -y 720
         -t "Nekomaru LiveUI"
@@ -87,10 +98,13 @@ export def --wrapped run-app [...args]: nothing -> nothing {
 }
 
 export def --wrapped run-youtube-music [...args]: nothing -> nothing {
+    # Ensure LIVE_HOST is set for URL parsing.
+    get-url | ignore
+
     (^(get-exe "live-app" --copy "youtube-music")
         "https://music.youtube.com/"
-        -x 1280 -y 720 -s 2
-        -t "YouTube Music - Nekomaru LiveUI"
+        -x 1280 -y 720
+        -t $YOUTUBE_MUSIC_TITLE
         ...$args)
 }
 
@@ -100,6 +114,9 @@ export def --wrapped run-youtube-music [...args]: nothing -> nothing {
 # Polls the foreground window, matches patterns from the server config,
 # hot-swaps the capture session, and relays encoded frames via WebSocket.
 export def "run-capture auto" []: nothing -> nothing {
+    # Ensure LIVE_HOST is set for URL parsing.
+    get-url | ignore
+
     (^(get-exe "live-capture" --copy "auto")
         --mode auto
         --width 1920 --height 1200
@@ -111,92 +128,59 @@ export def "run-capture auto" []: nothing -> nothing {
         --server     (get-url --ws "/internal/streams/main"))
 }
 
-# Start the keystroke counter pipeline.
+# Start the YouTube Music crop capture pipeline.
+#
+# Uses `live-capture-youtube-music` which handles window discovery, DPI-aware
+# crop rect computation, and auto-restart internally.  We just pipe it to
+# `live-ws` for WebSocket delivery.
+export def "run-capture youtube-music" []: nothing -> nothing {
+    # Ensure live-capture is built — spawned internally by live-capture-youtube-music.
+    get-exe "live-capture" --copy "youtube-music" | ignore
+    # Ensure LIVE_HOST is set for URL parsing.
+    get-url | ignore
+
+    (^(get-exe "live-capture-youtube-music")
+        -t $YOUTUBE_MUSIC_TITLE
+    |^(get-exe "live-ws" --copy "youtube-music")
+        --mode video
+        --server (get-url --ws "/internal/streams/youtube-music"))
+}
+
+# Start the keystroke counter.
 export def run-kpm []: nothing -> nothing {
+    # Ensure LIVE_HOST is set for URL parsing.
+    get-url | ignore
+
     (^(get-exe "live-kpm")
     |^(get-exe "live-ws" --copy "kpm")
         --server (get-url --ws "/internal/kpm"))
 }
 
-# ── The YouTube Music capturing pipeline ──
-const YTM_LOG_PREFIX = $"[@youtube-music nushell]"
-const YTM_TITLE = "YouTube Music - Nekomaru LiveUI"
-const YTM_TITLE_BAR = 48
-const YTM_BAR_HEIGHT = 112
-const YTM_BOTTOM_MARGIN = 12
-const YTM_RIGHT_MARGIN = 96
-const YTM_FPS = 15
-const YTM_POLL_INTERVAL = 5sec
-
-# Find the YouTube Music window and return its info, or null if not found.
-export def find-ytm-window []: nothing -> record<hwnd: int, width: int, height: int> {
-    let arr = (
-        ^(get-exe "enumerate-windows")
-            | from json
-            | where {|it| $it.title | str starts-with $YTM_TITLE })
-    match ($arr | length) {
-        0 => null,
-        1 => {
-            $arr | first
-        },
-        _ => {
-            print $"Warning: Multiple YouTube Music windows found. Using the first one."
-            $arr | first
-        }
-    }
-}
-
-# Compute the crop geometry for the YouTube Music playback bar.
-export def ytm-crop-geometry [
-    window_width: int,
-    window_height: int,
-]: nothing -> record<min_x: int, min_y: int, max_x: int, max_y: int> {
-    let full_height = $window_height + $YTM_TITLE_BAR
-    let min_y = $full_height - $YTM_BAR_HEIGHT - $YTM_BOTTOM_MARGIN
-    let max_y = $full_height - $YTM_BOTTOM_MARGIN
-    let max_x = $window_width - $YTM_RIGHT_MARGIN
-    { min_x: 0, min_y: $min_y, max_x: $max_x, max_y: $max_y }
-}
-
-# Start the YouTube Music crop & capture service.
+# Start the microphone status monitor.
 #
-# Polls for the YTM window, launches crop capture when found, and restarts
-# if the window disappears and reappears.
-export def "run-capture youtube-music" []: nothing -> nothing {
-    let ws_url = get-url --ws "/internal/streams/youtube-music"
+# Poll for the Cubase window and update the $microphone computed string.
+# If the window is found (exact title + executable path match), sets "on";
+# otherwise deletes the key (absence = off).
+export def run-microphone []: nothing -> nothing {
+    # Ensure LIVE_HOST is set for URL parsing.
+    get-url | ignore
 
     loop {
-        # Poll for the YouTube Music window.
-        let window = find-ytm-window
-        if $window == null {
-            print $"($YTM_LOG_PREFIX) Waiting for YouTube Music window..."
-            sleep $YTM_POLL_INTERVAL
-            continue
+        let found = (
+            ^(get-exe "enumerate-windows")
+                | from json
+                | where {|it|
+                    $it.title == $CUBASE_WINDOW_TITLE
+                    and ($it.executable_path | str ends-with $CUBASE_EXECUTABLE_PATH) }
+                | is-not-empty)
+
+        if $found {
+            http put (get-url "/internal/strings/$microphone") { value: "on" }
+        } else {
+            http delete (get-url "/internal/strings/$microphone")
         }
+        print $"($MIC_LOG_PREFIX) microphone: (if $found { 'on' } else { 'off' })"
 
-        let crop = ytm-crop-geometry $window.width $window.height
-        let hwnd = $window.hwnd
-        print $"($YTM_LOG_PREFIX) found window ($window), crop=($crop)"
-
-        # Launch the crop capture pipeline.  Blocks until the process exits
-        # (e.g. window closed → capture error → live-capture exits).
-        try {
-            (^(get-exe "live-capture" --copy "youtube-music")
-                --stream-id youtube-music
-                --mode crop
-                --hwnd $hwnd
-                --crop-min-x $crop.min_x
-                --crop-min-y $crop.min_y
-                --crop-max-x $crop.max_x
-                --crop-max-y $crop.max_y
-                --fps $YTM_FPS
-            |^(get-exe "live-ws" --copy "youtube-music")
-                --mode video
-                --server $ws_url)
-        } catch {
-            print $"($YTM_LOG_PREFIX) capture pipeline exited, will retry..."
-        }
-
-        sleep $YTM_POLL_INTERVAL
+        sleep $MIC_POLL_INTERVAL
     }
 }
