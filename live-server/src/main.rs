@@ -75,7 +75,7 @@ async fn main() {
         .merge(strings::router())
         .merge(selector::router())
         .merge(events::router())
-        .route("/api/v1/refresh", post(refresh))
+        .route("/api/refresh", post(refresh))
         .with_state(Arc::clone(&state))
         .fallback(vite_proxy::fallback(cli.vite_port));
 
@@ -108,7 +108,7 @@ async fn main() {
 
 // ── Refresh ─────────────────────────────────────────────────────────────
 
-/// `POST /api/v1/refresh` — reload string store and selector config from disk.
+/// `POST /api/refresh` — reload string store and selector config from disk.
 async fn refresh(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     state.strings.write().await.reload();
     state.selector.write().await.reload();

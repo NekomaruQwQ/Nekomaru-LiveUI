@@ -181,9 +181,9 @@ The system uses **fixed, well-known stream IDs** rather than dynamically generat
 | `"main"` | `live-capture --mode auto` | Foreground window (auto-selector) |
 | `"youtube-music"` | `live-capture --mode crop` | YouTube Music playback bar |
 
-**Why fixed IDs?**  The frontend is a pure viewer — it has zero stream management logic.  It renders `"main"` unconditionally and shows `"youtube-music"` when available (polled via `GET /api/v1/streams`).  No discovery protocol, no negotiation, no dynamic allocation.  When the auto-selector hot-swaps the captured window, the stream ID stays `"main"` — the server sends fresh CodecParams and a keyframe, and the frontend reinitializes its decoder.
+**Why fixed IDs?**  The frontend is a pure viewer — it has zero stream management logic.  It renders `"main"` unconditionally and shows `"youtube-music"` when available (polled via `GET /api/streams`).  No discovery protocol, no negotiation, no dynamic allocation.  When the auto-selector hot-swaps the captured window, the stream ID stays `"main"` — the server sends fresh CodecParams and a keyframe, and the frontend reinitializes its decoder.
 
-**Where IDs are assigned:**  Nushell orchestration (`mod.nu`) passes `--stream-id` to `live-ws`, which connects to `/api/v1/streams/ws/:id/input`.  The server creates the stream slot on first encoder connection.
+**Where IDs are assigned:**  Nushell orchestration (`mod.nu`) passes `--stream-id` to `live-ws`, which connects to `/internal/streams/:id`.  The server creates the stream slot on first encoder connection.
 
 ### Design Principles
 
@@ -274,8 +274,8 @@ live-capture --hwnd 0x1A2B --width 1920 --height 1200
 
 # Auto mode — foreground polling + hot-swap
 live-capture --mode auto --width 1920 --height 1200 \
-  --config-url http://host/api/v1/streams/auto/config \
-  --event-url http://host/api/core/streamInfo/main
+  --config-url http://host/api/selector/config \
+  --event-url http://host/internal/streams/main/event
 
 # Crop mode — fixed subrect extraction
 live-capture --mode crop --hwnd 0x1A2B \
@@ -299,21 +299,23 @@ enumerate-windows --foreground
 
 ### HTTP & WebSocket API
 
-Served by the Rust server (Axum). Port configured via `LIVE_PORT` (required). All endpoints prefixed with `/api/v1`.
+Served by the Rust server (Axum). Port configured via `LIVE_PORT` (required).
 
-#### Video Relay (WebSocket)
+Endpoints are split into two namespaces:
+- **`/api/`** — public, frontend-facing
+- **`/internal/`** — worker-facing (encoder input, capture events)
 
-**`WS /api/v1/streams/ws/:id/input`** — Encoder input. Receives `live-protocol` binary messages from `live-ws`. The server peeks at header bytes 0-1 to cache CodecParams and keyframes, then fan-outs to all connected frontend clients.
+#### Public API (`/api`)
 
-**`WS /api/v1/streams/ws/:id`** — Frontend viewer. Pushes relayed binary messages. On connect, sends cached CodecParams + last keyframe for immediate playback.
+##### Streams
 
-**`GET /api/v1/streams`** — List active streams (derived from connected encoder WS sockets).
+**`GET /api/streams`** — List active streams (derived from connected encoder WS sockets).
 
 ```json
 [{ "id": "main" }, { "id": "youtube-music" }]
 ```
 
-**`GET /api/v1/streams/:id/init`** — Pre-built decoder configuration. The server parses cached CodecParams via `live-protocol` to build the `avc1.PPCCLL` codec string and avcC descriptor.
+**`GET /api/streams/:id/init`** — Pre-built decoder configuration. The server parses cached CodecParams via `live-protocol` to build the `avc1.PPCCLL` codec string and avcC descriptor.
 
 ```json
 {
@@ -324,13 +326,13 @@ Served by the Rust server (Axum). Port configured via `LIVE_PORT` (required). Al
 }
 ```
 
-#### KPM Relay (WebSocket)
+**`WS /api/streams/:id`** — Frontend viewer. Pushes relayed binary messages. On connect, sends cached CodecParams + last keyframe for immediate playback.
 
-**`WS /api/v1/kpm/ws/input`** — KPM input from `live-kpm` via `live-ws`. Binary `live-protocol` messages.
+##### KPM
 
-**`WS /api/v1/kpm/ws`** — Frontend KPM display. Pushes `{"kpm": N}` or `{"kpm": null}` JSON text. Initial value sent on connect.
+**`WS /api/kpm`** — Frontend KPM display. Pushes `{"kpm": N}` or `{"kpm": null}` JSON text. Initial value sent on connect.
 
-#### String Store
+##### String Store
 
 Server-managed key-value store. Keys prefixed with `$` are **computed strings** — readonly values set by worker events.
 
@@ -338,30 +340,44 @@ Server-managed key-value store. Keys prefixed with `$` are **computed strings** 
 
 | Key | Source | Description |
 |-----|--------|-------------|
-| `$captureInfo` | `POST /api/core/streamInfo` | Human-readable label for the captured window |
-| `$captureMode` | `POST /api/core/streamInfo` | Current capture mode (e.g. `"auto"`) |
-| `$liveMode` | `POST /api/core/streamInfo` | Mode tag from matched pattern (e.g. `"code"`, `"game"`) |
+| `$captureInfo` | `POST /internal/streams/:id/event` | Human-readable label for the captured window |
+| `$captureMode` | `POST /internal/streams/:id/event` | Current capture mode (e.g. `"auto"`) |
+| `$liveMode` | `POST /internal/streams/:id/event` | Mode tag from matched pattern (e.g. `"code"`, `"game"`) |
 | `$timestamp` | Server startup | Revision timestamp via `jj log` |
 
-**`GET /api/v1/strings`** — All key-value pairs (file-backed + computed).
+**`GET /api/strings`** — All key-value pairs (file-backed + computed).
 
-**`PUT /api/v1/strings/:key`** — Set a string value. Returns 403 for `$`-prefixed keys.
+**`GET /api/strings/:key`** — Single string value.
 
-**`DELETE /api/v1/strings/:key`** — Delete a string. Returns 403 for `$`-prefixed keys.
+**`PUT /api/strings/:key`** — Set a string value. Returns 403 for `$`-prefixed keys.
 
-#### Selector Config
+**`DELETE /api/strings/:key`** — Delete a string. Returns 403 for `$`-prefixed keys.
+
+##### Selector Config
 
 The server stores the selector config; `live-capture --mode auto` polls it.
 
-**`GET /api/v1/streams/auto/config`** — Full preset config (polled by auto mode every ~20s).
+**`GET /api/selector/config`** — Full preset config (polled by auto mode every ~20s).
 
-**`PUT /api/v1/streams/auto/config`** — Replace full config.
+**`PUT /api/selector/config`** — Replace full config.
 
-**`PUT /api/v1/streams/auto/config/preset`** — Switch active preset by name (text/plain body).
+**`PUT /api/selector/preset`** — Switch active preset by name (text/plain body).
 
-#### Worker Events
+##### Refresh
 
-**`POST /api/core/streamInfo/:streamId`** — Capture switch metadata from `live-capture --mode auto`. Updates computed strings.
+**`POST /api/refresh`** — Reload selector config and string store from disk.
+
+#### Internal API (`/internal`)
+
+##### Encoder Input
+
+**`WS /internal/streams/:id`** — Encoder input. Receives `live-protocol` binary messages from `live-ws`. The server peeks at header bytes 0-1 to cache CodecParams and keyframes, then fan-outs to all connected frontend clients.
+
+**`WS /internal/kpm`** — KPM input from `live-kpm` via `live-ws`. Binary `live-protocol` messages.
+
+##### Worker Events
+
+**`POST /internal/streams/:streamId/event`** — Capture switch metadata from `live-capture --mode auto`. Updates computed strings.
 
 ```json
 {
@@ -371,10 +387,6 @@ The server stores the selector config; `live-capture --mode auto` polls it.
     "mode": "code"
 }
 ```
-
-#### Refresh
-
-**`POST /api/v1/refresh`** — Reload selector config and string store from disk.
 
 ---
 
@@ -581,10 +593,10 @@ LiveUI/
 │   ├── index.tsx                    # Entry point (React 19 createRoot)
 │   └── src/
 │       ├── ws.ts                    # Low-level WebSocket helpers
-│       ├── api.ts                   # fetch() wrapper for /api/v1/streams
+│       ├── api.ts                   # fetch() wrapper for /api/streams
 │       ├── app.tsx                  # Pure viewer shell (JetBrains Islands dark theme)
 │       ├── streams.ts               # useStreamStatus() hook (polls stream availability)
-│       ├── strings-api.ts           # fetch() wrapper for /api/v1/strings
+│       ├── strings-api.ts           # fetch() wrapper for /api/strings
 │       ├── strings.ts               # useStrings() hook (polls string store)
 │       ├── kpm.tsx                  # useKpm() hook (WS push) + <KpmMeter> VU bar
 │       ├── widgets/                 # SidePanel widgets (Clock, Mode, Capture, About)

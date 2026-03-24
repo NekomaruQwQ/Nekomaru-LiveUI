@@ -5,9 +5,9 @@
 //!
 //! ## Routes
 //!
-//! - `GET /api/v1/streams/auto/config`        — full preset config
-//! - `PUT /api/v1/streams/auto/config`        — replace full config
-//! - `PUT /api/v1/streams/auto/config/preset` — switch active preset by name
+//! - `GET /api/selector/config`  — full preset config
+//! - `PUT /api/selector/config`  — replace full config
+//! - `PUT /api/selector/preset`  — switch active preset by name
 
 use crate::state::AppState;
 
@@ -118,19 +118,19 @@ fn default_config() -> PresetConfig {
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/api/v1/streams/auto/config",
+        .route("/api/selector/config",
             get(get_config).put(set_config))
-        .route("/api/v1/streams/auto/config/preset",
+        .route("/api/selector/preset",
             put(set_preset))
 }
 
-/// `GET /api/v1/streams/auto/config` — full preset config.
+/// `GET /api/selector/config` — full preset config.
 async fn get_config(State(state): State<Arc<AppState>>) -> Json<PresetConfig> {
     let sel = state.selector.read().await;
     Json(sel.config.clone())
 }
 
-/// `PUT /api/v1/streams/auto/config` — replace full config.
+/// `PUT /api/selector/config` — replace full config.
 async fn set_config(
     State(state): State<Arc<AppState>>,
     Json(config): Json<PresetConfig>,
@@ -143,7 +143,7 @@ async fn set_config(
     Json(serde_json::json!({ "ok": true }))
 }
 
-/// `PUT /api/v1/streams/auto/config/preset` — switch active preset by name.
+/// `PUT /api/selector/preset` — switch active preset by name.
 async fn set_preset(
     State(state): State<Arc<AppState>>,
     body: Bytes,

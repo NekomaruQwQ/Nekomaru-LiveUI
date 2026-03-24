@@ -1,6 +1,6 @@
 // Polling hook for the server-managed string store.
 //
-// Polls GET /api/v1/strings every 2 seconds and returns all key-value pairs.
+// Polls GET /api/strings every 2 seconds and returns all key-value pairs.
 // Used by app.tsx to display well-known string IDs at designated locations
 // in the layout (e.g. "marquee" in the scrolling top banner).
 

@@ -26,6 +26,8 @@ pull bookmark:
 server *args:
     use . *; run-server {{args}}
 
+http method path *args:
+    use . *; http {{method}} (get-url "{{path}}") {{args}}
 # refresh:
 #     http post $"{{base_url}}/api/v1/refresh" ""
 # capture name:

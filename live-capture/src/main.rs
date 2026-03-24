@@ -14,7 +14,7 @@
 //! ```text
 //! # Base mode — capture + encode to stdout, pipe through live-ws
 //! live-capture --hwnd 0x1A2B --width 1920 --height 1200 \
-//!   | live-ws --mode video --server ws://machineA:3000/api/v1/ws/video/main/input
+//!   | live-ws --mode video --server ws://machineA:3000/internal/streams/main
 //!
 //! # Dump to file for testing (production code path)
 //! live-capture --hwnd 0x1A2B --width 1920 --height 1200 > dump.bin

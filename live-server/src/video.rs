@@ -1,12 +1,12 @@
 //! Video WebSocket relay.
 //!
-//! - **Encoder input**: `WS /api/v1/streams/ws/:id/input` — receives binary
+//! - **Encoder input**: `WS /internal/streams/:id` — receives binary
 //!   `live-protocol` frames from `live-ws` and broadcasts to all viewers.
-//! - **Frontend viewer**: `WS /api/v1/streams/ws/:id` — pushes relayed frames.
+//! - **Frontend viewer**: `WS /api/streams/:id` — pushes relayed frames.
 //!   On connect, sends cached CodecParams + keyframe for immediate playback.
-//! - **Init**: `GET /api/v1/streams/:id/init` — pre-built decoder config
+//! - **Init**: `GET /api/streams/:id/init` — pre-built decoder config
 //!   (`avc1.*` codec string + avcC descriptor) from cached CodecParams.
-//! - **List**: `GET /api/v1/streams` — active stream IDs.
+//! - **List**: `GET /api/streams` — active stream IDs.
 //!
 //! The server does NOT buffer frames — it relays them.  It caches:
 //! - Last CodecParams message per stream (for `/init` and late-joiners)
@@ -98,13 +98,13 @@ impl VideoState {
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/api/v1/streams", get(list_streams))
-        .route("/api/v1/streams/{id}/init", get(get_init))
-        .route("/api/v1/streams/ws/{id}/input", get(encoder_input))
-        .route("/api/v1/streams/ws/{id}", get(viewer_ws))
+        .route("/api/streams", get(list_streams))
+        .route("/api/streams/{id}/init", get(get_init))
+        .route("/internal/streams/{id}", get(encoder_input))
+        .route("/api/streams/{id}", get(viewer_ws))
 }
 
-/// `GET /api/v1/streams` — list active stream IDs.
+/// `GET /api/streams` — list active stream IDs.
 async fn list_streams(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let ids: Vec<_> = state.video.list_active()
         .into_iter()
@@ -113,7 +113,7 @@ async fn list_streams(State(state): State<Arc<AppState>>) -> Json<serde_json::Va
     Json(serde_json::Value::Array(ids))
 }
 
-/// `GET /api/v1/streams/:id/init` — pre-built decoder configuration.
+/// `GET /api/streams/:id/init` — pre-built decoder configuration.
 ///
 /// Parses cached CodecParams via `live-protocol` to build the `avc1.PPCCLL`
 /// codec string and ISO 14496-15 avcC descriptor.  The frontend passes
@@ -165,7 +165,7 @@ async fn get_init(
 
 // ── Encoder Input WS ────────────────────────────────────────────────────
 
-/// `WS /api/v1/streams/ws/:id/input` — encoder input from `live-ws`.
+/// `WS /internal/streams/:id` — encoder input from `live-ws`.
 async fn encoder_input(
     ws: WebSocketUpgrade,
     Path(id): Path<String>,
@@ -179,7 +179,7 @@ async fn encoder_input(
 async fn handle_encoder(mut socket: WebSocket, id: String, state: Arc<AppState>) {
     let slot = state.video.get_or_create(&id);
     slot.encoder_connected.store(true, Ordering::Relaxed);
-    log::info!("[video @{id}] encoder connected");
+    log::info!("@{id} encoder connected");
 
     while let Some(Ok(msg)) = socket.recv().await {
         let Message::Binary(data) = msg else { continue };
@@ -191,7 +191,7 @@ async fn handle_encoder(mut socket: WebSocket, id: String, state: Arc<AppState>)
         // Cache CodecParams and keyframes for late-joiners and /init.
         if msg_type == MessageType::CodecParams as u8 {
             *slot.cached_codec_params.lock().unwrap() = Some(data.to_vec());
-            log::info!("[video @{id}] cached CodecParams ({}B)", data.len());
+            log::info!("@{id} cached CodecParams ({}B)", data.len());
         } else if msg_type == MessageType::Frame as u8
             && (msg_flags & flags::IS_KEYFRAME) != 0
         {
@@ -204,12 +204,12 @@ async fn handle_encoder(mut socket: WebSocket, id: String, state: Arc<AppState>)
     }
 
     slot.encoder_connected.store(false, Ordering::Relaxed);
-    log::info!("[video @{id}] encoder disconnected");
+    log::info!("@{id} encoder disconnected");
 }
 
 // ── Frontend Viewer WS ──────────────────────────────────────────────────
 
-/// `WS /api/v1/streams/ws/:id` — frontend viewer.
+/// `WS /api/streams/:id` — frontend viewer.
 async fn viewer_ws(
     ws: WebSocketUpgrade,
     Path(id): Path<String>,
@@ -245,7 +245,7 @@ async fn handle_viewer(mut socket: WebSocket, id: String, state: Arc<AppState>) 
         }
     }
 
-    log::info!("[video @{id}] viewer connected");
+    log::info!("@{id} viewer connected");
 
     // Relay loop: forward broadcast messages to this viewer.
     loop {
@@ -256,11 +256,11 @@ async fn handle_viewer(mut socket: WebSocket, id: String, state: Arc<AppState>) 
                 }
             }
             Err(broadcast::error::RecvError::Lagged(n)) => {
-                log::debug!("[video @{id}] viewer lagged {n} messages");
+                log::debug!("@{id} viewer lagged {n} messages");
             }
             Err(broadcast::error::RecvError::Closed) => break,
         }
     }
 
-    log::info!("[video @{id}] viewer disconnected");
+    log::info!("@{id} viewer disconnected");
 }

@@ -12,8 +12,8 @@
 //! ## Usage
 //!
 //! ```text
-//! live-capture ... | live-ws --mode video --server ws://machineA:3000/api/v1/ws/video/main/input
-//! live-kpm        | live-ws --server ws://machineA:3000/api/v1/ws/kpm/input
+//! live-capture ... | live-ws --mode video --server ws://machineA:3000/internal/streams/main
+//! live-kpm        | live-ws --server ws://machineA:3000/internal/kpm
 //! ```
 
 use live_protocol::{HEADER_SIZE, MessageType, flags};

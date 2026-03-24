@@ -9,7 +9,7 @@ export interface StreamInfo {
 
 /// Fetch the list of active streams.
 export async function fetchStreams(): Promise<StreamInfo[]> {
-	const res = await fetch("/api/v1/streams");
+	const res = await fetch("/api/streams");
 	if (!res.ok) return [];
 	return res.json();
 }

@@ -1,6 +1,6 @@
 // KPM (keystrokes-per-minute) meter component.
 //
-// Receives KPM values via WebSocket push from /api/v1/ws/kpm, computes
+// Receives KPM values via WebSocket push from /api/kpm, computes
 // peak hold + decay on the frontend for smooth animation, and renders
 // a vertical VU-style meter in the ActionPanel.
 
@@ -97,7 +97,7 @@ async function kpmWsLoop(
     }
 }
 
-/// Open a single WS connection to /api/v1/ws/kpm and process messages.
+/// Open a single WS connection to /api/kpm and process messages.
 /// Returns true if the connection was successfully established (for backoff
 /// reset), false if it failed before opening.
 function runOneKpmConnection(
@@ -108,7 +108,7 @@ function runOneKpmConnection(
         if (signal.aborted) { resolve(false); return; }
 
         const proto = location.protocol === "https:" ? "wss:" : "ws:";
-        const ws = new WebSocket(`${proto}//${location.host}/api/v1/kpm/ws`);
+        const ws = new WebSocket(`${proto}//${location.host}/api/kpm`);
 
         const onAbort = () => ws.close();
         signal.addEventListener("abort", onAbort, { once: true });

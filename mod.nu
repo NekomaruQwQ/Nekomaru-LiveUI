@@ -1,28 +1,28 @@
 # Nekomaru LiveUI — Nushell orchestration module.
-#
-# Usage:
-#   use . *
-#   live-server          # start the TS relay server + Vite
-#   live-capture-auto    # start auto-selector capture pipeline
-#   live-capture-ytm     # start YouTube Music crop capture pipeline
-#   live-kpm             # start keystroke counter pipeline
 
+# This module provides high-level commands to launch the various components
+# of the livestreaming pipeline.
+
+# ── Common Utilities ──
+
+# Directory where the compiled binaries are located. We use release binaries
+# for better performance and consistency.
 const BINARY_DIR = (
     path self
         | path dirname
         | path join "target" "release")
 
+# Checks if the specified environment variable is set, and throws an error
+# if not.
 def check-env [var: string]: nothing -> nothing {
     if ($env | get -o $var) == null {
         error make { msg: $"Environment variable ($var) is not set" }
     }
 }
 
-# Open a command in a new Windows Terminal tab with login shell.
-export def spawn-tab [...args: string]: nothing -> nothing {
-    wt -w 0 nt nu -l -c ($args | str join " ")
-}
-
+# Checks if the specified environment variable is set, and if not, prompts
+# the user to temporarily set it with the provided value for the current
+# session.
 def --env patch-env [var: string, value: string]: nothing -> nothing {
     if ($env | get -o $var) == null {
         print $"($var) is not set. Temporarily set ($var) = \"($value)\"? [Y/n]"
@@ -34,22 +34,26 @@ def --env patch-env [var: string, value: string]: nothing -> nothing {
     }
 }
 
-# ── Launcher for live-server ────────────────────────────────────────────────────────────────────────────
+export def --env get-url [path: string = "/", --ws]: nothing -> string {
+    patch-env "LIVE_HOST" $"localhost:($env.LIVE_PORT)"
+    let protocol = if $ws { "ws" } else { "http" }
+    $"($protocol)://($env.LIVE_HOST)($path)"
+}
+
+# ── Launcher for live-server ──
 
 # Start the Rust/Axum server with Vite dev server proxied.
 # Requires LIVE_PORT and LIVE_VITE_PORT environment variables.
 export def --wrapped run-server [...args]: nothing -> nothing {
     check-env "LIVE_PORT"
     check-env "LIVE_VITE_PORT"
-    ^$"($BINARY_DIR)/live-server.exe" ...$args
+    cargo run -r -p live-server -- ...$args
 }
 
-# ── Launcher for live-app ──────────────────────────────────────────────────────────────────────
+# ── Launcher for live-app ──
 
 export def --wrapped run-app [...args]: nothing -> nothing {
-    patch-env "LIVE_HOST" $"localhost:($env.LIVE_PORT)"
-
-    (run-app-internal app $"http://($env.LIVE_HOST)/"
+    (run-app-internal app (get-url)
         -x 1280 -y 720
         -t "Nekomaru LiveUI"
         ...$args)
@@ -66,7 +70,7 @@ export def --wrapped run-youtube-music [...args]: nothing -> nothing {
 #
 # Separate copy IDs allow multiple live-app processes (e.g. frontend and
 # youtube-music) to run simultaneously without blocking new builds.
-export def --wrapped run-app-internal [copy_id: string, ...args]: nothing -> nothing {
+def --wrapped run-app-internal [copy_id: string, ...args]: nothing -> nothing {
     let main_path = $"($BINARY_DIR)/live-app.exe";
     let copy_path = $"($BINARY_DIR)/live-app.($copy_id).exe";
 
@@ -75,19 +79,17 @@ export def --wrapped run-app-internal [copy_id: string, ...args]: nothing -> not
     ^$copy_path ...$args
 }
 
-# ── Launcher for live-kpm ──────────────────────────────────────────────────────────────────────
+# ── Launcher for live-kpm ──
 
 # Start the keystroke counter pipeline.
 export def run-kpm []: nothing -> nothing {
-    patch-env "LIVE_HOST" $"localhost:($env.LIVE_PORT)"
-
-    let ws_url = $"ws://($env.LIVE_HOST)/api/v1/kpm/ws/input"
+    let ws_url = get-url --ws "/internal/kpm"
 
     (^$"($BINARY_DIR)/live-kpm.exe"
     |^$"($BINARY_DIR)/live-ws.exe" --server $ws_url)
 }
 
-# ── Capture: Auto Selector ───────────────────────────────────────────────────
+# ── Capture: Auto Selector ──
 
 # Start the auto-selector capture pipeline.
 # Polls the foreground window, matches patterns from the server config,
@@ -96,11 +98,12 @@ export def "run-capture auto" []: nothing -> nothing {
     const DEFAULT_WIDTH = 1920
     const DEFAULT_HEIGHT = 1200
 
-    patch-env "LIVE_HOST" $"localhost:($env.LIVE_PORT)"
-
-    let config_url = $"http://($env.LIVE_HOST)/api/v1/streams/auto/config"
-    let event_url = $"http://($env.LIVE_HOST)/api/core/streamInfo/main"
-    let ws_url = $"ws://($env.LIVE_HOST)/api/v1/streams/ws/main/input"
+    let config_url = (
+        get-url "/api/selector/config")
+    let event_url = (
+        get-url "/internal/streams/main/event")
+    let ws_url = (
+        get-url --ws "/internal/streams/main")
 
     (^$"($BINARY_DIR)/live-capture.exe"
         --mode auto
@@ -113,7 +116,7 @@ export def "run-capture auto" []: nothing -> nothing {
         --server $ws_url)
 }
 
-# ── Capture: YouTube Music ───────────────────────────────────────────────────
+# ── Capture: YouTube Music ──
 const YTM_LOG_PREFIX = $"[@youtube-music nushell]"
 const YTM_TITLE = "YouTube Music - Nekomaru LiveUI"
 const YTM_TITLE_BAR = 48
@@ -158,9 +161,7 @@ export def ytm-crop-geometry [
 # Polls for the YTM window, launches crop capture when found, and restarts
 # if the window disappears and reappears.
 export def "run-capture youtube-music" []: nothing -> nothing {
-    patch-env "LIVE_HOST" $"localhost:($env.LIVE_PORT)"
-
-    let ws_url = $"ws://($env.LIVE_HOST)/api/v1/streams/ws/youtube-music/input"
+    let ws_url = get-url --ws "/internal/streams/youtube-music"
 
     loop {
         # Poll for the YouTube Music window.

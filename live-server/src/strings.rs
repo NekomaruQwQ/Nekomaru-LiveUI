@@ -9,10 +9,10 @@
 //!
 //! ## Routes
 //!
-//! - `GET    /api/v1/strings`      — all key-value pairs (user + computed)
-//! - `GET    /api/v1/strings/:key` — single entry
-//! - `PUT    /api/v1/strings/:key` — set a value (403 for `$`-prefixed keys)
-//! - `DELETE /api/v1/strings/:key` — delete a value (403 for `$`-prefixed keys)
+//! - `GET    /api/strings`      — all key-value pairs (user + computed)
+//! - `GET    /api/strings/:key` — single entry
+//! - `PUT    /api/strings/:key` — set a value (403 for `$`-prefixed keys)
+//! - `DELETE /api/strings/:key` — delete a value (403 for `$`-prefixed keys)
 
 use crate::state::AppState;
 
@@ -198,17 +198,17 @@ fn is_multiline(value: &str) -> bool { value.trim_end().contains('\n') }
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/api/v1/strings", get(get_all))
-        .route("/api/v1/strings/{key}", get(get_one).put(put_one).delete(delete_one))
+        .route("/api/strings", get(get_all))
+        .route("/api/strings/{key}", get(get_one).put(put_one).delete(delete_one))
 }
 
-/// `GET /api/v1/strings` — return all entries as a flat JSON object.
+/// `GET /api/strings` — return all entries as a flat JSON object.
 async fn get_all(State(state): State<Arc<AppState>>) -> Json<BTreeMap<String, String>> {
     let store = state.strings.read().await;
     Json(store.get_all())
 }
 
-/// `GET /api/v1/strings/:key` — return a single entry.
+/// `GET /api/strings/:key` — return a single entry.
 async fn get_one(
     State(state): State<Arc<AppState>>,
     Path(key): Path<String>,
@@ -226,7 +226,7 @@ struct PutBody {
     value: String,
 }
 
-/// `PUT /api/v1/strings/:key` — set a string value.
+/// `PUT /api/strings/:key` — set a string value.
 async fn put_one(
     State(state): State<Arc<AppState>>,
     Path(key): Path<String>,
@@ -244,7 +244,7 @@ async fn put_one(
     }
 }
 
-/// `DELETE /api/v1/strings/:key` — delete a string.
+/// `DELETE /api/strings/:key` — delete a string.
 async fn delete_one(
     State(state): State<Arc<AppState>>,
     Path(key): Path<String>,

@@ -4,7 +4,7 @@
 
 /// Fetch all string key-value pairs (user + computed).
 export async function fetchStrings(): Promise<Record<string, string>> {
-	const res = await fetch("/api/v1/strings");
+	const res = await fetch("/api/strings");
 	if (!res.ok) return {};
 	return res.json();
 }

@@ -1,8 +1,8 @@
 //! KPM (keystrokes per minute) WebSocket relay.
 //!
-//! - **Input**:  `WS /api/v1/kpm/ws/input` — receives binary `live-protocol`
+//! - **Input**:  `WS /internal/kpm` — receives binary `live-protocol`
 //!   `KpmUpdate` messages from `live-kpm` via `live-ws`.
-//! - **Output**: `WS /api/v1/kpm/ws` — pushes `{"kpm": N}` JSON text to all
+//! - **Output**: `WS /api/kpm` — pushes `{"kpm": N}` JSON text to all
 //!   connected frontend clients.  Sends the cached value on connect.
 //!
 //! The input side parses the 8-byte frame header + i64 LE payload.
@@ -42,13 +42,13 @@ impl KpmState {
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/api/v1/kpm/ws/input", get(kpm_input))
-        .route("/api/v1/kpm/ws", get(kpm_viewer))
+        .route("/internal/kpm", get(kpm_input))
+        .route("/api/kpm", get(kpm_viewer))
 }
 
 // ── Input WS ────────────────────────────────────────────────────────────
 
-/// `WS /api/v1/kpm/ws/input` — KPM encoder input from `live-ws`.
+/// `WS /internal/kpm` — KPM encoder input from `live-ws`.
 async fn kpm_input(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
@@ -59,7 +59,7 @@ async fn kpm_input(
 /// Parse binary `KpmUpdate` messages (i64 LE at header offset 8) and
 /// publish via the watch channel.
 async fn handle_kpm_input(mut socket: WebSocket, state: Arc<AppState>) {
-    log::info!("[kpm] encoder connected");
+    log::info!("kpm encoder connected");
 
     while let Some(Ok(msg)) = socket.recv().await {
         let Message::Binary(data) = msg else { continue };
@@ -78,12 +78,12 @@ async fn handle_kpm_input(mut socket: WebSocket, state: Arc<AppState>) {
 
     // Encoder disconnected — signal null to viewers.
     let _ = state.kpm.tx.send(None);
-    log::info!("[kpm] encoder disconnected");
+    log::info!("kpm encoder disconnected");
 }
 
 // ── Viewer WS ───────────────────────────────────────────────────────────
 
-/// `WS /api/v1/kpm/ws` — frontend KPM display.
+/// `WS /api/kpm` — frontend KPM display.
 async fn kpm_viewer(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
@@ -96,7 +96,7 @@ async fn kpm_viewer(
 async fn handle_kpm_viewer(mut socket: WebSocket, state: Arc<AppState>) {
     let mut rx = state.kpm.rx.clone();
 
-    log::info!("[kpm] viewer connected");
+    log::info!("kpm viewer connected");
 
     // Send current value immediately.
     let initial = *rx.borrow_and_update();
@@ -114,7 +114,7 @@ async fn handle_kpm_viewer(mut socket: WebSocket, state: Arc<AppState>) {
         }
     }
 
-    log::info!("[kpm] viewer disconnected");
+    log::info!("kpm viewer disconnected");
 }
 
 /// Format a KPM value as JSON.

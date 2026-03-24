@@ -13,7 +13,7 @@
 //! ## Usage
 //!
 //! ```text
-//! live-kpm | live-ws --server ws://machineA:3000/api/v1/ws/kpm/input
+//! live-kpm | live-ws --server ws://machineA:3000/internal/kpm
 //! live-kpm > kpm.bin  # dump for testing
 //! ```
 

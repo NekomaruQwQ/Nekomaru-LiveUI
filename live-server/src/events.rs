@@ -4,7 +4,7 @@
 //!
 //! ## Routes
 //!
-//! - `POST /api/core/streamInfo/:streamId` — capture switch metadata from
+//! - `POST /internal/streams/:streamId/event` — capture switch metadata from
 //!   `live-capture --mode auto`.  Updates computed strings.
 
 use crate::state::AppState;
@@ -32,7 +32,7 @@ const CSID_LIVE_MODE: &str = "$liveMode";
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/api/core/streamInfo/{streamId}", post(stream_info))
+        .route("/internal/streams/{streamId}/event", post(stream_info))
 }
 
 // ── Stream Info ─────────────────────────────────────────────────────────
@@ -46,7 +46,7 @@ struct StreamInfoBody {
     mode: Option<String>,
 }
 
-/// `POST /api/core/streamInfo/:streamId` — capture switch metadata.
+/// `POST /internal/streams/:streamId/event` — capture switch metadata.
 ///
 /// Called by `live-capture --mode auto` on each window switch.  Updates
 /// the computed strings that the frontend displays.

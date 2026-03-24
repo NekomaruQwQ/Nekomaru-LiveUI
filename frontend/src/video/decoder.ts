@@ -25,7 +25,7 @@ async function fetchInit(streamId: string): Promise<CodecParams> {
     const baseDelayMs = 250;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
-        const res = await fetch(`/api/v1/streams/${streamId}/init`);
+        const res = await fetch(`/api/streams/${streamId}/init`);
 
         if (res.ok) {
             return await res.json() as CodecParams;
