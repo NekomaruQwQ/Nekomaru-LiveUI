@@ -106,6 +106,7 @@ fn main() {
             let webview =
                 wry::WebViewBuilder::new()
                     .with_url(&url)
+                    .with_devtools(true)
                     .build(&window)
                     .expect("failed to create webview");
 

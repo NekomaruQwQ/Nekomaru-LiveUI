@@ -209,8 +209,10 @@ fn get_executable_path(pid: u32) -> Option<PathBuf> {
 
 /// Returns the client-area size `(width, height)` of a window, or `(0, 0)` on failure.
 ///
-/// Uses `GetClientRect` because Windows Graphics Capture captures the client area,
-/// so these dimensions match the captured texture size.
+/// Note: Windows Graphics Capture captures the full window (client area + title
+/// bar + frame padding), so the captured texture is larger than these dimensions.
+/// `GetWindowRect` gives the captured texture size; these client-area dimensions
+/// are useful for computing the webview viewport region within the capture.
 fn get_client_size(hwnd: HWND) -> (u32, u32) {
     let mut rect = RECT::default();
     // SAFETY: `hwnd` is a valid enumerated handle; `&raw mut rect` is a valid local.
