@@ -35,7 +35,7 @@ export function App() {
                 <ActionPanel />
             </Grid>
             {/* Bottom Row: YouTube Music (conditionally rendered) */}
-            <div className="island h-15 items-center justify-center">
+            <div className="island flex! items-center justify-center pt-1">
                 {hasYouTubeMusic && <StreamRenderer streamId="youtube-music" chromaKey="#212121" />}
             </div>
         </Grid>
