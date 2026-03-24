@@ -90,10 +90,10 @@ async fn main() {
 
     // Job object auto-kills child processes (Vite) when this process exits,
     // including crashes and Task Manager kills — not just graceful shutdown.
-    let _job = job_object::JobObject::new().ok();
+    let job = job_object::JobObject::new().ok();
 
     let vite_child = spawn_vite(cli.vite_port);
-    if let (Some(job), Some(ref child)) = (_job.as_ref(), vite_child.as_ref()) {
+    if let (Some(job), Some(child)) = (job.as_ref(), vite_child.as_ref()) {
         let _ = job.assign(child);
     }
 

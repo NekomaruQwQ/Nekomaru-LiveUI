@@ -175,7 +175,7 @@ export def run-microphone []: nothing -> nothing {
                 | is-not-empty)
 
         if $found {
-            http put (get-url "/internal/strings/$microphone") { value: "on" }
+            http put (get-url "/internal/strings/$microphone") "on"
         } else {
             http delete (get-url "/internal/strings/$microphone")
         }

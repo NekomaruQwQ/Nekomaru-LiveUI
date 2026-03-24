@@ -11,9 +11,9 @@
 //!
 //! - `GET    /api/strings`           — all key-value pairs (user + computed)
 //! - `GET    /api/strings/:key`      — single entry
-//! - `PUT    /api/strings/:key`      — set a value (403 for `$`-prefixed keys)
+//! - `PUT    /api/strings/:key`      — set a value (plain text body; 403 for `$`-prefixed keys)
 //! - `DELETE /api/strings/:key`      — delete a value (403 for `$`-prefixed keys)
-//! - `PUT    /internal/strings/:key` — set a computed string (key must start with `$`)
+//! - `PUT    /internal/strings/:key` — set a computed string (plain text body; key must start with `$`)
 //! - `DELETE /internal/strings/:key` — remove a computed string (key must start with `$`)
 
 use crate::state::AppState;
@@ -23,7 +23,6 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json};
 use axum::routing::{get, put};
-use serde::Deserialize;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -224,19 +223,14 @@ async fn get_one(
     }
 }
 
-#[derive(Deserialize)]
-struct PutBody {
-    value: String,
-}
-
-/// `PUT /api/strings/:key` — set a string value.
+/// `PUT /api/strings/:key` — set a string value (plain text body).
 async fn put_one(
     State(state): State<Arc<AppState>>,
     Path(key): Path<String>,
-    Json(body): Json<PutBody>,
+    body: String,
 ) -> impl IntoResponse {
     let mut store = state.strings.write().await;
-    match store.set(&key, &body.value) {
+    match store.set(&key, &body) {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(StringStoreError::ComputedReadonly) =>
             (StatusCode::FORBIDDEN,
@@ -264,7 +258,7 @@ async fn delete_one(
     }
 }
 
-/// `PUT /internal/strings/:key` — set a computed string from an external process.
+/// `PUT /internal/strings/:key` — set a computed string from an external process (plain text body).
 ///
 /// Key must start with `$` (returns 400 otherwise).  This is the bridge for
 /// external scripts (e.g. Nushell) to write `$`-prefixed computed strings that
@@ -272,13 +266,13 @@ async fn delete_one(
 async fn put_computed(
     State(state): State<Arc<AppState>>,
     Path(key): Path<String>,
-    Json(body): Json<PutBody>,
+    body: String,
 ) -> impl IntoResponse {
     if !key.starts_with('$') {
         return (StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "key must start with $" }))).into_response();
     }
-    state.strings.write().await.set_computed(&key, body.value);
+    state.strings.write().await.set_computed(&key, body);
     Json(serde_json::json!({ "ok": true })).into_response()
 }
 
