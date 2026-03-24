@@ -22,6 +22,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::get;
+use base64::Engine as _;
 use tokio::sync::broadcast;
 
 use std::collections::HashMap;
@@ -82,7 +83,7 @@ impl VideoState {
     fn list_active(&self) -> Vec<String> {
         let map = self.streams.lock().unwrap();
         map.iter()
-            .filter(|(_, slot)| slot.encoder_connected.load(Ordering::Relaxed))
+            .filter(|&(_, slot)| slot.encoder_connected.load(Ordering::Relaxed))
             .map(|(id, _)| id.clone())
             .collect()
     }
@@ -152,7 +153,6 @@ async fn get_init(
     let codec = live_protocol::avcc::build_codec_string(&params.sps);
     let desc = live_protocol::avcc::build_avcc_descriptor(&params.sps, &params.pps);
 
-    use base64::Engine as _;
     let desc_b64 = base64::engine::general_purpose::STANDARD.encode(&desc);
 
     Json(serde_json::json!({
@@ -184,18 +184,21 @@ async fn handle_encoder(mut socket: WebSocket, id: String, state: Arc<AppState>)
     while let Some(Ok(msg)) = socket.recv().await {
         let Message::Binary(data) = msg else { continue };
         if data.len() < HEADER_SIZE { continue; }
-
-        let msg_type = data[0];
-        let msg_flags = data[1];
+        let msg_type = data.first().copied().unwrap();
+        let msg_flags = data.get(1).copied().unwrap();
 
         // Cache CodecParams and keyframes for late-joiners and /init.
-        if msg_type == MessageType::CodecParams as u8 {
-            *slot.cached_codec_params.lock().unwrap() = Some(data.to_vec());
-            log::info!("@{id} cached CodecParams ({}B)", data.len());
-        } else if msg_type == MessageType::Frame as u8
-            && (msg_flags & flags::IS_KEYFRAME) != 0
-        {
-            *slot.cached_keyframe.lock().unwrap() = Some(data.to_vec());
+        match msg_type {
+            t if t == MessageType::CodecParams as u8 => {
+                *slot.cached_codec_params.lock().unwrap() = Some(data.to_vec());
+                log::info!("@{id} cached CodecParams ({}B)", data.len());
+            }
+            t if t == MessageType::Frame as u8
+                && (msg_flags & flags::IS_KEYFRAME) != 0 =>
+            {
+                *slot.cached_keyframe.lock().unwrap() = Some(data.to_vec());
+            }
+            _ => {}
         }
 
         // Fan-out to all subscribed viewers.  Ignoring send errors —
@@ -234,15 +237,15 @@ async fn handle_viewer(mut socket: WebSocket, id: String, state: Arc<AppState>) 
     let cached_params = slot.cached_codec_params.lock().unwrap().clone();
     let cached_keyframe = slot.cached_keyframe.lock().unwrap().clone();
 
-    if let Some(params) = cached_params {
-        if socket.send(Message::Binary(params.into())).await.is_err() {
-            return;
-        }
+    if let Some(params) = cached_params
+        && socket.send(Message::Binary(params.into())).await.is_err()
+    {
+        return;
     }
-    if let Some(keyframe) = cached_keyframe {
-        if socket.send(Message::Binary(keyframe.into())).await.is_err() {
-            return;
-        }
+    if let Some(keyframe) = cached_keyframe
+        && socket.send(Message::Binary(keyframe.into())).await.is_err()
+    {
+        return;
     }
 
     log::info!("@{id} viewer connected");

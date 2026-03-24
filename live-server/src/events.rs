@@ -71,6 +71,7 @@ async fn stream_info(
     } else {
         store.clear_computed(CSID_LIVE_MODE);
     }
+    drop(store);
 
     log::info!("streamInfo: {info} (mode: {})", body.mode.as_deref().unwrap_or("none"));
 

@@ -20,7 +20,7 @@ use axum::routing::{get, put};
 use serde::{Deserialize, Serialize};
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 // ── Config Type ─────────────────────────────────────────────────────────
@@ -46,26 +46,23 @@ pub struct PresetConfig {
 /// no foreground polling or pattern matching (that's `live-capture`'s job).
 pub struct SelectorConfig {
     pub config: PresetConfig,
-    config_path: PathBuf,
+    pub config_path: PathBuf,
 }
 
 impl SelectorConfig {
     /// Load from disk.  Falls back to defaults if the file is missing.
-    pub fn load(data_dir: PathBuf) -> Self {
+    pub fn load(data_dir: &Path) -> Self {
         let config_path = data_dir.join("selector-config.json");
 
-        let config = match std::fs::read_to_string(&config_path) {
-            Ok(content) => {
-                serde_json::from_str::<PresetConfig>(&content)
-                    .unwrap_or_else(|e| {
-                        log::warn!("corrupt selector-config.json, using defaults: {e}");
-                        default_config()
-                    })
-            }
-            Err(_) => {
-                log::info!("no selector config found, using defaults");
-                default_config()
-            }
+        let config = if let Ok(content) = std::fs::read_to_string(&config_path) {
+            serde_json::from_str::<PresetConfig>(&content)
+                .unwrap_or_else(|e| {
+                    log::warn!("corrupt selector-config.json, using defaults: {e}");
+                    default_config()
+                })
+        } else {
+            log::info!("no selector config found, using defaults");
+            default_config()
         };
 
         log::info!("loaded selector config: preset=\"{}\", {} preset(s)",
@@ -83,12 +80,12 @@ impl SelectorConfig {
 
     /// Reload from disk (called by `POST /refresh`).
     pub fn reload(&mut self) {
-        if let Ok(content) = std::fs::read_to_string(&self.config_path) {
-            if let Ok(config) = serde_json::from_str::<PresetConfig>(&content) {
-                self.config = config;
-                log::info!("reloaded selector config: preset=\"{}\", {} preset(s)",
-                    self.config.preset, self.config.presets.len());
-            }
+        if let Ok(content) = std::fs::read_to_string(&self.config_path)
+            && let Ok(config) = serde_json::from_str::<PresetConfig>(&content)
+        {
+            self.config = config;
+            log::info!("reloaded selector config: preset=\"{}\", {} preset(s)",
+                self.config.preset, self.config.presets.len());
         }
     }
 }
@@ -140,6 +137,7 @@ async fn set_config(
         config.preset, config.presets.len());
     sel.config = config;
     sel.save();
+    drop(sel);
     Json(serde_json::json!({ "ok": true }))
 }
 
@@ -166,6 +164,7 @@ async fn set_preset(
 
     name.clone_into(&mut sel.config.preset);
     sel.save();
+    drop(sel);
     log::info!("switched to preset \"{name}\"");
 
     Json(serde_json::json!({ "ok": true })).into_response()

@@ -41,7 +41,7 @@ pub struct StringStore {
 }
 
 impl StringStore {
-    pub fn new(data_dir: PathBuf) -> Self {
+    pub fn new(data_dir: &std::path::Path) -> Self {
         let json_path = data_dir.join("strings.json");
         let dir_path = data_dir.join("strings");
 

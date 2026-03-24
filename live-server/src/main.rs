@@ -60,7 +60,7 @@ async fn main() {
     let data_dir = resolve_data_dir();
     log::info!("data dir: {}", data_dir.display());
 
-    let state = Arc::new(AppState::new(data_dir));
+    let state = Arc::new(AppState::new(&data_dir));
 
     // Read revision timestamp from jj (non-fatal on failure).
     if let Some(ts) = read_jj_timestamp() {

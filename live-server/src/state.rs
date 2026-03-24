@@ -9,7 +9,7 @@ use crate::selector::SelectorConfig;
 use crate::strings::StringStore;
 use crate::video::VideoState;
 
-use std::path::PathBuf;
+use std::path::Path;
 use tokio::sync::RwLock;
 
 /// Top-level server state shared across all Axum handlers.
@@ -21,9 +21,9 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(data_dir: PathBuf) -> Self {
+    pub fn new(data_dir: &Path) -> Self {
         Self {
-            strings: RwLock::new(StringStore::new(data_dir.clone())),
+            strings: RwLock::new(StringStore::new(data_dir)),
             selector: RwLock::new(SelectorConfig::load(data_dir)),
             video: VideoState::new(),
             kpm: KpmState::new(),
