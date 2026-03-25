@@ -115,6 +115,9 @@ async fn main() -> anyhow::Result<()> {
 /// and sends them to the channel.  Exits on EOF or broken channel.
 fn stdin_reader(tx: &mpsc::Sender<Vec<u8>>) {
     let mut stdin = std::io::stdin().lock();
+    /// Consecutive messages dropped because the channel was full.
+    /// Logs once on the first drop, then reports the total on recovery.
+    let mut dropped: usize = 0;
 
     loop {
         match live_protocol::read_message_raw(&mut stdin) {
@@ -126,7 +129,13 @@ fn stdin_reader(tx: &mpsc::Sender<Vec<u8>>) {
                 if tx.try_send(raw).is_err() {
                     // Channel full or closed.  If closed, we'll exit on the
                     // next iteration when try_send fails again.
-                    log::warn!("channel full or closed, dropping message");
+                    dropped += 1;
+                    if dropped == 1 {
+                        log::warn!("channel full or closed, dropping messages");
+                    }
+                } else if dropped > 0 {
+                    log::warn!("dropped {dropped} messages while channel was full");
+                    dropped = 0;
                 }
             }
             Ok(None) => {
