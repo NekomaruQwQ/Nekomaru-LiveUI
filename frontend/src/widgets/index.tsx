@@ -1,9 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
 
 import { InfoIcon } from "lucide-react";
-import { DynamicIcon } from "lucide-react/dynamic";
-
 import Grid from "@/components/grid";
+import Icon from "@/components/icon";
 import { LiveWidget } from "@/widgets/common";
 
 // ── Clock ────────────────────────────────────────────────────────────────────
@@ -39,7 +38,7 @@ function ClockComponent({ timeZone, label, variant = undefined }: {
 
     return <LiveWidget
         name={label}
-        icon={<DynamicIcon name={iconName} size={40} />}
+        icon={<Icon name={iconName} size={40} />}
         className={variant === "secondary" ? "opacity-50" : ""}>
         <span className="text-2xl">{time}</span>
     </LiveWidget>;
@@ -67,7 +66,7 @@ export function LiveModeWidget({ strings }: { strings: Record<string, string> })
 
     return <LiveWidget
         name="Live Mode"
-        icon={<DynamicIcon name={mode.icon} size={36} />}>
+        icon={<Icon name={mode.icon} size={36} />}>
         <span className="text-md">{mode.label}</span>
     </LiveWidget>;
 }
@@ -79,7 +78,7 @@ export function MicrophoneWidget({ strings }: { strings: Record<string, string> 
     const micOn = "$microphone" in strings;
     return <LiveWidget
         name="Microphone"
-        icon={<DynamicIcon name={micOn ? "mic" : "mic-off"} size={36} />}>
+        icon={<Icon name={micOn ? "mic" : "mic-off"} size={36} />}>
         <span className="text-md">{micOn ? "On" : "Muted"}</span>
     </LiveWidget>;
 }
@@ -96,7 +95,7 @@ export function CaptureWidget({ strings }: { strings: Record<string, string> }) 
 
     return <LiveWidget
         name={`Capture Mode - ${captureMode}`}
-        icon={<DynamicIcon name="monitor" size={36} />}>
+        icon={<Icon name="monitor" size={36} />}>
         <span className="text-sm truncate">
             {captureInfo && <> {captureInfo}</>}
         </span>

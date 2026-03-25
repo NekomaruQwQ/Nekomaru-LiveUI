@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import * as vite from "vite";
-import react from "@vitejs/plugin-react-swc";
+import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 const vitePort = Number(process.env.LIVE_VITE_PORT);
