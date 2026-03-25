@@ -349,7 +349,7 @@ live-capture.exe --hwnd 0x1A2B --width 1920 --height 1200 \
 # Auto mode — auto-selector polls foreground, hot-swaps capture, resampling implied
 live-capture.exe --mode auto --width 1920 --height 1200 \
   --config-url http://machineA:3000/api/v1/streams/auto/config \
-  --event-url http://machineA:3000/api/core/streamInfo/main \
+  --info-url http://machineA:3000/api/core/streamInfo/main \
   | live-ws --mode video --server ws://machineA:3000/api/v1/ws/video/main/input
 
 # Crop mode — extract an absolute subrect at native resolution

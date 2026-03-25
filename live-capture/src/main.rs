@@ -117,10 +117,10 @@ struct CliArgs {
     #[arg(long)]
     config_url: Option<String>,
 
-    /// URL to POST stream info on capture switch.
+    /// URL to POST stream info periodically.
     /// Required for --mode auto.
     #[arg(long)]
-    event_url: Option<String>,
+    info_url: Option<String>,
 
     // ── Common args ───────────────────────────────────────────────────────
 
@@ -275,11 +275,11 @@ fn main() {
             eprintln!("error: --mode auto requires --config-url");
             std::process::exit(1);
         });
-        let event_url = args.event_url.unwrap_or_else(|| {
-            eprintln!("error: --mode auto requires --event-url");
+        let info_url = args.info_url.unwrap_or_else(|| {
+            eprintln!("error: --mode auto requires --info-url");
             std::process::exit(1);
         });
-        run_auto(width, height, args.fps, config_url, event_url)
+        run_auto(width, height, args.fps, config_url, info_url)
     } else {
         let hwnd = args.hwnd.expect("base/crop modes require --hwnd");
         run(hwnd, mode, args.fps)
@@ -453,7 +453,7 @@ fn run_auto(
     height: u32,
     frame_rate: u32,
     config_url: String,
-    event_url: String,
+    info_url: String,
 ) -> anyhow::Result<()> {
     // SAFETY: Called once at the start of the main thread before any COM usage.
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
@@ -509,7 +509,7 @@ fn run_auto(
     // Start the selector polling thread.
     let swap_rx = selector::spawn_selector(selector::SelectorConfig {
         config_url,
-        event_url,
+        info_url,
         poll_interval: Duration::from_secs(2),
     });
 

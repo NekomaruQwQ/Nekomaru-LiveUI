@@ -2,7 +2,9 @@
 //!
 //! Runs on a dedicated thread, polls the foreground window every 2 seconds,
 //! matches against patterns from the server config, and sends swap commands
-//! to the capture loop via a channel.
+//! to the capture loop via a channel.  POSTs the current capture info to
+//! the server on every tick (heartbeat) so computed strings stay fresh even
+//! after a server restart.
 
 pub mod config;
 
@@ -23,10 +25,19 @@ pub struct SwapCommand {
 pub struct SelectorConfig {
     /// URL to poll for the selector preset config (GET, returns JSON).
     pub config_url: String,
-    /// URL to POST stream info on capture switch.
-    pub event_url: String,
+    /// URL to POST stream info on every poll tick.
+    pub info_url: String,
     /// Poll interval for foreground window checks.
     pub poll_interval: Duration,
+}
+
+/// Cached stream info from the last successful pattern match.
+/// Re-posted on every tick to keep the server's computed strings fresh.
+struct CachedStreamInfo {
+    hwnd: isize,
+    title: String,
+    file_description: String,
+    mode: Option<String>,
 }
 
 /// Spawn the selector polling thread.  Returns the receiving end of the
@@ -43,7 +54,7 @@ pub fn spawn_selector(config: SelectorConfig) -> mpsc::Receiver<SwapCommand> {
 }
 
 /// Main selector loop.  Polls the foreground window, matches patterns,
-/// sends swap commands, and POSTs metadata to the server.
+/// sends swap commands, and POSTs capture info to the server every tick.
 fn selector_loop(tx: &mpsc::Sender<SwapCommand>, config: &SelectorConfig) {
     // Poll config on first iteration, then every ~10 iterations (20s at 2s poll).
     const CONFIG_POLL_EVERY: u32 = 10;
@@ -51,7 +62,7 @@ fn selector_loop(tx: &mpsc::Sender<SwapCommand>, config: &SelectorConfig) {
     log::info!("selector started (poll: {:?}, config: {})",
         config.poll_interval, config.config_url);
 
-    let mut last_hwnd: Option<isize> = None;
+    let mut last_info: Option<CachedStreamInfo> = None;
     let mut preset_config: Option<PresetConfig> = None;
     let mut config_poll_counter: u32 = 0;
 
@@ -79,39 +90,53 @@ fn selector_loop(tx: &mpsc::Sender<SwapCommand>, config: &SelectorConfig) {
         // Get the current foreground window.
         let Some(info) = enumerate_windows::get_foreground_window() else { continue };
 
-        // Skip if foreground hasn't changed.
+        // Check if the foreground window changed since the last match.
         let hwnd = info.hwnd as isize;
-        if last_hwnd == Some(hwnd) { continue; }
+        let hwnd_changed = last_info.as_ref().map_or(true, |li| li.hwnd != hwnd);
 
-        // Match against patterns.
-        let exe_path = info.executable_path.to_string_lossy().to_string();
-        let Some(capture_match) = should_capture(patterns, &exe_path, &info.title) else {
-            continue;
-        };
+        if hwnd_changed {
+            // Match against patterns.
+            let exe_path = info.executable_path.to_string_lossy().to_string();
+            if let Some(capture_match) = should_capture(patterns, &exe_path, &info.title) {
+                // Resolve capture info: prefer exe FileDescription, fall back to window title.
+                let file_description = win32_version_info::VersionInfo::from_file(&info.executable_path)
+                    .ok()
+                    .map(|v| v.file_description)
+                    .filter(|d| !d.is_empty())
+                    .unwrap_or_else(|| info.title.clone());
 
-        // Resolve capture info: prefer exe FileDescription, fall back to window title.
-        let capture_info = win32_version_info::VersionInfo::from_file(&info.executable_path)
-            .ok()
-            .map(|v| v.file_description)
-            .filter(|d| !d.is_empty())
-            .unwrap_or_else(|| info.title.clone());
+                log::info!("switching to HWND 0x{hwnd:X} ({file_description})");
 
-        log::info!("switching to HWND 0x{hwnd:X} ({capture_info})");
+                // Send swap command to the capture loop.
+                let cmd = SwapCommand {
+                    hwnd,
+                    capture_info: file_description.clone(),
+                };
+                if tx.send(cmd).is_err() {
+                    log::info!("capture loop closed, selector exiting");
+                    break;
+                }
 
-        // Send swap command to the capture loop.
-        let cmd = SwapCommand {
-            hwnd,
-            capture_info: capture_info.clone(),
-        };
-        if tx.send(cmd).is_err() {
-            log::info!("capture loop closed, selector exiting");
-            break;
+                last_info = Some(CachedStreamInfo {
+                    hwnd,
+                    title: info.title.clone(),
+                    file_description,
+                    mode: capture_match.mode,
+                });
+            }
+            // If the new window doesn't match, keep last_info unchanged —
+            // capture is still running on the previously matched window.
         }
 
-        last_hwnd = Some(hwnd);
-
-        // POST stream info to the server (best-effort, non-blocking).
-        post_stream_info(&config.event_url, hwnd, &info.title, &capture_info, capture_match.mode.as_ref());
+        // POST current capture info to the server on every tick (heartbeat).
+        if let Some(ref cached) = last_info {
+            post_stream_info(
+                &config.info_url,
+                cached.hwnd,
+                &cached.title,
+                &cached.file_description,
+                cached.mode.as_ref());
+        }
     }
 }
 
@@ -127,7 +152,7 @@ fn fetch_config(url: &str) -> anyhow::Result<PresetConfig> {
     Ok(config)
 }
 
-/// POST stream info to the server on capture switch (best-effort).
+/// POST stream info to the server (best-effort, called every poll tick).
 fn post_stream_info(
     url: &str,
     hwnd: isize,

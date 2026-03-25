@@ -284,7 +284,7 @@ live-capture --hwnd 0x1A2B --width 1920 --height 1200
 # Auto mode — foreground polling + hot-swap
 live-capture --mode auto --width 1920 --height 1200 \
   --config-url http://host/api/selector/config \
-  --event-url http://host/internal/streams/main/event
+  --info-url http://host/internal/streams/main/info
 
 # Crop mode — fixed subrect extraction
 live-capture --mode crop --hwnd 0x1A2B \
@@ -343,15 +343,15 @@ Endpoints are split into two namespaces:
 
 ##### String Store
 
-Server-managed key-value store. Keys prefixed with `$` are **computed strings** — readonly values set by worker events.
+Server-managed key-value store. Keys prefixed with `$` are **computed strings** — readonly values set by worker info reports.
 
 **Current computed strings:**
 
 | Key | Source | Description |
 |-----|--------|-------------|
-| `$captureInfo` | `POST /internal/streams/:id/event` | Human-readable label for the captured window |
-| `$captureMode` | `POST /internal/streams/:id/event` | Current capture mode (e.g. `"auto"`) |
-| `$liveMode` | `POST /internal/streams/:id/event` | Mode tag from matched pattern (e.g. `"code"`, `"game"`) |
+| `$captureInfo` | `POST /internal/streams/:id/info` | Human-readable label for the captured window |
+| `$captureMode` | `POST /internal/streams/:id/info` | Current capture mode (e.g. `"auto"`) |
+| `$liveMode` | `POST /internal/streams/:id/info` | Mode tag from matched pattern (e.g. `"code"`, `"game"`) |
 | `$microphone` | `PUT`/`DELETE /internal/strings/$microphone` | Mic status (present with value `"on"` when Cubase is running, absent otherwise) |
 | `$timestamp` | Server startup | Revision timestamp via `jj log` |
 
@@ -391,9 +391,9 @@ The server stores the selector config; `live-capture --mode auto` polls it.
 
 **`DELETE /internal/strings/:key`** — Remove a computed string (`$`-prefixed).  Returns 400 if the key doesn't start with `$`.  Used by `run-microphone` to signal absence (e.g. Cubase not running).
 
-##### Worker Events
+##### Stream Info
 
-**`POST /internal/streams/:streamId/event`** — Capture switch metadata from `live-capture --mode auto`. Updates computed strings.
+**`POST /internal/streams/:streamId/info`** — Periodic capture metadata from `live-capture --mode auto` (every ~2s). Updates computed strings.
 
 ```json
 {
@@ -615,7 +615,7 @@ LiveUI/
 │       ├── kpm.rs                   # KPM WS relay (binary input → JSON frontend push)
 │       ├── strings.rs               # String store (file-backed + computed) + routes
 │       ├── selector.rs              # Selector config storage + routes
-│       ├── events.rs                # Worker event endpoints (streamInfo)
+│       ├── events.rs                # Stream info endpoint (periodic capture metadata)
 │       └── vite_proxy.rs            # Reverse proxy to Vite dev server
 │
 ├── live-app/                        # Optional webview host (wry)

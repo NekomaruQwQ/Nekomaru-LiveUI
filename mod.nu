@@ -122,7 +122,7 @@ export def "run-capture auto" []: nothing -> nothing {
         --width 1920 --height 1200
         --stream-id main
         --config-url (get-url "/api/selector/config")
-        --event-url  (get-url "/internal/streams/main/event")
+        --info-url   (get-url "/internal/streams/main/info")
     |^(get-exe "live-ws" --copy "auto")
         --mode video
         --server     (get-url --ws "/internal/streams/main"))
