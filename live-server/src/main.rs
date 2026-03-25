@@ -15,6 +15,7 @@ mod kpm;
 mod selector;
 mod state;
 mod strings;
+mod util;
 mod video;
 mod vite_proxy;
 

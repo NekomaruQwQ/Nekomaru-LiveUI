@@ -2,7 +2,7 @@ set shell := ["nu", "-c"]
 
 alias i := install
 
-# == Recipes for general purposes ==
+# == Recipes for development experience ==
 # List all recipes.
 list:
     just --list
@@ -10,6 +10,10 @@ list:
 install:
     cargo build -r
     cd frontend; bun i
+bun *args:
+    cd frontend; bun {{args}}
+tsc *args:
+    cd frontend; bunx --bun tsc --noEmit {{args}}
 
 # == Recipes for JJ version control ==
 # Move the specified bookmark to the specified revision and push all changes to GitHub.
@@ -34,6 +38,8 @@ post path data *args:
 # Trigger the server to refresh its configuration.
 refresh:
     just post "/api/refresh" ""
+set-preset name:
+    just put "/api/selector/preset" "{{name}}"
 get-string:
     just get "/api/strings"
 set-string key value:

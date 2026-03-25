@@ -73,8 +73,7 @@ impl SelectorConfig {
 
     /// Persist to disk.
     pub fn save(&self) {
-        let json = serde_json::to_string_pretty(&self.config)
-            .expect("JSON serialization failed");
+        let json = crate::util::to_json(&self.config);
         let _ = std::fs::write(&self.config_path, json);
     }
 

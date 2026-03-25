@@ -115,8 +115,8 @@ async fn main() -> anyhow::Result<()> {
 /// and sends them to the channel.  Exits on EOF or broken channel.
 fn stdin_reader(tx: &mpsc::Sender<Vec<u8>>) {
     let mut stdin = std::io::stdin().lock();
-    /// Consecutive messages dropped because the channel was full.
-    /// Logs once on the first drop, then reports the total on recovery.
+    // Consecutive messages dropped because the channel was full.
+    // Logs once on the first drop, then reports the total on recovery.
     let mut dropped: usize = 0;
 
     loop {
@@ -136,6 +136,8 @@ fn stdin_reader(tx: &mpsc::Sender<Vec<u8>>) {
                 } else if dropped > 0 {
                     log::warn!("dropped {dropped} messages while channel was full");
                     dropped = 0;
+                } else {
+                    // Successfully sent message.
                 }
             }
             Ok(None) => {

@@ -16,11 +16,10 @@
         "module": "preserve",
         "moduleResolution": "bundler",
         "noEmit": true,
-        "allowImportingTsExtensions": true,
+        "stableTypeOrdering": true,
         "verbatimModuleSyntax": true,
 
         "skipLibCheck": true,
-        "strict": true,
         "noUnusedLocals": true,
         "noUnusedParameters": true,
         "noUncheckedIndexedAccess": true,

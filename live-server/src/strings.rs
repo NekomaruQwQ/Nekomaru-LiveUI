@@ -162,7 +162,7 @@ impl StringStore {
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         map.insert(key.to_owned(), value.to_owned());
-        let json = serde_json::to_string_pretty(&map).expect("JSON serialization failed");
+        let json = crate::util::to_json(&map);
         let _ = std::fs::write(&self.json_path, json);
     }
 
@@ -171,7 +171,7 @@ impl StringStore {
         let Ok(content) = std::fs::read_to_string(&self.json_path) else { return };
         let Ok(mut map): Result<BTreeMap<String, String>, _> = serde_json::from_str(&content) else { return };
         if map.remove(key).is_some() {
-            let json = serde_json::to_string_pretty(&map).expect("JSON serialization failed");
+            let json = crate::util::to_json(&map);
             let _ = std::fs::write(&self.json_path, json);
         }
     }

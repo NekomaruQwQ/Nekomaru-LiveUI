@@ -92,7 +92,7 @@ fn selector_loop(tx: &mpsc::Sender<SwapCommand>, config: &SelectorConfig) {
 
         // Check if the foreground window changed since the last match.
         let hwnd = info.hwnd as isize;
-        let hwnd_changed = last_info.as_ref().map_or(true, |li| li.hwnd != hwnd);
+        let hwnd_changed = last_info.as_ref().is_none_or(|li| li.hwnd != hwnd);
 
         if hwnd_changed {
             // Match against patterns.

@@ -73,7 +73,5 @@ async fn stream_info(
     }
     drop(store);
 
-    log::info!("streamInfo: {info} (mode: {})", body.mode.as_deref().unwrap_or("none"));
-
     Json(serde_json::json!({ "ok": true }))
 }
