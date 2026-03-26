@@ -10,10 +10,15 @@ list:
 install:
     cargo build -r
     cd frontend; bun i
+# Run the specified `bun` command in the frontend directory.
 bun *args:
     cd frontend; bun {{args}}
+# Run the specified `tsc` command in the frontend directory.
 tsc *args:
     cd frontend; bunx --bun tsc --noEmit {{args}}
+# Run the specified component.
+run name *args:
+    use . *; run-{{name}} {{args}}
 
 # == Recipes for JJ version control ==
 # Move the specified bookmark to the specified revision and push all changes to GitHub.
@@ -55,6 +60,8 @@ app *args:
 # Run YouTube Music.
 youtube-music *args:
     use . *; run-youtube-music {{args}}
+audio *args:
+    use . *; run-audio {{args}}
 # Start the specified capture pipeline. Possible values for name are "auto" and "youtube-music".
 capture name *args:
     use . *; run-capture {{name}} {{args}}

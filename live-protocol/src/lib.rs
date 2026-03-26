@@ -15,6 +15,7 @@
 //! 4       payload_length   u32 LE
 //! ```
 
+pub mod audio;
 pub mod avcc;
 pub mod video;
 
@@ -36,6 +37,11 @@ pub enum MessageType {
     Frame = 0x02,
     /// KPM (keystrokes per minute) update.
     KpmUpdate = 0x10,
+    /// Audio format parameters (sample rate, channels, bit depth).
+    /// Sent once at capture start.
+    AudioConfig = 0x11,
+    /// One chunk of raw PCM audio data with a wall-clock timestamp.
+    AudioChunk = 0x12,
     /// Non-fatal error description (UTF-8).
     Error = 0xFF,
 }
@@ -47,6 +53,8 @@ impl MessageType {
             0x01 => Some(Self::CodecParams),
             0x02 => Some(Self::Frame),
             0x10 => Some(Self::KpmUpdate),
+            0x11 => Some(Self::AudioConfig),
+            0x12 => Some(Self::AudioChunk),
             0xFF => Some(Self::Error),
             _ => None,
         }
@@ -232,6 +240,8 @@ mod tests {
         assert_eq!(MessageType::from_byte(0x01), Some(MessageType::CodecParams));
         assert_eq!(MessageType::from_byte(0x02), Some(MessageType::Frame));
         assert_eq!(MessageType::from_byte(0x10), Some(MessageType::KpmUpdate));
+        assert_eq!(MessageType::from_byte(0x11), Some(MessageType::AudioConfig));
+        assert_eq!(MessageType::from_byte(0x12), Some(MessageType::AudioChunk));
         assert_eq!(MessageType::from_byte(0xFF), Some(MessageType::Error));
         assert_eq!(MessageType::from_byte(0x99), None);
     }

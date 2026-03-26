@@ -2,7 +2,7 @@
 
 **Nekomaru's livestreaming infrastructure.**
 
-**Last Updated**: 2026-03-24
+**Last Updated**: 2026-03-26
 
 ---
 
@@ -57,19 +57,21 @@ This project is not semantically versioned. Instead, we track **milestones** (Mx
 
 ### Microservice Design
 
-M4 splits the system into independently runnable components connected via stdout pipes and WebSocket.  Producers (`live-capture`, `live-kpm`) write binary frames to stdout using the `live-protocol` framing format.  `live-ws` reads stdin and relays each message as a WS binary message to the server.  The server is a thin Rust relay — no process management, no circular buffering.
+M4 splits the system into independently runnable components connected via stdout pipes and WebSocket.  Producers (`live-capture`, `live-audio`, `live-kpm`) write binary frames to stdout using the `live-protocol` framing format.  `live-ws` reads stdin and relays each message as a WS binary message to the server.  The server is a thin Rust relay — no process management, no circular buffering.
 
 ```mermaid
 graph LR
     subgraph producers["Rust Producers (stdout)"]
         capture_auto["<b>live-capture</b><br/>--mode auto (main)<br/>GPU capture → NVENC<br/>→ AVCC → stdout"]
         capture_youtube_music["<b>live-capture-youtube-music</b><br/>window finder + DPI crop<br/>spawns live-capture --mode crop<br/>→ stdout"]
+        audio["<b>live-audio</b><br/>WASAPI shared-mode<br/>s16le PCM → stdout"]
         kpm["<b>live-kpm</b><br/>WH_KEYBOARD_LL hook<br/>Sliding window KPM<br/>→ stdout"]
     end
 
     subgraph relays["live-ws Relays"]
         ws_main["<b>live-ws</b><br/>--mode video<br/>keyframe cache"]
         ws_youtube_music["<b>live-ws</b><br/>--mode video<br/>keyframe cache"]
+        ws_audio["<b>live-ws</b><br/>--mode audio<br/>config cache"]
         ws_kpm["<b>live-ws</b>"]
     end
 
@@ -80,15 +82,17 @@ graph LR
     end
 
     subgraph frontend["Browser / live-app"]
-        viewer["<b>Frontend</b><br/>React + WebCodecs<br/>KPM meter, widgets<br/>strings display"]
+        viewer["<b>Frontend</b><br/>React + WebCodecs<br/>AudioWorklet, KPM meter<br/>widgets, strings display"]
     end
 
     capture_auto -- "stdout" --> ws_main
     capture_youtube_music -- "stdout" --> ws_youtube_music
+    audio -- "stdout" --> ws_audio
     kpm -- "stdout" --> ws_kpm
 
     ws_main -- "WS binary" --> relay
     ws_youtube_music -- "WS binary" --> relay
+    ws_audio -- "WS binary" --> relay
     ws_kpm -- "WS binary" --> relay
 
     capture_auto -. "HTTP (config poll)" .-> config
@@ -102,14 +106,15 @@ graph LR
 
 | Component | Language | Role | I/O |
 |-----------|----------|------|-----|
-| **`live-protocol`** | Rust (lib) | Shared 8-byte frame header + AVCC helpers | Used by all Rust crates |
+| **`live-protocol`** | Rust (lib) | Shared 8-byte frame header + AVCC helpers + audio payloads | Used by all Rust crates |
 | **`live-capture`** | Rust | GPU capture + NVENC encode | stdout (live-protocol framed) |
 | **`live-capture-youtube-music`** | Rust | YouTube Music window finder + DPI-aware crop + auto-restart wrapper around `live-capture` | stdout (live-protocol framed) |
-| **`live-ws`** | Rust | stdin → WS relay | stdin → WS binary messages |
+| **`live-audio`** | Rust | WASAPI audio capture → s16le PCM | stdout (live-protocol framed) |
+| **`live-ws`** | Rust | stdin → WS relay (modes: default, video, audio) | stdin → WS binary messages |
 | **`live-kpm`** | Rust | Keystroke counter | stdout (live-protocol framed) |
 | **`enumerate-windows`** | Rust | Window discovery (JSON) | stdout JSON |
 | **Server** | Rust (Axum) | WS relay, string store, config | WS ↔ WS, HTTP |
-| **Frontend** | React + Vite | Viewer UI | WS (video, kpm), HTTP (strings) |
+| **Frontend** | React + Vite | Viewer UI | WS (video, audio, kpm), HTTP (strings) |
 | **`live-app`** | Rust (wry) | Optional webview host | — |
 
 ### Why This Design?
@@ -118,6 +123,7 @@ graph LR
 |---------|----------|-----------|
 | GPU capture + encoding | Rust (`live-capture`) | Requires `unsafe` Windows APIs, hardware access, zero-copy GPU pipelines. |
 | Network transport | `live-ws` (separate binary) | Producers have one code path (stdout). No WS client, no reconnect logic in capture code. `live-ws` handles all networking. |
+| Audio capture | Rust (`live-audio`, standalone) | WASAPI shared-mode loopback, MMCSS priority, s16le PCM.  Stdout-first — piped through `live-ws --mode audio`. |
 | Keystroke counting | Rust (`live-kpm`, standalone) | `WH_KEYBOARD_LL` hook on a dedicated message pump thread. Privacy-by-design. |
 | HTTP/WS server | Rust (Axum) | Thin relay — uses `live-protocol` directly, no process management. Single toolchain. |
 | Window discovery | Rust (`enumerate-windows`) | Lightweight binary for Nushell scripts. JSON output. |
@@ -162,7 +168,7 @@ These principles guide M4 development and operation.
 
 2. **Stateless Executables.**  Each component gets all configuration from CLI args and HTTP.  No stdin commands, no dynamic reconfiguration.  Exception: `--mode auto` polls config from the server (read-only HTTP).
 
-3. **Stdout-First Producers.**  `live-capture` and `live-kpm` write to stdout via `live-protocol` framing.  Zero networking dependencies.  `> dump.bin` IS the production code path.
+3. **Stdout-First Producers.**  `live-capture`, `live-audio`, and `live-kpm` write to stdout via `live-protocol` framing.  Zero networking dependencies.  `> dump.bin` IS the production code path.
 
 4. **Independently Runnable.**  Every component can run standalone.  No component assumes it was spawned by another.  Server runs with or without any workers connected.
 
@@ -191,7 +197,7 @@ The system is launched via **`just`** recipes (`.justfile`) backed by **Nushell*
 | `just capture auto` | Start the auto-selector capture pipeline |
 | `just capture youtube-music` | Start the YouTube Music crop capture pipeline |
 | `just kpm` | Start the keystroke counter pipeline |
-| `just microphone` | Start the microphone status monitor (polls for Cubase window) |
+| `just audio` | Start the audio capture pipeline |
 | `just app` | Launch the webview host |
 | `just youtube-music` | Launch YouTube Music in a webview |
 | `just http <method> <path>` | HTTP request helper (e.g. `just http get /api/strings`) |
@@ -211,8 +217,8 @@ The system is launched via **`just`** recipes (`.justfile`) backed by **Nushell*
 | `run-youtube-music` | Launch YouTube Music webview (builds + copies via `get-exe`) |
 | `run-capture auto` | Launch the auto-selector pipeline (`live-capture \| live-ws`) |
 | `run-capture youtube-music` | Launch `live-capture-youtube-music \| live-ws` pipeline |
+| `run-audio [device]` | Launch the audio pipeline (`live-audio \| live-ws --mode audio`) |
 | `run-kpm` | Launch the KPM pipeline (`live-kpm \| live-ws`) |
-| `run-microphone` | Poll for Cubase window, update `$microphone` computed string (~60s interval) |
 
 #### Build Freshness & Copy Rule
 
@@ -230,7 +236,7 @@ All binary IPC uses the `live-protocol` 8-byte aligned frame header.  Used on st
 
 ```
 Offset  Field            Size    Notes
-0       message_type     u8      0x01=CodecParams, 0x02=Frame, 0x10=KpmUpdate, 0xFF=Error
+0       message_type     u8      0x01=CodecParams, 0x02=Frame, 0x10=KpmUpdate, 0x11=AudioConfig, 0x12=AudioChunk, 0xFF=Error
 1       flags            u8      bit 0: IS_KEYFRAME (video), bits 1-7: reserved
 2       reserved         u16     zero
 4       payload_length   u32 LE
@@ -267,12 +273,44 @@ Sent by `live-kpm` on value change.
 [i64 LE: kpm_value]
 ```
 
+##### `0x11` — AudioConfig
+
+Sent once by `live-audio` after WASAPI device initialization.
+
+```
+[u32 LE: sample_rate][u8: channels][u8: bits_per_sample][u16: reserved=0]
+```
+
+##### `0x12` — AudioChunk
+
+Sent by `live-audio` every 10ms (480 samples at 48kHz).
+
+```
+[u64 LE: timestamp_us][interleaved s16le PCM bytes]
+```
+
 ##### `0xFF` — Error
 
 Non-fatal error. Fatal errors are signaled by process exit.
 
 ```
 [UTF-8 error message bytes]
+```
+
+### live-audio CLI
+
+```bash
+# List available audio capture devices
+live-audio --list-devices
+
+# Capture from a named device to stdout
+live-audio --device "Loopback L + R (Focusrite USB Audio)"
+
+# Full pipeline — capture + relay to server
+live-audio --device "..." | live-ws --mode audio --server ws://host:3000/internal/audio
+
+# Dump to file (same binary format as production)
+live-audio --device "..." > dump.bin
 ```
 
 ### live-capture CLI
@@ -337,6 +375,10 @@ Endpoints are split into two namespaces:
 
 **`WS /api/streams/:id`** — Frontend viewer. Pushes relayed binary messages. On connect, sends cached CodecParams + last keyframe for immediate playback.
 
+##### Audio
+
+**`WS /api/audio`** — Frontend audio stream. Pushes binary `live-protocol` messages (`AudioConfig` + `AudioChunk`). On connect, sends cached `AudioConfig` for immediate AudioWorklet setup.
+
 ##### KPM
 
 **`WS /api/kpm`** — Frontend KPM display. Pushes `{"kpm": N}` or `{"kpm": null}` JSON text. Initial value sent on connect.
@@ -352,7 +394,7 @@ Server-managed key-value store. Keys prefixed with `$` are **computed strings** 
 | `$captureInfo` | `POST /internal/streams/:id/info` | Human-readable label for the captured window |
 | `$captureMode` | `POST /internal/streams/:id/info` | Current capture mode (e.g. `"auto"`) |
 | `$liveMode` | `POST /internal/streams/:id/info` | Mode tag from matched pattern (e.g. `"code"`, `"game"`) |
-| `$microphone` | `PUT`/`DELETE /internal/strings/$microphone` | Mic status (present with value `"on"` when Cubase is running, absent otherwise) |
+| `$microphone` | Audio encoder connect/disconnect | Audio stream status (present when `live-audio` encoder is connected, absent otherwise) |
 | `$timestamp` | Server startup | Revision timestamp via `jj log` |
 
 **`GET /api/strings`** — All key-value pairs (file-backed + computed).
@@ -382,6 +424,8 @@ The server stores the selector config; `live-capture --mode auto` polls it.
 ##### Encoder Input
 
 **`WS /internal/streams/:id`** — Encoder input. Receives `live-protocol` binary messages from `live-ws`. The server peeks at header bytes 0-1 to cache CodecParams and keyframes, then fan-outs to all connected frontend clients.
+
+**`WS /internal/audio`** — Audio input from `live-audio` via `live-ws --mode audio`. Binary `live-protocol` messages (`AudioConfig` + `AudioChunk`). The server caches `AudioConfig` for late-joining viewers, then broadcasts all messages.
 
 **`WS /internal/kpm`** — KPM input from `live-kpm` via `live-ws`. Binary `live-protocol` messages.
 
@@ -468,7 +512,7 @@ Machine B (working):    live-capture --mode auto (main) + live-kpm
 `live-ws` owns all reconnection logic — producers don't know about WS state.
 
 - The encoder writes to stdout continuously.  If `live-ws` disconnects, it discards incoming messages.
-- On reconnect, `live-ws --mode video` replays the cached last CodecParams + last keyframe so the server immediately has valid codec state and a clean entry point.
+- On reconnect, `live-ws --mode video` replays the cached last CodecParams + last keyframe so the server immediately has valid codec state and a clean entry point.  `--mode audio` similarly replays the cached `AudioConfig`.
 - Exponential backoff (100ms → 5s) prevents reconnection storms.
 - The encoder never restarts — avoiding the NVENC teardown that M4 was designed to eliminate.
 
@@ -575,6 +619,7 @@ LiveUI/
 ├── live-protocol/                   # Shared binary framing protocol (Rust lib)
 │   └── src/
 │       ├── lib.rs                   # 8-byte frame header, MessageType, Flags, read/write
+│       ├── audio.rs                 # AudioConfig + AudioChunk payload serialization
 │       ├── avcc.rs                  # Annex B → AVCC conversion, codec string, avcC builder
 │       └── video.rs                 # CodecParams + Frame payload serialization
 │
@@ -597,8 +642,11 @@ LiveUI/
 │       ├── main.rs                  # CLI, retry loop, child process spawning
 │       └── crop.rs                  # DPI-aware crop: CSS layout → empirical title bar offset
 │
+├── live-audio/                      # WASAPI audio capture → stdout (Rust)
+│   └── src/main.rs                  # CLI (--device, --list-devices), WASAPI capture, PCM chunking
+│
 ├── live-ws/                         # stdin → WebSocket relay (Rust)
-│   └── src/main.rs                  # CLI, stdin reader, WS client, --mode video caching
+│   └── src/main.rs                  # CLI, stdin reader, WS client, --mode video|audio caching
 │
 ├── live-kpm/                        # Standalone keystroke counter (Rust)
 │   └── src/
@@ -610,8 +658,9 @@ LiveUI/
 ├── live-server/                     # M4 relay server (Rust, Axum)
 │   └── src/
 │       ├── main.rs                  # Entry point, Axum router, Vite spawn, jj timestamp
-│       ├── state.rs                 # Shared AppState (strings, selector, video, kpm)
+│       ├── state.rs                 # Shared AppState (strings, selector, video, audio, kpm)
 │       ├── video.rs                 # Video WS relay, codec caching, /init, /streams
+│       ├── audio.rs                 # Audio WS relay (broadcast + cached AudioConfig)
 │       ├── kpm.rs                   # KPM WS relay (binary input → JSON frontend push)
 │       ├── strings.rs               # String store (file-backed + computed) + routes
 │       ├── selector.rs              # Selector config storage + routes
@@ -639,6 +688,10 @@ LiveUI/
 │       ├── strings-api.ts           # fetch() wrapper for /api/strings
 │       ├── strings.ts               # useStrings() hook (polls string store)
 │       ├── kpm.tsx                  # useKpm() hook (WS push) + <KpmMeter> VU bar
+│       ├── audio/                   # Audio stream module
+│       │   ├── index.tsx            # <AudioStream> (WS push, live-protocol parser, AudioContext)
+│       │   ├── worklet.ts           # AudioWorklet PCM ring buffer processor
+│       │   └── worklet-env.d.ts     # Ambient types for AudioWorklet context
 │       ├── widgets/                 # SidePanel widgets (Clock, Mode, Microphone, Capture, About)
 │       └── video/                   # Video stream module
 │           ├── index.tsx            # <StreamRenderer> (WS push, live-protocol parser)

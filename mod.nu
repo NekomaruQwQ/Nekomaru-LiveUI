@@ -18,11 +18,8 @@
 
 # ── Constants ──
 
+const DEFAULT_AUDIO_DEVICE = "Loopback L + R (Focusrite USB Audio)"
 const YOUTUBE_MUSIC_TITLE = "YouTube Music - Nekomaru LiveUI"
-const CUBASE_WINDOW_TITLE = "Cubase Pro Project - Practice-0"
-const CUBASE_EXECUTABLE_PATH = 'C:\Program Files\Steinberg\Cubase 14\Cubase14.exe'
-const MIC_POLL_INTERVAL = 60sec
-const MIC_LOG_PREFIX = "[@microphone nushell]"
 
 # ── Utility Commands ──
 
@@ -146,6 +143,20 @@ export def "run-capture youtube-music" []: nothing -> nothing {
         --server (get-url --ws "/internal/streams/youtube-music"))
 }
 
+# Start the audio capture pipeline.
+# Captures desktop audio from the named WASAPI device and relays encoded
+# PCM chunks via WebSocket.
+export def run-audio [device: string = $DEFAULT_AUDIO_DEVICE]: nothing -> nothing {
+    # Ensure LIVE_HOST is set for URL parsing.
+    get-url | ignore
+
+    (^(get-exe "live-audio")
+        --device $device
+    |^(get-exe "live-ws" --copy "audio")
+        --mode audio
+        --server (get-url --ws "/internal/audio"))
+}
+
 # Start the keystroke counter.
 export def run-kpm []: nothing -> nothing {
     # Ensure LIVE_HOST is set for URL parsing.
@@ -154,33 +165,4 @@ export def run-kpm []: nothing -> nothing {
     (^(get-exe "live-kpm")
     |^(get-exe "live-ws" --copy "kpm")
         --server (get-url --ws "/internal/kpm"))
-}
-
-# Start the microphone status monitor.
-#
-# Poll for the Cubase window and update the $microphone computed string.
-# If the window is found (exact title + executable path match), sets "on";
-# otherwise deletes the key (absence = off).
-export def run-microphone []: nothing -> nothing {
-    # Ensure LIVE_HOST is set for URL parsing.
-    get-url | ignore
-
-    loop {
-        let found = (
-            ^(get-exe "enumerate-windows")
-                | from json
-                | where {|it|
-                    $it.title == $CUBASE_WINDOW_TITLE
-                    and ($it.executable_path | str ends-with $CUBASE_EXECUTABLE_PATH) }
-                | is-not-empty)
-
-        if $found {
-            http put (get-url "/internal/strings/$microphone") "on"
-        } else {
-            http delete (get-url "/internal/strings/$microphone")
-        }
-        print $"($MIC_LOG_PREFIX) microphone: (if $found { 'on' } else { 'off' })"
-
-        sleep $MIC_POLL_INTERVAL
-    }
 }

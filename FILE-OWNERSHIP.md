@@ -19,6 +19,7 @@ frontend/vite.config.ts                     human
 
 ## Config.toml files
 live-app/Cargo.toml                         human
+live-audio/Cargo.toml                       human
 live-protocol/Cargo.toml                    human
 live-ws/Cargo.toml                          human
 live-capture/Cargo.toml                     human
@@ -43,8 +44,12 @@ README-Audio.md                             agent
 ## live-app/
 src/main.rs                                 human
 
+## live-audio/
+src/main.rs                                 agent
+
 ## live-protocol/
 src/lib.rs                                  agent
+src/audio.rs                                agent
 src/avcc.rs                                 agent
 src/video.rs                                agent
 
@@ -79,6 +84,7 @@ src/message_pump.rs                         agent
 src/main.rs                                 agent
 src/state.rs                                agent
 src/video.rs                                agent
+src/audio.rs                                agent
 src/kpm.rs                                  agent
 src/strings.rs                              agent
 src/selector.rs                             agent
@@ -113,6 +119,11 @@ strings-api.ts                              agent
 ws.ts                                       agent
 app.tsx                                     human
 kpm.tsx                                     agent
+
+## frontend/src/audio/
+index.tsx                                   agent
+worklet.ts                                  agent
+worklet-env.d.ts                            agent
 
 ## frontend/src/components/
 grid.tsx                                    human

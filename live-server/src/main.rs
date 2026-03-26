@@ -10,6 +10,7 @@
 //! LIVE_PORT=3000 LIVE_VITE_PORT=5173 live-server
 //! ```
 
+mod audio;
 mod events;
 mod kpm;
 mod selector;
@@ -73,6 +74,7 @@ async fn main() {
     let app = Router::new()
         .merge(video::router())
         .merge(kpm::router())
+        .merge(audio::router())
         .merge(strings::router())
         .merge(selector::router())
         .merge(events::router())

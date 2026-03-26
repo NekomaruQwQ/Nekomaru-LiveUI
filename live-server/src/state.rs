@@ -4,6 +4,7 @@
 //! Each subsystem owns its state behind a separate lock — no global
 //! contention.
 
+use crate::audio::AudioState;
 use crate::kpm::KpmState;
 use crate::selector::SelectorConfig;
 use crate::strings::StringStore;
@@ -18,6 +19,7 @@ pub struct AppState {
     pub selector: RwLock<SelectorConfig>,
     pub video: VideoState,
     pub kpm: KpmState,
+    pub audio: AudioState,
 }
 
 impl AppState {
@@ -27,6 +29,7 @@ impl AppState {
             selector: RwLock::new(SelectorConfig::load(data_dir)),
             video: VideoState::new(),
             kpm: KpmState::new(),
+            audio: AudioState::new(),
         }
     }
 }

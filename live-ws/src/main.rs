@@ -8,12 +8,15 @@
 //! - **(default)**: framed forwarding.  Discards messages during disconnect.
 //! - **`--mode video`**: additionally caches the last `CodecParams` and last
 //!   keyframe.  On reconnect, replays cached messages before resuming.
+//! - **`--mode audio`**: caches the last `AudioConfig` message.  On reconnect,
+//!   replays it before resuming (no keyframe concept for raw PCM).
 //!
 //! ## Usage
 //!
 //! ```text
 //! live-capture ... | live-ws --mode video --server ws://machineA:3000/internal/streams/main
 //! live-kpm        | live-ws --server ws://machineA:3000/internal/kpm
+//! live-audio ...  | live-ws --mode audio --server ws://machineA:3000/internal/audio
 //! ```
 
 use live_protocol::{HEADER_SIZE, MessageType, flags};
@@ -34,8 +37,8 @@ struct CliArgs {
     #[arg(long)]
     server: String,
 
-    /// Relay mode.  `video` enables codec params + keyframe caching
-    /// for reconnect replay.
+    /// Relay mode.  `video` enables codec params + keyframe caching;
+    /// `audio` enables audio config caching for reconnect replay.
     #[arg(long, value_parser = parse_mode, default_value = "default")]
     mode: RelayMode,
 
@@ -50,13 +53,16 @@ enum RelayMode {
     Default,
     /// Video mode: caches last CodecParams + last keyframe for reconnect replay.
     Video,
+    /// Audio mode: caches last AudioConfig for reconnect replay.
+    Audio,
 }
 
 fn parse_mode(s: &str) -> Result<RelayMode, String> {
     match s {
         "default" => Ok(RelayMode::Default),
         "video" => Ok(RelayMode::Video),
-        other => Err(format!("unknown mode '{other}' (expected 'default' or 'video')")),
+        "audio" => Ok(RelayMode::Audio),
+        other => Err(format!("unknown mode '{other}' (expected 'default', 'video', or 'audio')")),
     }
 }
 
@@ -194,11 +200,23 @@ fn update_video_cache(
     }
 }
 
+/// Update the audio-mode cache from an incoming raw message.
+fn update_audio_cache(
+    raw: &[u8],
+    cached_audio_config: &mut Option<Vec<u8>>,
+) {
+    let Some(&[msg_type, ..]) = raw.first_chunk::<HEADER_SIZE>() else { return };
+
+    if msg_type == MessageType::AudioConfig as u8 {
+        *cached_audio_config = Some(raw.to_vec());
+    }
+}
+
 /// Async WS writer.  Connects to the server, consumes messages from the
 /// channel, and sends them as WS binary messages.  Reconnects on failure.
 ///
 /// In video mode, caches the last `CodecParams` and last keyframe for
-/// replay on reconnect.
+/// replay on reconnect.  In audio mode, caches the last `AudioConfig`.
 async fn ws_writer(
     mut rx: mpsc::Receiver<Vec<u8>>,
     server_url: String,
@@ -206,9 +224,10 @@ async fn ws_writer(
 ) -> anyhow::Result<()> {
     let mut backoff = INITIAL_BACKOFF_MS;
 
-    // Video mode caches for reconnect replay.
+    // Mode-specific caches for reconnect replay.
     let mut cached_codec_params: Option<Vec<u8>> = None;
     let mut cached_keyframe: Option<Vec<u8>> = None;
+    let mut cached_audio_config: Option<Vec<u8>> = None;
 
     loop {
         // ── Connect ─────────────────────────────────────────────────────
@@ -229,12 +248,19 @@ async fn ws_writer(
 
         let (mut ws_write, _ws_read) = futures_stream_split(ws_stream);
 
-        // ── Replay cached messages on reconnect (video mode) ────────
-        if mode == RelayMode::Video
-            && replay_cached(&mut ws_write, cached_codec_params.as_ref(), cached_keyframe.as_ref()).await.is_err()
-        {
-            continue; // reconnect
-        }
+        // ── Replay cached messages on reconnect ─────────────────────
+        let replay_ok = match mode {
+            RelayMode::Video => replay_cached(
+                &mut ws_write,
+                cached_codec_params.as_ref(),
+                cached_keyframe.as_ref()).await.is_ok(),
+            RelayMode::Audio => replay_cached(
+                &mut ws_write,
+                cached_audio_config.as_ref(),
+                None).await.is_ok(),
+            RelayMode::Default => true,
+        };
+        if !replay_ok { continue; } // reconnect
 
         // ── Forward loop ────────────────────────────────────────────
         loop {
@@ -244,8 +270,12 @@ async fn ws_writer(
                 return Ok(());
             };
 
-            if mode == RelayMode::Video {
-                update_video_cache(&raw, &mut cached_codec_params, &mut cached_keyframe);
+            match mode {
+                RelayMode::Video => update_video_cache(
+                    &raw, &mut cached_codec_params, &mut cached_keyframe),
+                RelayMode::Audio => update_audio_cache(
+                    &raw, &mut cached_audio_config),
+                RelayMode::Default => {}
             }
 
             if send_binary(&mut ws_write, raw).await.is_err() {

@@ -67,19 +67,20 @@ export function LiveModeWidget({ strings }: { strings: Record<string, string> })
     return <LiveWidget
         name="Live Mode"
         icon={<Icon name={mode.icon} size={36} />}>
-        <span className="text-md">{mode.label}</span>
+        <span className="text-sm">{mode.label}</span>
     </LiveWidget>;
 }
 
 // ── Microphone ───────────────────────────────────────────────────────────────
 
-/// Shows mic status from the computed string `$microphone` (present = on, absent = off).
+/// Shows audio stream connection status from the computed string `$microphone`
+/// (present = audio encoder connected, absent = disconnected).
 export function MicrophoneWidget({ strings }: { strings: Record<string, string> }) {
-    const micOn = "$microphone" in strings;
+    const connected = "$microphone" in strings;
     return <LiveWidget
         name="Microphone"
-        icon={<Icon name={micOn ? "mic" : "mic-off"} size={36} />}>
-        <span className="text-md">{micOn ? "On" : "Muted"}</span>
+        icon={<Icon name={connected ? "mic" : "mic-off"} size={36} />}>
+        <span className="text-sm">{connected ? "Connected" : "Disconnected"}</span>
     </LiveWidget>;
 }
 
