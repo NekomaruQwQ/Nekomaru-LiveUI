@@ -45,31 +45,37 @@ export def --wrapped get-exe [name: string, --copy: string, ...args]: nothing ->
 }
 
 export def --env get-url [path: string = "/", --ws]: nothing -> string {
-    patch-env "LIVE_HOST" $"localhost:($env.LIVE_PORT)"
+    get-url-precheck
+    if ($env | get -o "LIVE_HOST") == null {
+        check-env "LIVE_PORT"
+        if not (patch-env "LIVE_HOST" $"localhost:($env.LIVE_PORT)") {
+            error make -u { msg: "LIVE_HOST is required to run this command." }
+        }
+    }
+
     let protocol = if $ws { "ws" } else { "http" }
     $"($protocol)://($env.LIVE_HOST)($path)"
 }
 
-# Checks if the specified environment variable is set, and throws an error
-# if not.
-export def check-env [var: string]: nothing -> nothing {
-    if ($env | get -o $var) == null {
-        error make { msg: $"Environment variable ($var) is not set" }
+def --env get-url-precheck []: nothing -> nothing {
+    if ($env | get -o "LIVE_HOST") != null {
+        return
     }
-}
 
-# Checks if the specified environment variable is set, and if not, prompts
-# the user to temporarily set it with the provided value for the current
-# session.
-export def --env patch-env [var: string, value: string]: nothing -> nothing {
-    if ($env | get -o $var) == null {
-        print $"($var) is not set. Temporarily set ($var) = \"($value)\"? [Y/n]"
-        if (input) in ["Y", "y", ""] {
-            load-env { $var: $value }
-        } else {
-            error make { msg: $"($var) is not set." }
-        }
+    if ($env | get -o "LIVE_PORT") == null {
+        error make -u { msg: "LIVE_HOST is required to run this command." }
     }
+
+    print $"LIVE_HOST is required to run this command. Temporarily set LIVE_HOST according to LIVE_PORT? [Y/n]"
+    let $input = try { input } catch {
+        error make -u { msg: "Interrupted." }
+    }
+
+    if not ($input in ["Y", "y", ""]) {
+        error make -u { msg: "Aborted." }
+    }
+
+    load-env { LIVE_HOST: $"localhost:($env.LIVE_PORT)" }
 }
 
 # ── Launcher for live-server ──
@@ -77,8 +83,14 @@ export def --env patch-env [var: string, value: string]: nothing -> nothing {
 # Start the Rust/Axum server with Vite dev server proxied.
 # Requires LIVE_PORT and LIVE_VITE_PORT environment variables.
 export def --wrapped run-server [...args]: nothing -> nothing {
-    check-env "LIVE_PORT"
-    check-env "LIVE_VITE_PORT"
+    if ($env | get -o "LIVE_PORT") == null {
+        error make -u { msg: "LIVE_PORT is required to run this command." }
+    }
+
+    if ($env | get -o "LIVE_VITE_PORT") == null {
+        error make -u { msg: "LIVE_VITE_PORT is required to run this command." }
+    }
+
     ^(get-exe "live-server") ...$args
 }
 

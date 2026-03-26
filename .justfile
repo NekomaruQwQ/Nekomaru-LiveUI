@@ -8,17 +8,17 @@ list:
     just --list
 # Build all Rust binaries and install frontend dependencies.
 install:
-    cargo build -r
     cd frontend; bun i
+    cargo build -r
+# Run the specified component.
+run name *args:
+    use . *; run-{{name}} {{args}}
 # Run the specified `bun` command in the frontend directory.
 bun *args:
     cd frontend; bun {{args}}
 # Run the specified `tsc` command in the frontend directory.
 tsc *args:
     cd frontend; bunx --bun tsc --noEmit {{args}}
-# Run the specified component.
-run name *args:
-    use . *; run-{{name}} {{args}}
 
 # == Recipes for JJ version control ==
 # Move the specified bookmark to the specified revision and push all changes to GitHub.
@@ -49,25 +49,3 @@ get-string:
     just get "/api/strings"
 set-string key value:
     just put "/api/strings/{{key}}" "{{value}}"
-
-# == Recipes for spawning microservices ==
-# Run the main server.
-server *args:
-    use . *; run-server {{args}}
-# Run the frontend.
-app *args:
-    use . *; run-app {{args}}
-# Run YouTube Music.
-youtube-music *args:
-    use . *; run-youtube-music {{args}}
-audio *args:
-    use . *; run-audio {{args}}
-# Start the specified capture pipeline. Possible values for name are "auto" and "youtube-music".
-capture name *args:
-    use . *; run-capture {{name}} {{args}}
-# Start the keystroke counter pipeline.
-kpm:
-    use . *; run-kpm
-# Start the microphone status monitor (polls for Cubase window).
-microphone:
-    use . *; run-microphone
