@@ -137,11 +137,11 @@ mod tests {
 
     #[test]
     fn audio_config_payload_too_short() {
-        assert!(read_audio_config_payload(&[0; 5]).is_err());
+        read_audio_config_payload(&[0; 5]).unwrap_err();
     }
 
     #[test]
     fn audio_chunk_payload_too_short() {
-        assert!(read_audio_chunk_payload(&[0; 7]).is_err());
+        read_audio_chunk_payload(&[0; 7]).unwrap_err();
     }
 }
