@@ -34,6 +34,7 @@ pub fn write_audio_config_payload(config: &AudioConfig) -> Vec<u8> {
 }
 
 /// Deserialize `AudioConfig` from a payload byte slice.
+#[expect(clippy::missing_asserts_for_indexing, reason = "length check above guards all accesses")]
 pub fn read_audio_config_payload(data: &[u8]) -> io::Result<AudioConfig> {
     if data.len() < 6 {
         return Err(io::Error::new(

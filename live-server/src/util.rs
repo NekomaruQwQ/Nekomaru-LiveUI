@@ -1,4 +1,4 @@
-use tap::Pipe;
+use tap::Pipe as _;
 
 /// Serialize `value` as pretty-printed JSON with 4-space indentation.
 pub fn to_json(value: &impl serde::Serialize) -> String {
