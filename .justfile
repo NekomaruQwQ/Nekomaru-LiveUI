@@ -1,15 +1,9 @@
 set shell := ["nu", "-c"]
 
-alias i := install
-
 # == Recipes for development experience ==
 # List all recipes.
 list:
     just --list
-# Build all Rust binaries and install frontend dependencies.
-install:
-    cd frontend; bun i
-    cargo build -r
 # Run the specified component.
 run name *args:
     use . *; run-{{name}} {{args}}
@@ -19,6 +13,9 @@ bun *args:
 # Run the specified `tsc` command in the frontend directory.
 tsc *args:
     cd frontend; bunx --bun tsc --noEmit {{args}}
+# Run the specified `cargo` command.
+cargo command *args:
+    cargo {{command}} --release {{args}}
 
 # == Recipes for JJ version control ==
 # Move the specified bookmark to the specified revision and push all changes to GitHub.
