@@ -10,7 +10,6 @@ members = [
     "live-server",
     "live-ws",
     "crates/enumerate-windows",
-    "crates/job-object",
     "crates/set-dpi-awareness",
 ]
 
@@ -35,7 +34,6 @@ branch = "main"
 live-protocol = { path = "live-protocol" }
 
 enumerate-windows = { path = "crates/enumerate-windows" }
-job-object = { path = "crates/job-object" }
 set-dpi-awareness = { path = "crates/set-dpi-awareness" }
 
 anyhow = "1"
@@ -58,6 +56,7 @@ tokio-tungstenite = { version = "0.29.0", features = ["connect"] }
 ureq = "3"
 widestring = "1.2.1"
 win32-version-info = "0.3.0"
+win32job = "2.0.3"
 
 # LOCK: wry@0.55.0 depends on windows@^0.61
 windows = { version = "0.62.2", features = ["Win32_Foundation"] }

@@ -672,8 +672,7 @@ LiveUI/
 │
 ├── crates/
 │   ├── enumerate-windows/           # Window enumeration (lib + bin, JSON output)
-│   ├── set-dpi-awareness/           # Per-monitor DPI awareness v2
-│   └── job-object/                  # Win32 job object for child process cleanup
+│   └── set-dpi-awareness/           # Per-monitor DPI awareness v2
 │
 ├── frontend/                        # Frontend (React 19 + Vite + Tailwind)
 │   ├── package.json

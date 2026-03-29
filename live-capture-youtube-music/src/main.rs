@@ -101,17 +101,13 @@ fn sibling_exe(name: &str) -> anyhow::Result<PathBuf> {
 /// Spawn `live-capture --mode crop` with the given crop rect and wait for it
 /// to exit.  The child inherits our stdout so its live-protocol frames flow
 /// directly to the downstream pipe (e.g. `live-ws`).
-///
-/// The child is assigned to `job` so it is automatically killed if this
-/// process exits for any reason (crash, Ctrl+C via Task Manager, etc.).
 fn spawn_and_wait(
     capture_exe: &PathBuf,
     hwnd: usize,
     crop: &euclid::default::Box2D<u32>,
     args: &CliArgs,
-    job: &job_object::JobObject,
 ) -> anyhow::Result<std::process::ExitStatus> {
-    let mut child = Command::new(capture_exe)
+    Command::new(capture_exe)
         .args([
             "--mode", "crop",
             "--hwnd", &hwnd.to_string(),
@@ -125,29 +121,41 @@ fn spawn_and_wait(
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|e| anyhow::anyhow!("failed to spawn live-capture: {e}"))?;
-
-    job.assign(&child)
-        .map_err(|e| anyhow::anyhow!("failed to assign child to job object: {e}"))?;
-
-    child.wait().map_err(Into::into)
+        .map_err(|e| anyhow::anyhow!("failed to spawn live-capture: {e}"))?
+        .wait()
+        .map_err(Into::into)
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
-fn main() -> anyhow::Result<()> {
-    let _ = set_dpi_awareness::per_monitor_v2();
+fn main() {
+    use tap::prelude::*;
+    use win32job::{Job, ExtendedLimitInfo};
+
     pretty_env_logger::init();
+
+    // Enable per-monitor DPI awareness for correct crop rect calculations
+    // on high-DPI setups.
+    let _ = set_dpi_awareness::per_monitor_v2();
+
+    // Job object auto-kills child processes when this process exits,
+    // including crashes and Task Manager kills.
+    let job =
+        ExtendedLimitInfo::new()
+            .limit_kill_on_job_close()
+            .pipe(|info| Job::create_with_limit_info(info))
+            .expect("failed to create job object");
+    job
+        .assign_current_process()
+        .expect("failed to assign current process to job object");
 
     let args = CliArgs::parse();
     let poll_interval = Duration::from_secs(args.poll_interval);
 
-    let capture_exe = sibling_exe("live-capture.youtube-music")?;
+    let capture_exe =
+        sibling_exe("live-capture.youtube-music")
+            .expect("failed to locate live-capture.youtube-music.exe; ensure it is built and co-located with this binary");
     log::info!("{LOG_PREFIX} using capture exe: {}", capture_exe.display());
-
-    // Job object auto-kills child processes when this process exits.
-    let job = job_object::JobObject::new()
-        .map_err(|e| anyhow::anyhow!("failed to create job object: {e}"))?;
 
     #[expect(clippy::infinite_loop, reason = "This process is designed to run indefinitely, respawning the capture child as needed.")]
     loop {
@@ -176,7 +184,7 @@ fn main() -> anyhow::Result<()> {
 
         // Step 3: spawn live-capture and wait.
         let started = Instant::now();
-        match spawn_and_wait(&capture_exe, window.hwnd, &crop, &args, &job) {
+        match spawn_and_wait(&capture_exe, window.hwnd, &crop, &args) {
             Ok(status) => log::info!("{LOG_PREFIX} live-capture exited: {status}"),
             Err(e) => log::error!("{LOG_PREFIX} live-capture error: {e}"),
         }

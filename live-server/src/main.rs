@@ -52,15 +52,28 @@ struct Cli {
 
 #[tokio::main]
 async fn main() {
-    pretty_env_logger::formatted_builder()
-        .filter_level(log::LevelFilter::Info)
-        .parse_default_env()
-        .init();
+    use tap::prelude::*;
+    use win32job::{Job, ExtendedLimitInfo};
 
-    let cli = Cli::parse();
+    pretty_env_logger::init();
 
+    let args = Cli::parse();
+    let addr = format!("0.0.0.0:{}", args.port);
     let data_dir = resolve_data_dir();
     log::info!("data dir: {}", data_dir.display());
+
+    // Job object auto-kills child processes when this process exits,
+    // including crashes and Task Manager kills.
+    let job =
+        ExtendedLimitInfo::new()
+            .limit_kill_on_job_close()
+            .pipe(|info| Job::create_with_limit_info(info))
+            .expect("failed to create job object");
+    job
+        .assign_current_process()
+        .expect("failed to assign current process to job object");
+
+    let _vite = spawn_vite(args.vite_port);
 
     let state = Arc::new(AppState::new(&data_dir));
 
@@ -69,36 +82,22 @@ async fn main() {
         state.strings.write().await.set_computed("$timestamp", ts);
     }
 
-    // ── Router ──────────────────────────────────────────────────────
-
-    let app = Router::new()
-        .merge(video::router())
-        .merge(kpm::router())
-        .merge(audio::router())
-        .merge(strings::router())
-        .merge(selector::router())
-        .merge(events::router())
-        .route("/api/refresh", post(refresh))
-        .with_state(Arc::clone(&state))
-        .fallback(vite_proxy::fallback(cli.vite_port));
-
-    // ── Start ───────────────────────────────────────────────────────
-
-    let addr = format!("0.0.0.0:{}", cli.port);
-    log::info!("listening on {addr}");
+    let app =
+        Router::new()
+            .merge(video::router())
+            .merge(kpm::router())
+            .merge(audio::router())
+            .merge(strings::router())
+            .merge(selector::router())
+            .merge(events::router())
+            .route("/api/refresh", post(refresh))
+            .with_state(Arc::clone(&state))
+            .fallback(vite_proxy::fallback(args.vite_port));
 
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .expect("failed to bind");
-
-    // Job object auto-kills child processes (Vite) when this process exits,
-    // including crashes and Task Manager kills — not just graceful shutdown.
-    let job = job_object::JobObject::new().ok();
-
-    let vite_child = spawn_vite(cli.vite_port);
-    if let (Some(job), Some(child)) = (job.as_ref(), vite_child.as_ref()) {
-        let _ = job.assign(child);
-    }
+    log::info!("listening on {addr}");
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
@@ -108,7 +107,7 @@ async fn main() {
         .await
         .expect("server error");
 
-    // _job is dropped here → kills Vite if still running.
+    // _job is dropped here → kills all child processes if still running.
 }
 
 // ── Refresh ─────────────────────────────────────────────────────────────

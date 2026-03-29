@@ -28,7 +28,6 @@ live-kpm/Cargo.toml                         human
 live-server/Cargo.toml                      human
 crates/enumerate-windows/Cargo.toml         human
 crates/set-dpi-awareness/Cargo.toml         human
-crates/job-object/Cargo.toml                human
 
 ## docs/
 ARCHIVE-0-Prototype.md                      agent
@@ -97,9 +96,6 @@ src/main.rs                                 agent
 
 ## crates/set-dpi-awareness/
 src/lib.rs                                  human
-
-## crates/job-object/
-src/lib.rs                                  agent
 
 # == React frontend ==
 
