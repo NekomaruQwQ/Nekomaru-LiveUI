@@ -71,19 +71,6 @@ export function LiveModeWidget({ strings }: { strings: Record<string, string> })
     </LiveWidget>;
 }
 
-// ── Microphone ───────────────────────────────────────────────────────────────
-
-/// Shows audio stream connection status from the computed string `$microphone`
-/// (present = audio encoder connected, absent = disconnected).
-export function MicrophoneWidget({ strings }: { strings: Record<string, string> }) {
-    const connected = "$microphone" in strings;
-    return <LiveWidget
-        name="Microphone"
-        icon={<Icon name={connected ? "mic" : "mic-off"} size={36} />}>
-        <span className="text-sm">{connected ? "Connected" : "Disconnected"}</span>
-    </LiveWidget>;
-}
-
 // ── Capture ──────────────────────────────────────────────────────────────────
 
 /// Large widget showing the current capture target and mode (AUTO/LOCKED).

@@ -1,10 +1,9 @@
-import { AudioStream } from "@/audio";
 import { StreamRenderer } from "@/video";
 import { useStreamStatus } from "@/streams";
 import { useStrings } from "@/strings";
 import Marquee from "@/components/marquee";
 import Grid from "@/components/grid";
-import { ClockWidget, LiveModeWidget, MicrophoneWidget, CaptureWidget, AboutWidget } from "./widgets";
+import { ClockWidget, LiveModeWidget, CaptureWidget, AboutWidget } from "./widgets";
 import { KpmMeter } from "@/kpm";
 
 /// Pure viewer shell.  Stream lifecycle is fully server-managed — the
@@ -16,8 +15,6 @@ export function App() {
 
     return (
         <Grid rows="1fr 60px" gap="2" className="w-screen h-screen p-2">
-            {/* Global audio stream (renders nothing visible) */}
-            <AudioStream />
             {/* Everything other than the YouTube Music island */}
             <Grid columns="1fr 3fr 40px" gap="2">
                 {/* Side Column: User Info */}
@@ -52,10 +49,7 @@ function SidePanel() {
             <ClockWidget />
         </div>
         <div className="island px-2 py-1.5">
-            <Grid columns="1fr 1fr" gap="2">
-                <LiveModeWidget strings={strings} />
-                <MicrophoneWidget strings={strings} />
-            </Grid>
+            <LiveModeWidget strings={strings} />
             <CaptureWidget strings={strings} />
         </div>
         <div className="island px-3 py-2 flex-1">
