@@ -9,12 +9,12 @@
         <link rel="stylesheet" href="global.effects.css" />
     </head>
     <body>
-        <!-- React's createRoot().render() replaces #app's children, removing the spinner automatically. -->
+        <!-- The mount entrypoint clears #app's children before mounting Svelte. -->
         <div id="app">
             <div class="spinner-container">
                 <div class="spinner"></div>
             </div>
         </div>
-        <script type="module" src="index.tsx"></script>
+        <script type="module" src="index.ts"></script>
     </body>
 </html>

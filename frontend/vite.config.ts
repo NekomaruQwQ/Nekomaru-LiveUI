@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import * as vite from "vite";
-import react from "@vitejs/plugin-react";
+import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
 
 const vitePort = Number(process.env.LIVE_VITE_PORT);
@@ -9,7 +9,7 @@ if (!vitePort) throw new Error("LIVE_VITE_PORT environment variable is not set")
 export default vite.defineConfig({
     root: __dirname,
     plugins: [
-        react(),
+        svelte(),
         tailwindcss(),
     ],
     resolve: {
