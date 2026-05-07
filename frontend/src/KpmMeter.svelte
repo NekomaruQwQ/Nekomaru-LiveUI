@@ -80,10 +80,9 @@
     <div class="flex! flex-col items-center w-full h-full gap-1">
         <!-- Meter body -->
         <div class="kpm-meter flex-1 w-full relative">
-            <!-- LED segment overlay (decorative dark lines) -->
-            <div class="kpm-segments absolute inset-0"></div>
-
-            <!-- Realtime bar — lower visual weight -->
+            <!-- Realtime bar — lower visual weight.  The LED segment look is
+                 baked into the bar's own background, so the gaps only appear
+                 where the bar is filled (no stray lines over empty space). -->
             <div
                 class="kpm-bar absolute inset-x-0 bottom-0 rounded-sm"
                 style="height: {barPercent}%">
@@ -107,3 +106,76 @@
         </div>
     </div>
 {/if}
+
+<style>
+    /* Vertical LED-style meter for keystrokes-per-minute.  Uses a single neon
+       accent color to avoid competing with the live capture for visual attention.
+
+       COLOR STRATEGY: `.island` sets `color: var(--theme-color)`, which inherits
+       to all children as a resolved color value.  Every KPM element below uses
+       `currentColor` so it automatically picks up the island's theme color
+       without each one having to reference `--theme-color` directly.
+
+       Two layers inside `.kpm-meter`:
+         1. .kpm-bar   — the realtime value, drawn as a striped pattern so the
+                         LED segment gaps only appear where the bar is filled
+                         (lower opacity, background role)
+         2. .kpm-peak  — peak hold marker (the hero — bright, with glow)
+
+       The bar height and peak position are set via inline `style.height` /
+       `style.bottom` from the component — CSS handles the smooth transitions.
+       ────────────────────────────────────────────────────────────────────────── */
+
+    .kpm-meter {
+        border-radius: 4px;
+        overflow: hidden;
+        box-shadow: inset 0 0 8px color-mix(in oklch, currentColor 10%, transparent);
+    }
+
+    /* Realtime KPM bar — semi-transparent to stay visually subdued.
+       The bar is the background actor; the peak marker is the star.
+
+       The repeating gradient draws the bar as 3px-tall stripes separated by
+       1px transparent gaps, producing the classic LED segment look without
+       a separate overlay layer (which would otherwise leak lines into the
+       empty area above the bar). */
+    .kpm-bar {
+        background-image: repeating-linear-gradient(
+            to top,
+            color-mix(in oklch, currentColor 40%, transparent) 0px,
+            color-mix(in oklch, currentColor 40%, transparent) 3px,
+            transparent 3px,
+            transparent 4px
+        );
+        transition: height 200ms linear;
+        z-index: 1;
+    }
+
+    /* Peak hold marker — the hero element that chat reads.
+       A bright horizontal line with a neon glow, positioned at the peak. */
+    .kpm-peak {
+        height: 3px;
+        background: currentColor;
+        box-shadow:
+            0 0 6px color-mix(in oklch, currentColor 60%, transparent),
+            0 0 12px color-mix(in oklch, currentColor 30%, transparent);
+        transition: bottom 200ms linear;
+        z-index: 3;
+        /* Position the label relative to this marker */
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    /* KPM number floating near the peak marker */
+    .kpm-peak-label {
+        position: absolute;
+        right: calc(100% + 4px);
+        font-size: 10px;
+        font-weight: 600;
+        color: currentColor;
+        text-shadow: 0 0 6px color-mix(in oklch, currentColor 50%, transparent);
+        white-space: nowrap;
+        pointer-events: none;
+    }
+</style>

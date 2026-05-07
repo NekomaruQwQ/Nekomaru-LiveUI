@@ -128,6 +128,12 @@ struct CliArgs {
     #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u32).range(1..=60))]
     fps: u32,
 
+    /// Background clear color for the staging texture, as 6-digit hex `RRGGBB`.
+    /// Visible in letterboxed regions and on the first few frames before
+    /// capture content arrives. Default `292929` ≈ the previous `0.16` gray.
+    #[arg(long, default_value = "292929", value_parser = parse_clear_color)]
+    clear_color: [f32; 4],
+
     /// Stream ID tag for log output.
     #[arg(long)]
     stream_id: Option<String>,
@@ -170,6 +176,21 @@ fn parse_hwnd(s: &str) -> Result<isize, String> {
     } else {
         Ok(value)
     }
+}
+
+/// Parses a 6-digit unprefixed hex color `RRGGBB` into RGBA floats with
+/// alpha=1.0. Each byte is mapped to `byte / 255.0`, matching how the value
+/// lands in the `B8G8R8A8_UNORM` staging texture.
+fn parse_clear_color(s: &str) -> Result<[f32; 4], String> {
+    if s.len() != 6 {
+        return Err(format!("clear color must be 6 hex digits 'RRGGBB' (got '{s}')"));
+    }
+    let bytes = u32::from_str_radix(s, 16)
+        .map_err(|e| format!("invalid clear color '{s}': {e}"))?;
+    let r = ((bytes >> 16) & 0xFF) as f32 / 255.0;
+    let g = ((bytes >> 8)  & 0xFF) as f32 / 255.0;
+    let b = ( bytes        & 0xFF) as f32 / 255.0;
+    Ok([r, g, b, 1.0])
 }
 
 /// Validate and resolve the CLI args into a `CaptureMode`.
@@ -279,10 +300,10 @@ fn main() {
             eprintln!("error: --mode auto requires --info-url");
             std::process::exit(1);
         });
-        run_auto(width, height, args.fps, config_url, info_url)
+        run_auto(width, height, args.fps, args.clear_color, config_url, info_url)
     } else {
         let hwnd = args.hwnd.expect("base/crop modes require --hwnd");
-        run(hwnd, mode, args.fps)
+        run(hwnd, mode, args.fps, args.clear_color)
     };
 
     if let Err(e) = result {
@@ -292,7 +313,7 @@ fn main() {
 }
 
 #[expect(clippy::too_many_lines, reason = "main capture loop and encoding thread are necessarily long and complex")]
-fn run(hwnd: isize, mode: CaptureMode, frame_rate: u32) -> anyhow::Result<()> {
+fn run(hwnd: isize, mode: CaptureMode, frame_rate: u32, clear_color: [f32; 4]) -> anyhow::Result<()> {
     // SAFETY: Called once at the start of the main thread before any COM usage.
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
         .ok()
@@ -336,13 +357,13 @@ fn run(hwnd: isize, mode: CaptureMode, frame_rate: u32) -> anyhow::Result<()> {
         d3d11::create_rtv_for_texture_2d(&device, &staging_bgra8)
             .context("failed to create BGRA8 staging RTV")?;
 
-    // Clear to dark gray so the first few frames aren't random garbage.
+    // Clear to the configured background so the first few frames aren't random garbage.
     // SAFETY: `device_context` and `staging_bgra8_rtv` are valid D3D11 objects
     // created from the same device.
     unsafe {
         device_context.ClearRenderTargetView(
             &staging_bgra8_rtv,
-            &[0.16, 0.16, 0.16, 1.0]);
+            &clear_color);
     }
 
     let deferred_context: ID3D11DeviceContext = {
@@ -384,7 +405,7 @@ fn run(hwnd: isize, mode: CaptureMode, frame_rate: u32) -> anyhow::Result<()> {
                 unsafe {
                     deferred_context.ClearRenderTargetView(
                         &staging_bgra8_rtv,
-                        &[0.16, 0.16, 0.16, 1.0]);
+                        &clear_color);
                 }
 
                 if let Some(crop) = crop_box {
@@ -452,6 +473,7 @@ fn run_auto(
     width: u32,
     height: u32,
     frame_rate: u32,
+    clear_color: [f32; 4],
     config_url: String,
     info_url: String,
 ) -> anyhow::Result<()> {
@@ -481,7 +503,7 @@ fn run_auto(
     // SAFETY: valid D3D11 objects.
     unsafe {
         device_context.ClearRenderTargetView(
-            &staging_bgra8_rtv, &[0.16, 0.16, 0.16, 1.0]);
+            &staging_bgra8_rtv, &clear_color);
     }
 
     let deferred_context: ID3D11DeviceContext = {
@@ -556,7 +578,7 @@ fn run_auto(
                 // SAFETY: valid D3D11 objects.
                 unsafe {
                     deferred_context.ClearRenderTargetView(
-                        &staging_bgra8_rtv, &[0.16, 0.16, 0.16, 1.0]);
+                        &staging_bgra8_rtv, &clear_color);
                 }
 
                 let viewport =

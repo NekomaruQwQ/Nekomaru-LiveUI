@@ -24,21 +24,35 @@ void main() {
 }
 `
 
-/// Chroma-key fragment shader.  Pixels near u_keyColor get low alpha
-/// (smoothstep falloff), everything else stays fully opaque.
+/// Maximum number of simultaneous key colors the shader supports.
+/// GLSL ES 3.00 requires array sizes to be compile-time constants, so this
+/// is baked into the fragment shader and validated by the renderer.
+export const MAX_KEYS = 8
+
+/// Chroma-key fragment shader.  For each pixel we take the minimum Chebyshev
+/// distance across all active key colors, then map that through smoothstep —
+/// pixels close to *any* key get low alpha, everything else stays opaque.
 const FRAG_SRC = /* glsl */ `#version 300 es
 precision mediump float;
 in vec2 v_uv;
 out vec4 fragColor;
 uniform sampler2D u_texture;
-uniform vec3 u_keyColor;    // target color in [0,1] RGB
-uniform float u_threshold;  // distance at which alpha reaches 1.0
+uniform vec3 u_keyColors[${MAX_KEYS}];  // target colors in [0,1] RGB
+uniform int u_keyCount;                  // number of active entries in u_keyColors
+uniform float u_threshold;               // distance at which alpha reaches 1.0
 void main() {
     vec4 color = texture(u_texture, v_uv);
-    // Chebyshev distance — max per-channel delta from the key color.
-    vec3 diff = abs(color.rgb - u_keyColor);
-    float dist = max(max(diff.r, diff.g), diff.b);
-    float alpha = smoothstep(0.0, u_threshold, dist);
+    // Chebyshev distance to the nearest key color.  Loop bound is the
+    // compile-time MAX_KEYS so the GLSL compiler can unroll; the runtime
+    // count is enforced via early-out.
+    float minDist = 1.0;
+    for (int i = 0; i < ${MAX_KEYS}; ++i) {
+        if (i >= u_keyCount) break;
+        vec3 diff = abs(color.rgb - u_keyColors[i]);
+        float dist = max(max(diff.r, diff.g), diff.b);
+        minDist = min(minDist, dist);
+    }
+    float alpha = smoothstep(0.0, u_threshold, minDist);
     fragColor = vec4(color.rgb, alpha);
 }
 `
@@ -57,10 +71,16 @@ export class ChromaKeyRenderer {
 
     /**
      * @param canvas  Target canvas element (will be bound to a WebGL2 context).
-     * @param keyColor  RGB tuple in [0,255] to key out.
+     * @param keyColors  One or more RGB tuples in [0,255] to key out.  Must be
+     *                   non-empty and contain at most {@link MAX_KEYS} entries.
      * @param threshold  Distance (normalised) at which alpha reaches 1.0.
      */
-    constructor(canvas: HTMLCanvasElement, keyColor: [number, number, number], threshold = DEFAULT_THRESHOLD) {
+    constructor(canvas: HTMLCanvasElement, keyColors: [number, number, number][], threshold = DEFAULT_THRESHOLD) {
+        if (keyColors.length === 0)
+            throw new Error("ChromaKeyRenderer: at least one key color is required")
+        if (keyColors.length > MAX_KEYS)
+            throw new Error(`ChromaKeyRenderer: at most ${MAX_KEYS} key colors supported (got ${keyColors.length})`)
+
         this.canvas = canvas
 
         const gl = canvas.getContext("webgl2", {
@@ -91,12 +111,21 @@ export class ChromaKeyRenderer {
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
 
         // ── Upload uniforms ──────────────────────────────────────────────
-        // biome-ignore lint/correctness/useHookAtTopLevel: gl.useProgram is a WebGL method, not a React hook
+        // Flatten keys to a tightly-packed Float32Array in [0,1] space —
+        // gl.uniform3fv expects N*3 components; trailing slots in the shader
+        // array stay zero-initialised but are never read (u_keyCount gates).
+        const flat = new Float32Array(keyColors.length * 3)
+        for (let i = 0; i < keyColors.length; i++) {
+            const [r, g, b] = keyColors[i]!
+            flat[i * 3 + 0] = r / 255
+            flat[i * 3 + 1] = g / 255
+            flat[i * 3 + 2] = b / 255
+        }
+
         gl.useProgram(this.program)
         gl.uniform1i(gl.getUniformLocation(this.program, "u_texture"), 0)
-        gl.uniform3f(
-            gl.getUniformLocation(this.program, "u_keyColor"),
-            keyColor[0] / 255, keyColor[1] / 255, keyColor[2] / 255)
+        gl.uniform3fv(gl.getUniformLocation(this.program, "u_keyColors"), flat)
+        gl.uniform1i(gl.getUniformLocation(this.program, "u_keyCount"), keyColors.length)
         gl.uniform1f(gl.getUniformLocation(this.program, "u_threshold"), threshold)
     }
 
@@ -120,7 +149,6 @@ export class ChromaKeyRenderer {
         frame.close()
 
         // Draw fullscreen triangle.
-        // biome-ignore lint/correctness/useHookAtTopLevel: gl.useProgram is a WebGL method, not a React hook
         gl.useProgram(this.program)
         gl.bindVertexArray(this.vao)
         gl.drawArrays(gl.TRIANGLES, 0, 3)

@@ -1,6 +1,6 @@
 :root {
     /* font families (Ubuntu) */
-    --font-sans: 'Ubuntu Light', sans-serif;
+    --font-sans: 'Ubuntu', 'ZhunYuan', sans-serif;
     --font-mono: 'Ubuntu Mono', monospace;
 
     /* color palette (One Dark) */
@@ -12,16 +12,13 @@
     --color-green: #98C379;
     --color-red: #E06C75;
 
-    /* semantic colors */
-    --foreground: #BCC0CC;
-
-    /* force dark theme */
-    color-scheme: dark;
+    /* force light theme */
+    color-scheme: light;
 }
 
 div {
     display: grid;
-    overflow: clip;
+    /*overflow: clip;*/
 
     /* Override CSS Grid/Flex default (min-width/height: auto) so items can shrink below content size. */
     min-width: 0;
@@ -29,7 +26,8 @@ div {
 }
 
 div#app {
-    background: linear-gradient(135deg, #1a1b1e, #222327);
+    background: url("/img/background.png") center / cover no-repeat fixed, #1a1b1e;
+    overflow: clip;
 }
 
 /* Loading spinner — .spinner-container fills the viewport and centers the spinner.

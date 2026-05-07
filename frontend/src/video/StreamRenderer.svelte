@@ -5,12 +5,25 @@
 
     type Props = {
         streamId: string;
-        chromaKey?: string;
+        /// Hex color (e.g. "#212121") or list of hex colors to key out.
+        /// When omitted or empty, the stream renders through a plain 2D canvas.
+        chromaKey?: string | string[];
+        /// Per-channel distance (in 0–255 code units) at which alpha reaches 1.0.
+        /// Wider values absorb YUV decode jitter at the cost of also keying
+        /// nearby shades.  Falls back to the renderer's default (30) when unset.
+        chromaKeyThreshold?: number;
     };
 
-    let { streamId, chromaKey }: Props = $props();
+    let { streamId, chromaKey, chromaKeyThreshold }: Props = $props();
 
     let canvas: HTMLCanvasElement;
+
+    /// Normalise the prop to a plain array so the rest of the component only
+    /// has one shape to think about.  Returns `[]` when nothing is keyed out.
+    const keyList = $derived(
+        chromaKey === undefined ? []
+            : typeof chromaKey === "string" ? [chromaKey]
+            : chromaKey);
 
     /// (Re-)mount the stream loop whenever streamId or chromaKey changes.
     /// `$effect` automatically tears down the previous loop before setting up
@@ -25,15 +38,19 @@
 
         // ── Build the frame renderer ─────────────────────────────────────
         // When chroma-key is active, use a WebGL2 shader that keys out the
-        // target color.  Otherwise, use a plain 2D canvas drawImage path.
+        // target colors.  Otherwise, use a plain 2D canvas drawImage path.
         let onFrame: (frame: VideoFrame) => void;
         let cleanup: (() => void) | undefined;
 
-        if (chromaKey) {
-            const renderer = new ChromaKeyRenderer(canvas, parseHexColor(chromaKey));
+        if (keyList.length > 0) {
+            // Convert 0–255 prop to the renderer's normalised [0,1] threshold;
+            // leave it `undefined` so the renderer falls back to its default.
+            const threshold = chromaKeyThreshold !== undefined ? chromaKeyThreshold / 255 : undefined;
+            const renderer = new ChromaKeyRenderer(canvas, keyList.map(parseHexColor), threshold);
             onFrame = (frame) => renderer.render(frame);
             cleanup = () => renderer.dispose();
-            console.log("StreamRenderer: Using WebGL chroma-key renderer (key=%s)", chromaKey);
+            console.log("StreamRenderer: Using WebGL chroma-key renderer (keys=%s, threshold=%s)",
+                keyList.join(","), chromaKeyThreshold ?? "default");
         } else {
             const ctx = canvas.getContext("2d");
             if (!ctx) {
@@ -94,5 +111,5 @@
 
 <canvas
     bind:this={canvas}
-    class="w-full object-contain {chromaKey ? '' : 'bg-[#1e1f22]'}">
+    class="w-full object-contain">
 </canvas>

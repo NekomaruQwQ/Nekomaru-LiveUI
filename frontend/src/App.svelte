@@ -38,14 +38,17 @@
         <!-- Main Column: Marquee + Main Stream -->
         <Grid rows="auto 1fr" gap="2">
             <!-- Top Row: Marquee Banner -->
-            <div class="island">
+            <div class="island overflow-clip">
                 {#if strings.value.marquee}
                     <Marquee text={strings.value.marquee} />
                 {/if}
             </div>
             <div class="island flex-col flex-1">
-                <div class="flex-1 rounded-md items-center justify-center bg-[#1d1d1d]!">
-                    <StreamRenderer streamId="main" />
+                <div class="flex-1 rounded-md items-center justify-center">
+                    <StreamRenderer
+                        streamId="main"
+                        chromaKey={["#1d1d1d"]}
+                        chromaKeyThreshold={60}/>
                 </div>
             </div>
         </Grid>
@@ -57,7 +60,10 @@
     <!-- Bottom Row: YouTube Music (conditionally rendered) -->
     <div class="island flex! items-center justify-center pt-1">
         {#if streamStatus.hasYouTubeMusic}
-            <StreamRenderer streamId="youtube-music" chromaKey="#212121" />
+            <StreamRenderer
+                streamId="youtube-music"
+                chromaKey="#212121"
+                chromaKeyThreshold={15} />
         {/if}
     </div>
 </Grid>
