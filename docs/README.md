@@ -458,7 +458,7 @@ The server stores the selector config; `live-capture --mode auto` polls it.
 
 ##### Stream Info
 
-**`POST /internal/streams/:streamId/info`** — Periodic capture metadata from `live-capture --mode auto` (every ~2s). Updates computed strings.  On window swaps, the selector runs this POST *before* dispatching the swap to the capture pipeline — see [Strings-Gated Keys](#strings-gated-keys-main-stream).
+**`POST /internal/streams/:streamId/info`** — Periodic capture metadata from `live-capture --mode auto` (every ~2s). Updates computed strings.  On window swaps, the selector queues a swap-tagged POST *before* dispatching the swap to the capture pipeline; a dedicated poster worker in `live-capture` handles the actual HTTP request so a slow or unreachable server never freezes the polling loop — see [Strings-Gated Keys](#strings-gated-keys-main-stream).
 
 ```json
 {
@@ -577,7 +577,7 @@ The `<StreamRenderer>` component accepts `colorKey?: string | string[]` (up to 8
 
 #### Strings-Gated Keys (Main Stream)
 
-For the main stream, the active key set is selected dynamically in `App.svelte` from the `$captureInfo` / `$liveMode` strings posted by the auto-selector — so the keys track the captured app (e.g. VS Code's dark UI greys for the `code` mode).  To keep this in sync with the video, the selector POSTs the new stream info *before* dispatching the swap command to the capture loop on a window switch; the frontend's strings WS receives the update ahead of the first new-window frame, avoiding a one-frame mis-keyed flicker on swap.  This ordering is the invariant documented at the top of `live-capture/src/selector/mod.rs`.
+For the main stream, the active key set is selected dynamically in `App.svelte` from the `$captureInfo` / `$liveMode` strings posted by the auto-selector — so the keys track the captured app (e.g. VS Code's dark UI greys for the `code` mode).  To keep this in sync with the video, the selector queues a swap-tagged stream-info POST *before* dispatching the swap command to the capture loop.  A small `selector-poster` worker thread (one per `live-capture` process) drains the queue over a keep-alive `ureq::Agent` and coalesces stale heartbeats; the selector itself never blocks on HTTP, so a slow or unreachable server can't pause window matching.  Strict synchronous ordering relaxes to best-effort by latency margin — localhost POST + WS broadcast (~5–15 ms) almost always lands at the frontend ahead of the first new-window frame clearing the capture + NVENC + WS pipeline (~20–60 ms).  Documented at the top of `live-capture/src/selector/mod.rs`.
 
 ### Widgets
 
@@ -678,7 +678,7 @@ LiveUI/
 │       ├── encoder/                 # NVENC helpers (debug, finder)
 │       ├── resample.rs + .hlsl      # GPU fullscreen quad resampler
 │       └── selector/                # Auto-selector (foreground polling, pattern matching)
-│           ├── mod.rs               # Selector thread, swap commands, HTTP client
+│           ├── mod.rs               # Selector thread + non-blocking poster worker (keep-alive POSTs, swap-aware coalescing)
 │           └── config.rs            # PresetConfig, ParsedPattern, should_capture()
 │
 ├── live-capture-youtube-music/       # YouTube Music player bar capture wrapper (Rust)
@@ -770,6 +770,14 @@ LiveUI/
 **Problem**: In a Nushell pipeline like `(^producer args | ^consumer --server (get-url --ws ...))`, the `get-url` call may trigger `patch-env`'s interactive prompt (to set `LIVE_HOST`).  While the prompt waits for user input, the producer has already started and is writing to stdout.  But the consumer hasn't started yet (its argument is still being evaluated), so there's no reader on the pipe.  The producer hits a broken pipe and exits before the pipeline is fully assembled.
 
 **Fix**: Ensure `get-url` / `patch-env` is called *before* the pipeline expression — either in a `let` binding or a preceding statement — so the interactive prompt resolves before any process is spawned.
+
+### Bug #4: Sync HTTP POST Stalled the Selector Polling Loop
+
+**Problem**: `live-capture --mode auto` ran its 2 s stream-info POST synchronously in the same thread that polled the foreground window.  When the server slowed or went away, ureq's blocking timeout froze the entire selector tick — pattern matching paused, swap dispatch paused.  The synchronous call also doubled as the enforcement mechanism for the strings-gated-keys ordering invariant ("title arrives at server before new-window frames"), so it couldn't simply be made async without thinking about ordering.
+
+**Fix**: Spawn a dedicated `selector-poster` worker thread that owns a `ureq::Agent` (HTTP keep-alive) and drains an `mpsc` channel.  The selector enqueues swap-tagged tasks before dispatching swap commands; the worker preserves swap order and coalesces stale heartbeats so a recovered server isn't flooded.  Strict ordering relaxes to best-effort by latency margin — localhost POST + WS broadcast (~5–15 ms) almost always wins against capture + NVENC + WS (~20–60 ms), so the flicker stays absent in practice.
+
+**Lesson**: When a polling loop calls a blocking syscall (HTTP, IO, etc.) on every tick, the loop's worst-case period is the syscall's worst-case latency.  If a timing invariant is only enforced by happening to block, that invariant is often actually a latency-margin one and can be made explicit.
 
 ---
 
