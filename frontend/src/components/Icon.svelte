@@ -3,6 +3,7 @@
     import {
         Activity,
         Bug,
+        CircleDollarSign,
         Clock1, Clock2, Clock3, Clock4, Clock5, Clock6,
         Clock7, Clock8, Clock9, Clock10, Clock11, Clock12,
         Code,
@@ -20,6 +21,7 @@
     const ICONS = {
         "activity": Activity,
         "bug": Bug,
+        "circle-dollar-sign": CircleDollarSign,
         "clock-1": Clock1, "clock-2": Clock2, "clock-3": Clock3,
         "clock-4": Clock4, "clock-5": Clock5, "clock-6": Clock6,
         "clock-7": Clock7, "clock-8": Clock8, "clock-9": Clock9,

@@ -220,6 +220,7 @@ The system is launched via **`just`** recipes (`.justfile`) backed by **Nushell*
 | `run-capture youtube-music` | Launch `live-capture-youtube-music \| live-ws` pipeline |
 | `run-audio [device]` | Launch the audio pipeline (`live-audio \| live-ws --mode audio`) |
 | `run-kpm` | Launch the KPM pipeline (`live-kpm \| live-ws`) |
+| `run-ccusage [--loop]` | Run `ccusage` once (default) or every 60s (`--loop`) and post today's Claude Code token + cost totals to the string store |
 
 #### Build Freshness & Copy Rule
 
@@ -412,6 +413,8 @@ Server-managed key-value store. Keys prefixed with `$` are **computed strings** 
 | `$liveMode` | `POST /internal/streams/:id/info` | Mode tag from matched pattern (e.g. `"code"`, `"game"`) |
 | `$microphone` | Audio encoder connect/disconnect | Audio stream status (present when `live-audio` encoder is connected, absent otherwise) |
 | `$timestamp` | Server startup | Revision timestamp via `jj log` |
+| `$claudeTokens` | `run-ccusage` poller | Today's total Claude Code token count (raw integer; frontend formats to millions) |
+| `$claudeCost` | `run-ccusage` poller | Today's estimated Claude Code cost in USD (raw float) |
 
 **`GET /api/strings`** — All key-value pairs (file-backed + computed).  Kept for ad-hoc inspection (curl, Nushell scripts); the frontend now consumes string snapshots via `/api/events`.
 

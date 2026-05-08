@@ -178,3 +178,41 @@ export def run-kpm []: nothing -> nothing {
     |^(get-exe "live-ws" --copy "kpm")
         --server (get-url --ws "/internal/kpm"))
 }
+
+# ── Launcher for Claude Code usage poller ──
+
+# Poll local Claude Code usage stats (via `ccusage`) and post today's
+# totals to the server's string store every minute.  The server's
+# `/internal/strings/:key` endpoint accepts arbitrary $-prefixed keys,
+# so no server-side changes are needed.
+#
+# Today's date is recomputed each iteration so the loop self-corrects
+# across midnight.  On `ccusage` failure (offline, not installed, no
+# sessions yet) we log to stderr and skip the PUT — previous values
+# stay visible until the next successful poll.
+export def run-ccusage [--loop]: nothing -> nothing {
+    # Ensure LIVE_HOST is set for URL parsing.
+    get-url | ignore
+
+    if not $loop {
+        let today = (date now | format date "%Y%m%d")
+        let totals = try {
+            (bunx --bun ccusage daily --json --since $today
+                | from json
+                | get totals)
+        } catch { |err|
+            print -e $"ccusage failed: ($err.msg)"
+            null
+        }
+
+        if $totals != null {
+            http put (get-url "/internal/strings/$claudeTokens") ($totals.totalTokens | into string)
+            http put (get-url "/internal/strings/$claudeCost")   ($totals.totalCost   | into string)
+        }
+    } else {
+        loop {
+            run-ccusage
+            sleep 1min
+        }
+    }
+}

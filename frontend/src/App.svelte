@@ -6,6 +6,7 @@
     import Grid from "@/components/Grid.svelte";
     import ClockWidget from "@/widgets/ClockWidget.svelte";
     import LiveModeWidget from "@/widgets/LiveModeWidget.svelte";
+    import ClaudeUsageWidget from "@/widgets/ClaudeUsageWidget.svelte";
     import AboutWidget from "@/widgets/AboutWidget.svelte";
     import KpmMeter from "@/KpmMeter.svelte";
 
@@ -43,6 +44,9 @@
             </div>
             <div class="island px-2 py-1.5">
                 <LiveModeWidget />
+            </div>
+            <div class="island px-2 py-1.5">
+                <ClaudeUsageWidget />
             </div>
             <div class="island px-3 py-2 flex-1">
                 <pre class="font-sans font-light text-sm whitespace-pre-wrap wrap-break-word">{strings.value.message ?? ""}</pre>
