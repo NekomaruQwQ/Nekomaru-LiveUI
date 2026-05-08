@@ -56,6 +56,8 @@ uniform vec3 u_keyColorsL[${MAX_KEYS}];  // pre-linearized key colors in [0,1]
 uniform int u_keyCount;                   // active entries in u_keyColorsL
 uniform float u_kneeLow;                  // smoothstep low edge  (e.g. 0.02)
 uniform float u_kneeHigh;                 // smoothstep high edge (e.g. 0.98)
+uniform int   u_useBinarization;          // 0 = normal output, !=0 = constant tint
+uniform vec3  u_binarizationColor;        // sRGB straight, [0,1] — used iff gate non-zero
 
 vec3 srgbToLinear(vec3 c) {
     return mix(c / 12.92,
@@ -88,6 +90,14 @@ void main() {
     // Soft knee: clean noise floor, snap near-solid to 1, preserve AA between.
     float alpha = smoothstep(u_kneeLow, u_kneeHigh, bestAlpha);
 
+    // Binarization fast-path: skip unspill entirely and emit the constant
+    // tint with the keyer's soft alpha.  Uniform branch is coherent across
+    // the warp, so this costs nothing when the feature is off.
+    if (u_useBinarization != 0) {
+        fragColor = vec4(u_binarizationColor, alpha);
+        return;
+    }
+
     // Unspill against the best-matching key, then divide out alpha to recover
     // straight RGB.  The 1e-5 floor avoids div-by-zero; when alpha is tiny
     // the RGB doesn't contribute to compositing anyway.
@@ -115,22 +125,27 @@ export class ColorKeyRenderer {
     private canvas: HTMLCanvasElement
 
     /**
-     * @param canvas    Target canvas element (will be bound to a WebGL2 context).
-     * @param keyColors One or more RGB tuples in [0,255] to key out.  Must be
-     *                  non-empty and contain at most {@link MAX_KEYS} entries.
-     * @param kneeLow   Smoothstep low edge — pre-knee alpha ≤ kneeLow becomes
-     *                  0 (noise floor).  Default {@link DEFAULT_KNEE_LOW}.
-     * @param kneeHigh  Smoothstep high edge — pre-knee alpha ≥ kneeHigh becomes
-     *                  1 (snap solid).  Default {@link DEFAULT_KNEE_HIGH}.
+     * @param canvas            Target canvas element (will be bound to a WebGL2 context).
+     * @param keyColors         RGB tuples in [0,255] to key out.  May be empty, in which
+     *                          case the shader degenerates to a sRGB-correct passthrough
+     *                          (the loop early-exits, alpha pegs to 1, unspill is a no-op).
+     *                          Capped at {@link MAX_KEYS} entries.
+     * @param kneeLow           Smoothstep low edge — pre-knee alpha ≤ kneeLow becomes
+     *                          0 (noise floor).  Default {@link DEFAULT_KNEE_LOW}.
+     * @param kneeHigh          Smoothstep high edge — pre-knee alpha ≥ kneeHigh becomes
+     *                          1 (snap solid).  Default {@link DEFAULT_KNEE_HIGH}.
+     * @param binarizationColor Optional sRGB tuple in [0,255].  When set, the kept-pixel
+     *                          RGB is replaced by this constant color while the keyer's
+     *                          soft alpha is preserved — turns the color-key into a
+     *                          tinted silhouette mask and skips unspill entirely.
      */
     constructor(
         canvas: HTMLCanvasElement,
         keyColors: [number, number, number][],
         kneeLow = DEFAULT_KNEE_LOW,
         kneeHigh = DEFAULT_KNEE_HIGH,
+        binarizationColor?: [number, number, number],
     ) {
-        if (keyColors.length === 0)
-            throw new Error("ColorKeyRenderer: at least one key color is required")
         if (keyColors.length > MAX_KEYS)
             throw new Error(`ColorKeyRenderer: at most ${MAX_KEYS} key colors supported (got ${keyColors.length})`)
 
@@ -182,6 +197,18 @@ export class ColorKeyRenderer {
         gl.uniform1i(gl.getUniformLocation(this.program, "u_keyCount"), keyColors.length)
         gl.uniform1f(gl.getUniformLocation(this.program, "u_kneeLow"), kneeLow)
         gl.uniform1f(gl.getUniformLocation(this.program, "u_kneeHigh"), kneeHigh)
+
+        // Gate is set unconditionally so the shader branch is well-defined when
+        // binarization is off; the color uniform only matters when the gate is
+        // non-zero, so we skip uploading it in the off case.
+        const useBin = binarizationColor !== undefined
+        gl.uniform1i(gl.getUniformLocation(this.program, "u_useBinarization"), useBin ? 1 : 0)
+        if (useBin) {
+            const [r, g, b] = binarizationColor
+            gl.uniform3f(
+                gl.getUniformLocation(this.program, "u_binarizationColor"),
+                r / 255, g / 255, b / 255)
+        }
     }
 
     /** Render a decoded video frame with color-key applied. Closes the frame. */

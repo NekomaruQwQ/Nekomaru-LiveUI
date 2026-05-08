@@ -1,5 +1,5 @@
 <script lang="ts">
-    import StreamRenderer from "@/video/StreamRenderer.svelte";
+    import StreamRenderer, { type StreamRendererProps } from "@/video/StreamRenderer.svelte";
     import { streamStatus } from "@/streams.svelte";
     import { strings } from "@/strings.svelte";
     import Marquee from "@/components/Marquee.svelte";
@@ -9,6 +9,23 @@
     import CaptureWidget from "@/widgets/CaptureWidget.svelte";
     import AboutWidget from "@/widgets/AboutWidget.svelte";
     import KpmMeter from "@/KpmMeter.svelte";
+
+    const captureInfo = $derived(strings.value.$captureInfo ?? "");
+    const appRendererProps: Partial<StreamRendererProps> = $derived.by(() => {
+        if (captureInfo === "Visual Studio Code") {
+            return {
+                colorKey: ["#1d2129", "#282e3a"],
+                colorKeyKnee: [0.02, 0.38],
+            } as const;
+        } else {
+            return {};
+        }
+    });
+    const youtubeMusicRendererProps: Partial<StreamRendererProps> = {
+        colorKey: "#212121",
+        colorKeyKnee: [0.02, 0.38],
+        binarizationColor: "#f17b29",
+    };
 </script>
 
 <!--
@@ -45,10 +62,7 @@
             </div>
             <div class="island flex-col flex-1">
                 <div class="flex-1 rounded-md items-center justify-center">
-                    <StreamRenderer
-                        streamId="main"
-                        colorKey={["#1d2129", "#282e3a"]}
-                        colorKeyKnee={[0.02, 0.38]} />
+                    <StreamRenderer streamId="main" {...appRendererProps} />
                 </div>
             </div>
         </Grid>
@@ -60,10 +74,7 @@
     <!-- Bottom Row: YouTube Music (conditionally rendered) -->
     <div class="island flex! items-center justify-center pt-1">
         {#if streamStatus.hasYouTubeMusic}
-            <StreamRenderer
-                streamId="youtube-music"
-                colorKey="#212121"
-                colorKeyKnee={[0.02, 0.38]} />
+            <StreamRenderer streamId="youtube-music" {...youtubeMusicRendererProps} />
         {/if}
     </div>
 </Grid>
