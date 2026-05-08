@@ -10,20 +10,22 @@
     import AboutWidget from "@/widgets/AboutWidget.svelte";
     import KpmMeter from "@/KpmMeter.svelte";
 
+    const liveMode = $derived(strings.value.$liveMode ?? "-");
     const captureInfo = $derived(strings.value.$captureInfo ?? "");
     const appRendererProps: Partial<StreamRendererProps> = $derived.by(() => {
-        if (captureInfo === "Visual Studio Code") {
+        if (liveMode === "code") {
             return {
                 colorKey: ["#1d2129", "#282e3a"],
-                colorKeyKnee: [0.02, 0.38],
+                colorKeyKnee: [0.02, 0.18],
             } as const;
         } else {
             return {};
         }
     });
+
     const youtubeMusicRendererProps: Partial<StreamRendererProps> = {
         colorKey: "#212121",
-        colorKeyKnee: [0.02, 0.38],
+        colorKeyKnee: [0.02, 0.18],
         binarizationColor: "#f17b29",
     };
 </script>

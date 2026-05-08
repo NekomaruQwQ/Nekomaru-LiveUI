@@ -440,7 +440,7 @@ The server stores the selector config; `live-capture --mode auto` polls it.
 
 ##### Stream Info
 
-**`POST /internal/streams/:streamId/info`** — Periodic capture metadata from `live-capture --mode auto` (every ~2s). Updates computed strings.
+**`POST /internal/streams/:streamId/info`** — Periodic capture metadata from `live-capture --mode auto` (every ~2s). Updates computed strings.  On window swaps, the selector runs this POST *before* dispatching the swap to the capture pipeline — see [Strings-Gated Keys](#strings-gated-keys-main-stream).
 
 ```json
 {
@@ -552,6 +552,10 @@ The frontend uses a WebGL2 fragment shader (`frontend/src/video/color-key.ts`) t
 Working in linear space is what kills dark fringing — without it, the gamma curve makes near-key pixels look halo'd against dark UI backgrounds.
 
 The `<StreamRenderer>` component accepts `colorKey?: string | string[]` (up to 8 hex colors) and `colorKeyKnee?: [number, number]`.  Both fall back to defaults when omitted; omitting `colorKey` entirely bypasses the shader and uses a plain 2D canvas blit.
+
+#### Strings-Gated Keys (Main Stream)
+
+For the main stream, the active key set is selected dynamically in `App.svelte` from the `$captureInfo` / `$liveMode` strings posted by the auto-selector — so the keys track the captured app (e.g. VS Code's dark UI greys for the `code` mode).  To keep this in sync with the video, the selector POSTs the new stream info *before* dispatching the swap command to the capture loop on a window switch; the frontend's strings WS receives the update ahead of the first new-window frame, avoiding a one-frame mis-keyed flicker on swap.  This ordering is the invariant documented at the top of `live-capture/src/selector/mod.rs`.
 
 ### Widgets
 

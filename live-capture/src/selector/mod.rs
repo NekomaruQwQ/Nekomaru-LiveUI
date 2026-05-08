@@ -5,6 +5,14 @@
 //! to the capture loop via a channel.  POSTs the current capture info to
 //! the server on every tick (heartbeat) so computed strings stay fresh even
 //! after a server restart.
+//!
+//! ## Ordering invariant
+//!
+//! On a matched swap, the title POST runs *before* the swap command is sent
+//! to the capture loop, so the frontend's `$captureInfo` / `$liveMode` land
+//! ahead of any new-window video frames.  Features that gate rendering on
+//! these strings (e.g. color-key props in `App.svelte`) would otherwise
+//! flicker for one frame at every swap.
 
 pub mod config;
 
@@ -90,10 +98,14 @@ fn selector_loop(tx: &mpsc::Sender<SwapCommand>, config: &SelectorConfig) {
         // Get the current foreground window.
         let Some(info) = enumerate_windows::get_foreground_window() else { continue };
 
-        // Check if the foreground window changed since the last match.
+        // Resolve a candidate swap for this tick without mutating `last_info`
+        // yet — we want the title POST to run before the swap command so the
+        // frontend's `$captureInfo`/`$liveMode` updates land ahead of the
+        // first new-window frame (see the ordering invariant in module docs).
         let hwnd = info.hwnd as isize;
         let hwnd_changed = last_info.as_ref().is_none_or(|li| li.hwnd != hwnd);
 
+        let mut staged: Option<(SwapCommand, CachedStreamInfo)> = None;
         if hwnd_changed {
             // Match against patterns.
             let exe_path = info.executable_path.to_string_lossy().to_string();
@@ -107,35 +119,45 @@ fn selector_loop(tx: &mpsc::Sender<SwapCommand>, config: &SelectorConfig) {
 
                 log::info!("switching to HWND 0x{hwnd:X} ({file_description})");
 
-                // Send swap command to the capture loop.
-                let cmd = SwapCommand {
-                    hwnd,
-                    capture_info: file_description.clone(),
-                };
-                if tx.send(cmd).is_err() {
-                    log::info!("capture loop closed, selector exiting");
-                    break;
-                }
-
-                last_info = Some(CachedStreamInfo {
-                    hwnd,
-                    title: info.title.clone(),
-                    file_description,
-                    mode: capture_match.mode,
-                });
+                staged = Some((
+                    SwapCommand {
+                        hwnd,
+                        capture_info: file_description.clone(),
+                    },
+                    CachedStreamInfo {
+                        hwnd,
+                        title: info.title.clone(),
+                        file_description,
+                        mode: capture_match.mode,
+                    }));
             }
-            // If the new window doesn't match, keep last_info unchanged —
+            // If the new window doesn't match, leave `last_info` unchanged —
             // capture is still running on the previously matched window.
         }
 
-        // POST current capture info to the server on every tick (heartbeat).
-        if let Some(ref cached) = last_info {
+        // Single POST point per tick.  On a swap tick this carries the *new*
+        // info (and runs before the swap command, so the frontend updates
+        // ahead of new-window frames).  Otherwise it re-posts the cached
+        // info as a heartbeat so a freshly restarted server picks up our
+        // state on the next tick.
+        let to_post = staged.as_ref().map(|(_, c)| c).or(last_info.as_ref());
+        if let Some(cached) = to_post {
             post_stream_info(
                 &config.info_url,
                 cached.hwnd,
                 &cached.title,
                 &cached.file_description,
                 cached.mode.as_ref());
+        }
+
+        // Title is in flight; dispatch the swap.  The capture loop will not
+        // start producing new-window frames until it receives this command.
+        if let Some((cmd, cached)) = staged {
+            if tx.send(cmd).is_err() {
+                log::info!("capture loop closed, selector exiting");
+                break;
+            }
+            last_info = Some(cached);
         }
     }
 }

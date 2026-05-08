@@ -1,6 +1,8 @@
 {
     "$schema": "https://biomejs.dev/schemas/2.4.13/schema.json",
-    "html": { "experimentalFullSupportEnabled": true },
+    "html": {
+        "experimentalFullSupportEnabled": true
+    },
     "linter": {
         "rules": {
             "a11y": {
