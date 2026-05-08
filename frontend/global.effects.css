@@ -99,7 +99,7 @@
      (as of 2026).  We include both for cross-browser compatibility.
    ────────────────────────────────────────────────────────────────────────── */
 
-div.island>* {
+div.glow > * {
     filter:
         drop-shadow(0 0 1px rgb(255, 227, 212))
         drop-shadow(0 0 2px rgb(255, 227, 212))
@@ -107,7 +107,7 @@ div.island>* {
 }
 
 div.island {
-    --theme-color:  oklch(0.7056 0.1699 50);
+    --theme-color: oklch(0.7056 0.1699 50);
 
     color: var(--theme-color);
     overflow: clip;

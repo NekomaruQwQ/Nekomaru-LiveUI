@@ -26,5 +26,5 @@
     {#snippet icon()}
         <Icon name={mode.icon} size={40} />
     {/snippet}
-    <span class="text-sm">{mode.label} - {captureInfo}</span>
+    <span class="text-lg">{mode.label} - {captureInfo}</span>
 </LiveWidget>

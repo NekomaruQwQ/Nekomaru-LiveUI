@@ -44,7 +44,7 @@ struct Args {
     /// Logical pixels are converted to physical pixels using the provided
     /// `scale_factor` or the system scaling factor if `scale_factor` is not
     /// provided.
-    #[arg(long, short = 'y', requires = "width", default_value = "800")]
+    #[arg(long, short = 'y', requires = "width", default_value = "720")]
     pub height: u32,
 
     /// Device scaling factor to use for the webview. If not provided, the

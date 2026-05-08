@@ -15,7 +15,7 @@
         if (liveMode === "code") {
             return {
                 colorKey: ["#1d2129", "#282e3a"],
-                colorKeyKnee: [0.02, 0.18],
+                colorKeyKnee: [0, 0.2],
             } as const;
         } else {
             return {};
@@ -24,7 +24,7 @@
 
     const youtubeMusicRendererProps: Partial<StreamRendererProps> = {
         colorKey: "#212121",
-        colorKeyKnee: [0.02, 0.18],
+        colorKeyKnee: [0, 0.2],
         binarizationColor: "#ff8d46",
     };
 </script>
@@ -39,43 +39,43 @@
     <Grid columns="1fr 3fr 40px" gap="2">
         <!-- Side Column: User Info -->
         <div class="flex! w-full h-full flex-col gap-2">
-            <div class="island px-2 py-1.5">
+            <div class="island glow px-2 py-1.5">
                 <ClockWidget />
             </div>
-            <div class="island px-2 py-1.5">
+            <div class="island glow px-2 py-1.5">
                 <LiveModeWidget />
             </div>
-            <div class="island px-2 py-1.5">
+            <div class="island glow px-2 py-1.5">
                 <ClaudeUsageWidget />
             </div>
-            <div class="island px-3 py-2 flex-1">
+            <div class="island glow px-3 py-2 flex-1">
                 <pre class="font-sans font-light text-sm whitespace-pre-wrap wrap-break-word">{strings.value.message ?? ""}</pre>
             </div>
-            <div class="island px-2 py-1.5">
+            <div class="island glow px-2 py-1.5">
                 <AboutWidget />
             </div>
         </div>
         <!-- Main Column: Marquee + Main Stream -->
         <Grid rows="auto 1fr" gap="2">
             <!-- Top Row: Marquee Banner -->
-            <div class="island overflow-clip">
+            <div class="island glow overflow-clip">
                 {#if strings.value.marquee}
                     <Marquee text={strings.value.marquee} />
                 {/if}
             </div>
-            <div class="island flex-col flex-1">
-                <div class="flex-1 rounded-md items-center justify-center">
-                    <StreamRenderer streamId="main" {...appRendererProps} />
-                </div>
+            <div
+                id="main-stream"
+                class={`island flex-col flex-1 rounded-md items-center justify-center ${(liveMode === "code" ? "glow" : " bg-[#1d1d1d]!")}`}>
+                <StreamRenderer streamId="main" {...appRendererProps} />
             </div>
         </Grid>
         <!-- Side Column: Action Panel -->
-        <div class="island p-2 flex! w-full h-full flex-col">
+        <div class="island glow p-2 flex! w-full h-full flex-col">
             <KpmMeter />
         </div>
     </Grid>
     <!-- Bottom Row: YouTube Music (conditionally rendered) -->
-    <div class="island flex! items-center justify-center pt-1">
+    <div class="island glow flex! items-center justify-center pt-1">
         {#if streamStatus.hasYouTubeMusic}
             <StreamRenderer streamId="youtube-music" {...youtubeMusicRendererProps} />
         {/if}
