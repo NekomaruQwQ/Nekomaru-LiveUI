@@ -22,14 +22,14 @@
 -->
 <div class="flex! flex-row items-center gap-1 {className}">
     {#if icon}
-        <div class="flex! size-10 items-center justify-center shrink-0 opacity-50">
+        <div class="flex! size-10 items-center justify-center shrink-0 opacity-75">
             {@render icon()}
         </div>
     {/if}
     <div class="flex! flex-col">
-        <div class="pl-0.5 text-xs opacity-75">
+        <div class="pl-0.5 text-xs">
             {#if typeof name === "string"}{name}{:else}{@render name()}{/if}
         </div>
-        <div>{@render children()}</div>
+        {@render children()}
     </div>
 </div>

@@ -6,12 +6,10 @@
     import Grid from "@/components/Grid.svelte";
     import ClockWidget from "@/widgets/ClockWidget.svelte";
     import LiveModeWidget from "@/widgets/LiveModeWidget.svelte";
-    import CaptureWidget from "@/widgets/CaptureWidget.svelte";
     import AboutWidget from "@/widgets/AboutWidget.svelte";
     import KpmMeter from "@/KpmMeter.svelte";
 
     const liveMode = $derived(strings.value.$liveMode ?? "-");
-    const captureInfo = $derived(strings.value.$captureInfo ?? "");
     const appRendererProps: Partial<StreamRendererProps> = $derived.by(() => {
         if (liveMode === "code") {
             return {
@@ -26,7 +24,7 @@
     const youtubeMusicRendererProps: Partial<StreamRendererProps> = {
         colorKey: "#212121",
         colorKeyKnee: [0.02, 0.18],
-        binarizationColor: "#f17b29",
+        binarizationColor: "#ff8d46",
     };
 </script>
 
@@ -45,10 +43,9 @@
             </div>
             <div class="island px-2 py-1.5">
                 <LiveModeWidget />
-                <CaptureWidget />
             </div>
             <div class="island px-3 py-2 flex-1">
-                <pre class="font-sans font-light whitespace-pre-wrap wrap-break-word">{strings.value.message ?? ""}</pre>
+                <pre class="font-sans font-light text-sm whitespace-pre-wrap wrap-break-word">{strings.value.message ?? ""}</pre>
             </div>
             <div class="island px-2 py-1.5">
                 <AboutWidget />
