@@ -1,35 +1,73 @@
-// Low-level WebSocket helpers for binary streaming (video, audio).
+// Low-level WebSocket helpers.
 //
-// Provides `openWebSocket` (promise-based connect) and `wsMessages`
-// (async generator yielding ArrayBuffer).  Tied to AbortSignal for
-// clean teardown (React effect cleanup, component unmount, etc.).
+// `runReconnectingWS` runs the standard reconnect-with-backoff loop used by
+// every viewer-side stream (video, audio, KPM, strings).  Callers supply a
+// per-connection body that owns message handling and decides when the
+// connection has ended (typically by resolving on `onclose`).
+//
+// `wsMessages` is an async-generator helper for tight binary message loops
+// (video) — yields ArrayBuffer messages until the WS closes or the signal
+// fires.  Use it inside a `runReconnectingWS` body.
 
-/// Open a WebSocket and wait for the connection to be established.
-/// Rejects on error or abort.
-export function openWebSocket(path: string, signal: AbortSignal): Promise<WebSocket> {
-    return new Promise<WebSocket>((resolve, reject) => {
-        if (signal.aborted) { reject(new Error("aborted")); return; }
+const INITIAL_DELAY_MS = 100;
+const MAX_DELAY_MS = 5000;
 
+/// Run a reconnecting WebSocket loop with exponential backoff (100→5000 ms).
+///
+/// `body` is invoked once per connection attempt with the freshly-constructed
+/// WebSocket.  It owns:
+///   - message handling (`ws.onmessage` or addEventListener)
+///   - deciding when this connection is done (typically by resolving on
+///     `ws.onclose` / `onerror`, or by awaiting a `wsMessages` generator)
+///   - any per-connection setup/teardown (worklets, decoders, etc.)
+///
+/// Backoff resets the moment a connection successfully opens.  The loop ends
+/// when `signal` aborts.
+export async function runReconnectingWS(
+    path: string,
+    signal: AbortSignal,
+    body: (ws: WebSocket) => Promise<void>,
+): Promise<void> {
+    let delay = INITIAL_DELAY_MS;
+
+    while (!signal.aborted) {
         const proto = location.protocol === "https:" ? "wss:" : "ws:";
         const ws = new WebSocket(`${proto}//${location.host}${path}`);
+        // Safe default for binary streams.  Has no effect on text frames, so
+        // setting it unconditionally lets text-only consumers (KPM, strings)
+        // ignore the option entirely.
         ws.binaryType = "arraybuffer";
 
-        const onAbort = () => { ws.close(); reject(new Error("aborted")); };
+        // Reset backoff the instant the socket opens — independent of how
+        // body chooses to observe the open.
+        ws.addEventListener("open", () => { delay = INITIAL_DELAY_MS; }, { once: true });
+
+        const onAbort = () => ws.close();
         signal.addEventListener("abort", onAbort, { once: true });
 
-        ws.onopen = () => {
+        try {
+            await body(ws);
+        } catch (e) {
+            // Body threw — log and fall through to backoff.  Most bodies
+            // shouldn't throw (they resolve on close/error), but a buggy
+            // handler shouldn't kill the whole reconnect loop.
+            console.warn("runReconnectingWS: body threw:", e);
+        } finally {
             signal.removeEventListener("abort", onAbort);
-            resolve(ws);
-        };
-        ws.onerror = () => {
-            signal.removeEventListener("abort", onAbort);
-            reject(new Error("WebSocket connection error"));
-        };
-    });
+            if (ws.readyState !== WebSocket.CLOSED) ws.close();
+        }
+
+        if (signal.aborted) break;
+        await sleep(delay);
+        delay = Math.min(delay * 2, MAX_DELAY_MS);
+    }
 }
 
-/// Async generator that yields binary ArrayBuffer messages from a WebSocket.
-/// Ends when the WebSocket closes or the signal fires.
+/// Async generator yielding binary ArrayBuffer messages from a WebSocket.
+/// Ends when the WebSocket closes, errors, or the signal fires.
+///
+/// Intended for use inside a `runReconnectingWS` body — the generator's
+/// completion signals the body that the connection is over.
 export async function* wsMessages(
     ws: WebSocket,
     signal: AbortSignal,
@@ -63,4 +101,8 @@ export async function* wsMessages(
     } finally {
         signal.removeEventListener("abort", onAbort);
     }
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }

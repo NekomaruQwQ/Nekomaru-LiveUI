@@ -1,7 +1,7 @@
 <script lang="ts">
     import Icon from "@/components/Icon.svelte";
     import LiveWidget from "./LiveWidget.svelte";
-    import { strings } from "@/strings.svelte";
+    import { strings } from "@/events.svelte";
 
     /// Display labels and icons for each mode value.
     const MODE_MAP = {

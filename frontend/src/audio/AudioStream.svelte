@@ -14,6 +14,7 @@
     // step) is imperceptible.  Chunks are posted to the worklet immediately.
 
     import { onMount } from "svelte";
+    import { runReconnectingWS } from "../ws";
 
     // ── live-protocol constants ──────────────────────────────────────────────
 
@@ -24,11 +25,6 @@
     const MSG_AUDIO_CONFIG = 0x11;
     const MSG_AUDIO_CHUNK = 0x12;
 
-    // ── Reconnect constants ──────────────────────────────────────────────────
-
-    const INITIAL_DELAY_MS = 100;
-    const MAX_DELAY_MS = 5000;
-
     onMount(() => {
         const abort = new AbortController();
         void startAudioLoop(abort.signal);
@@ -37,50 +33,13 @@
 
     // ── Audio loop ───────────────────────────────────────────────────────────
 
+    /// AudioContext is reused across reconnects: it owns the speaker output
+    /// and creating a fresh one per reconnect would briefly mute audio.  Only
+    /// recreated when the server sends a different sample rate.
     async function startAudioLoop(signal: AbortSignal): Promise<void> {
-        let delay = INITIAL_DELAY_MS;
         let ctx: AudioContext | null = null;
 
-        while (!signal.aborted) {
-            try {
-                const connected = await runOneAudioConnection(signal, ctx, (newCtx) => {
-                    ctx = newCtx;
-                });
-                if (connected) delay = INITIAL_DELAY_MS;
-            } catch {
-                // Connection failed — fall through to backoff.
-            }
-
-            if (signal.aborted) break;
-            await sleep(delay);
-            delay = Math.min(delay * 2, MAX_DELAY_MS);
-        }
-
-        // Cleanup.
-        if (ctx) {
-            await (ctx as AudioContext).close();
-            console.log("AudioStream: stopped");
-        }
-    }
-
-    /// Run a single WS connection to /api/audio.  Returns true if the connection
-    /// was successfully established (for backoff reset).
-    async function runOneAudioConnection(
-        signal: AbortSignal,
-        existingCtx: AudioContext | null,
-        setCtx: (ctx: AudioContext) => void,
-    ): Promise<boolean> {
-        return new Promise<boolean>((resolve, reject) => {
-            if (signal.aborted) { resolve(false); return; }
-
-            const proto = location.protocol === "https:" ? "wss:" : "ws:";
-            const ws = new WebSocket(`${proto}//${location.host}/api/audio`);
-            ws.binaryType = "arraybuffer";
-
-            const onAbort = () => ws.close();
-            signal.addEventListener("abort", onAbort, { once: true });
-
-            let ctx = existingCtx;
+        await runReconnectingWS("/api/audio", signal, (ws) => new Promise<void>((resolve) => {
             let workletNode: AudioWorkletNode | null = null;
             let configReceived = false;
 
@@ -89,7 +48,8 @@
                 const data = new Uint8Array(ev.data);
                 if (data.length < HEADER_SIZE) return;
 
-                const msgType = data[0]!;
+                const msgType = new DataView(
+                    data.buffer, data.byteOffset, data.byteLength).getUint8(0);
 
                 if (msgType === MSG_AUDIO_CONFIG && !configReceived) {
                     configReceived = true;
@@ -104,7 +64,6 @@
                         if (!ctx || ctx.sampleRate !== config.sampleRate) {
                             if (ctx) await ctx.close();
                             ctx = new AudioContext({ sampleRate: config.sampleRate });
-                            setCtx(ctx);
                         }
 
                         // Handle browser autoplay policy.
@@ -145,19 +104,21 @@
             };
 
             ws.onclose = () => {
-                signal.removeEventListener("abort", onAbort);
                 if (workletNode) {
                     workletNode.disconnect();
                     workletNode = null;
                 }
-                resolve(true);
+                resolve();
             };
 
-            ws.onerror = () => {
-                signal.removeEventListener("abort", onAbort);
-                reject(new Error("WebSocket error"));
-            };
-        });
+            ws.onerror = () => resolve();
+        }));
+
+        // Outer loop ended (signal aborted).  Tear down the AudioContext.
+        if (ctx) {
+            await (ctx as AudioContext).close();
+            console.log("AudioStream: stopped");
+        }
     }
 
     // ── Protocol parsers ─────────────────────────────────────────────────────
@@ -187,11 +148,5 @@
         // Header (8) + timestamp (8) + at least some PCM data.
         if (raw.length <= HEADER_SIZE + 8) return null;
         return raw.subarray(HEADER_SIZE + 8);
-    }
-
-    // ── Helpers ──────────────────────────────────────────────────────────────
-
-    function sleep(ms: number): Promise<void> {
-        return new Promise(resolve => setTimeout(resolve, ms));
     }
 </script>

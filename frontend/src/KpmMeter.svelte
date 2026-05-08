@@ -1,7 +1,6 @@
 <script lang="ts">
-    import { onMount } from "svelte";
     import { Keyboard } from "@lucide/svelte";
-    import { kpmWsLoop } from "./kpm-loop";
+    import { kpm as kpmStore } from "@/events.svelte";
 
     // ── Constants ────────────────────────────────────────────────────────────
 
@@ -21,41 +20,35 @@
 
     // ── State ────────────────────────────────────────────────────────────────
 
-    /// Current KPM and computed peak.  `null` means the process isn't running
-    /// (KPM endpoint hasn't yielded a value yet, or returned null).
-    let kpm = $state<number | null>(null);
+    /// Computed peak.  `kpm` is read directly from the singleton `kpmStore`.
     let peak = $state(0);
 
     /// Peak tracking — plain `let` (no reactivity) so updates don't trigger
-    /// re-renders.  Only the `kpm` / `peak` $state writes drive the DOM.
+    /// re-renders.  Only the `peak` $state write drives the DOM.
     let peakRaw = 0;
     let peakTime = 0;
 
-    onMount(() => {
-        const abort = new AbortController();
+    /// React to each kpm tick to update peak hold + decay.  The effect runs
+    /// once per kpmStore.value change (Svelte 5 fine-grained tracking).
+    $effect(() => {
+        const next = kpmStore.value;
+        if (next == null) { peakRaw = 0; peakTime = 0; peak = 0; return; }
 
-        void kpmWsLoop(abort.signal, (next) => {
-            if (next == null) { kpm = null; peak = 0; return; }
+        const now = performance.now();
 
-            const now = performance.now();
-
-            if (next >= peakRaw) {
-                peakRaw = next;
-                peakTime = now;
-            } else {
-                const elapsed = now - peakTime;
-                if (elapsed > PEAK_HOLD_MS) {
-                    const decayProgress = Math.min(
-                        (elapsed - PEAK_HOLD_MS) / PEAK_DECAY_MS, 1);
-                    peakRaw = peakRaw + (next - peakRaw) * decayProgress;
-                }
+        if (next >= peakRaw) {
+            peakRaw = next;
+            peakTime = now;
+        } else {
+            const elapsed = now - peakTime;
+            if (elapsed > PEAK_HOLD_MS) {
+                const decayProgress = Math.min(
+                    (elapsed - PEAK_HOLD_MS) / PEAK_DECAY_MS, 1);
+                peakRaw = peakRaw + (next - peakRaw) * decayProgress;
             }
+        }
 
-            kpm = next;
-            peak = Math.round(peakRaw);
-        });
-
-        return () => abort.abort();
+        peak = Math.round(peakRaw);
     });
 
     // ── Derived display values ───────────────────────────────────────────────
@@ -66,7 +59,7 @@
         return (clamped / MAX_KPM) ** CURVE_EXPONENT * 100;
     }
 
-    let barPercent = $derived(kpm == null ? 0 : kpmToPercent(kpm));
+    let barPercent = $derived(kpmStore.value == null ? 0 : kpmToPercent(kpmStore.value));
     let peakPercent = $derived(kpmToPercent(peak));
 </script>
 
@@ -76,7 +69,7 @@
     Renders nothing if the KPM endpoint returns 404 (process not running).
     At zero KPM, shows an empty meter ("quiet studio" aesthetic).
 -->
-{#if kpm != null}
+{#if kpmStore.value != null}
     <div class="flex! flex-col items-center w-full h-full gap-1">
         <!-- Meter body -->
         <div class="kpm-meter flex-1 w-full relative">
@@ -100,7 +93,7 @@
 
         <!-- Readout + label area -->
         <div class="flex! flex-col items-center gap-0.5 shrink-0">
-            <span class="text-sm font-light opacity-75">{kpm}</span>
+            <span class="text-sm font-light opacity-75">{kpmStore.value}</span>
             <span class="text-[10px] tracking-wider font-light opacity-50">KPM</span>
             <Keyboard size={24} class="opacity-50" />
         </div>

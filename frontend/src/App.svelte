@@ -1,7 +1,7 @@
 <script lang="ts">
     import StreamRenderer, { type StreamRendererProps } from "@/video/StreamRenderer.svelte";
     import { streamStatus } from "@/streams.svelte";
-    import { strings } from "@/strings.svelte";
+    import { strings } from "@/events.svelte";
     import Marquee from "@/components/Marquee.svelte";
     import Grid from "@/components/Grid.svelte";
     import ClockWidget from "@/widgets/ClockWidget.svelte";

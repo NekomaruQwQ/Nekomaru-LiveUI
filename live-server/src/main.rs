@@ -12,6 +12,7 @@
 
 mod audio;
 mod events;
+mod events_ws;
 mod kpm;
 mod selector;
 mod state;
@@ -90,6 +91,7 @@ async fn main() {
             .merge(strings::router())
             .merge(selector::router())
             .merge(events::router())
+            .merge(events_ws::router())
             .route("/api/refresh", post(refresh))
             .with_state(Arc::clone(&state))
             .fallback(vite_proxy::fallback(args.vite_port));

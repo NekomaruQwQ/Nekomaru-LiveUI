@@ -36,6 +36,10 @@ impl KpmState {
         let (tx, rx) = watch::channel(None);
         Self { tx, rx }
     }
+
+    /// Subscribe to KPM value changes.  Each receiver sees the current value
+    /// on first read and a notification on every subsequent change.
+    pub fn subscribe(&self) -> watch::Receiver<Option<i64>> { self.rx.clone() }
 }
 
 // ── Routes ──────────────────────────────────────────────────────────────

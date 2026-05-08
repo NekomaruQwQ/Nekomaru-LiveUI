@@ -1,7 +1,7 @@
 <script lang="ts">
     import Icon from "@/components/Icon.svelte";
     import LiveWidget from "./LiveWidget.svelte";
-    import { strings } from "@/strings.svelte";
+    import { strings } from "@/events.svelte";
 
     let captureMode = $derived(strings.value.$captureMode?.toUpperCase() ?? "—");
     let captureInfo = $derived(strings.value.$captureInfo ?? "");

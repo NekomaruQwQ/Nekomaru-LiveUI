@@ -1,7 +1,7 @@
 <script lang="ts">
     import { Info } from "@lucide/svelte";
     import LiveWidget from "./LiveWidget.svelte";
-    import { strings } from "@/strings.svelte";
+    import { strings } from "@/events.svelte";
 
     let timestamp = $derived(strings.value.$timestamp ?? "");
 </script>

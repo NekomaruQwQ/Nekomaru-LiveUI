@@ -83,7 +83,7 @@ graph LR
     end
 
     subgraph frontend["Browser / live-app"]
-        viewer["<b>Frontend</b><br/>React + WebCodecs<br/>AudioWorklet, KPM meter<br/>widgets, strings display"]
+        viewer["<b>Frontend</b><br/>Svelte 5 + WebCodecs<br/>AudioWorklet, KPM meter<br/>widgets, strings display"]
     end
 
     capture_auto -- "stdout" --> ws_main
@@ -100,7 +100,7 @@ graph LR
     capture_auto -. "HTTP (streamInfo)" .-> strings
 
     relay -- "WS binary" --> viewer
-    strings -- "WS push" --> viewer
+    strings -- "/api/events (KPM + strings)" --> viewer
 ```
 
 ### Component Summary
@@ -115,7 +115,7 @@ graph LR
 | **`live-kpm`** | Rust | Keystroke counter | stdout (live-protocol framed) |
 | **`enumerate-windows`** | Rust | Window discovery (JSON) | stdout JSON |
 | **Server** | Rust (Axum) | WS relay, string store, config | WS ↔ WS, HTTP |
-| **Frontend** | Svelte 5 + Vite | Viewer UI | WS (video, audio, kpm, strings) |
+| **Frontend** | Svelte 5 + Vite | Viewer UI | WS (video, audio, events) |
 | **`live-app`** | Rust (wry) | Optional webview host | — |
 
 ### Why This Design?
@@ -130,7 +130,7 @@ graph LR
 | Window discovery | Rust (`enumerate-windows`) | Lightweight binary for Nushell scripts. JSON output. |
 | YouTube Music capture | Rust (`live-capture-youtube-music`) | DPI-independent crop calculation from CSS constants, auto-restart on window loss. Stdout-first — piped through `live-ws` like any other producer. |
 | Orchestration | Nushell (`mod.nu`) | Launches pipelines, manages service lifecycle. |
-| Frontend | React + WebCodecs | Pure viewer. Receives `live-protocol` framed messages via WS. Zero H.264 knowledge. |
+| Frontend | Svelte 5 + WebCodecs | Pure viewer. Receives `live-protocol` framed messages via WS. Zero H.264 knowledge. |
 
 ### Why Rust for the Server?
 
@@ -380,9 +380,24 @@ Endpoints are split into two namespaces:
 
 **`WS /api/audio`** — Frontend audio stream. Pushes binary `live-protocol` messages (`AudioConfig` + `AudioChunk`). On connect, sends cached `AudioConfig` for immediate AudioWorklet setup.
 
-##### KPM
+##### Events (unified frontend telemetry)
 
-**`WS /api/kpm`** — Frontend KPM display. Pushes `{"kpm": N}` or `{"kpm": null}` JSON text. Initial value sent on connect.
+**`WS /api/events`** — Single push channel for lightweight viewer telemetry. Replaces the per-source `/api/kpm` and `/api/strings/ws` endpoints (both still registered during migration, but no longer used by the frontend).
+
+Tagged JSON text frames — currently two `type` values:
+
+```jsonc
+{ "type": "kpm",     "kpm": 142 }                              // null when encoder is offline
+{ "type": "strings", "data": { "$captureInfo": "...", ... } }  // full merged snapshot
+```
+
+On connect: replays the current KPM value, then the full strings snapshot (in that order, atomically).  Subsequent updates fire a single tagged message per change.  Implemented via `tokio::select!` over the KPM and strings `watch::Receiver`s so both sources share one fan-in loop.
+
+Why one endpoint: the frontend used to open four reconnect-loops in parallel (video, audio, kpm, strings) with duplicated backoff logic; KPM and strings are the small JSON-text streams where the connection-count cost dominated.  Heavy media (video, audio) stays on dedicated endpoints — they have their own keyframe / config caches, lifecycles, and backpressure policies, and folding them in would invite head-of-line blocking.
+
+##### KPM (legacy)
+
+**`WS /api/kpm`** — Frontend KPM display. Pushes `{"kpm": N}` or `{"kpm": null}` JSON text. Initial value sent on connect.  *Superseded by `/api/events`; kept registered while the migration settles, slated for removal in a follow-up commit.*
 
 ##### String Store
 
@@ -398,11 +413,11 @@ Server-managed key-value store. Keys prefixed with `$` are **computed strings** 
 | `$microphone` | Audio encoder connect/disconnect | Audio stream status (present when `live-audio` encoder is connected, absent otherwise) |
 | `$timestamp` | Server startup | Revision timestamp via `jj log` |
 
-**`GET /api/strings`** — All key-value pairs (file-backed + computed).  Kept for ad-hoc inspection (curl, Nushell scripts); the frontend uses the WS endpoint below.
+**`GET /api/strings`** — All key-value pairs (file-backed + computed).  Kept for ad-hoc inspection (curl, Nushell scripts); the frontend now consumes string snapshots via `/api/events`.
 
 **`GET /api/strings/:key`** — Single string value.
 
-**`WS /api/strings/ws`** — Frontend snapshot stream.  Sends the merged `get_all()` JSON object on connect and again after every mutation.  Multiple writes between polls coalesce via a `tokio::sync::watch` channel — viewers only ever see the latest state.
+**`WS /api/strings/ws`** — Snapshot stream.  Sends the merged `get_all()` JSON object on connect and again after every mutation.  Multiple writes between polls coalesce via a `tokio::sync::watch` channel — viewers only ever see the latest state.  *Superseded by `/api/events` (which embeds the same snapshots under `{"type":"strings",...}`); kept registered during migration, slated for removal in a follow-up commit.*
 
 **`PUT /api/strings/:key`** — Set a string value (plain text body). Returns 403 for `$`-prefixed keys.
 
@@ -519,6 +534,10 @@ Machine B (working):    live-capture --mode auto (main) + live-kpm
 - Exponential backoff (100ms → 5s) prevents reconnection storms.
 - The encoder never restarts — avoiding the NVENC teardown that M4 was designed to eliminate.
 
+#### Frontend reconnect helper
+
+The viewer side mirrors the same backoff curve through a single helper, `runReconnectingWS(path, signal, body)` in [`frontend/src/ws.ts`](../frontend/src/ws.ts).  It owns URL construction, abort wiring, and the 100ms→5s exponential reset-on-open loop; per-stream bodies own message parsing and decide when the connection ends (typically by resolving on `onclose`).  All three viewer-side WSes (`/api/streams/:id`, `/api/audio`, `/api/events`) flow through it — no duplicated backoff loops across streams.
+
 ### Codec & Keyframe Caching
 
 H.264 decoders need two things before they can produce frames: **CodecParams** (SPS/PPS — the encoder's configuration) to initialize, and a **keyframe** (IDR) as a decode entry point.  Without caching, anything that missed these must wait up to 2 seconds (one full GOP of 120 frames at 60fps) for the next naturally-occurring IDR.
@@ -574,11 +593,11 @@ Each widget has a consistent three-part structure:
 
 #### Dynamic Content
 
-`LiveWidget` is purely presentational. For dynamic values, the parent component reads from the `strings` rune singleton (`frontend/src/strings.svelte.ts`) — a WS-backed snapshot of the server's string store — and passes values as `children`.
+`LiveWidget` is purely presentational. For dynamic values, the parent component reads from the `strings` rune singleton (`frontend/src/events.svelte.ts`) — a WS-backed snapshot of the server's string store, fed by `/api/events` — and passes values as `children`.  The same module also exposes the `kpm` rune consumed by `KpmMeter.svelte`.
 
 #### Placement
 
-Widgets are rendered inside `SidePanel` (the left column island in `app.tsx`), which uses `flex-col gap-3` layout.
+Widgets are rendered inside the left-column island in `App.svelte` using `flex-col gap-3` layout.
 
 ---
 
@@ -683,10 +702,11 @@ LiveUI/
 │       ├── state.rs                 # Shared AppState (strings, selector, video, audio, kpm)
 │       ├── video.rs                 # Video WS relay, codec caching, /init, /streams
 │       ├── audio.rs                 # Audio WS relay (broadcast + cached AudioConfig)
-│       ├── kpm.rs                   # KPM WS relay (binary input → JSON frontend push)
-│       ├── strings.rs               # String store (file-backed + computed) + routes
+│       ├── kpm.rs                   # KPM input WS + legacy /api/kpm viewer (superseded by events_ws)
+│       ├── strings.rs               # String store (file-backed + computed) + legacy /api/strings/ws (superseded by events_ws)
 │       ├── selector.rs              # Selector config storage + routes
 │       ├── events.rs                # Stream info endpoint (periodic capture metadata)
+│       ├── events_ws.rs             # Unified /api/events WS — multiplexes KPM + strings
 │       └── vite_proxy.rs            # Reverse proxy to Vite dev server
 │
 ├── live-app/                        # Optional webview host (wry)
@@ -696,28 +716,29 @@ LiveUI/
 │   ├── enumerate-windows/           # Window enumeration (lib + bin, JSON output)
 │   └── set-dpi-awareness/           # Per-monitor DPI awareness v2
 │
-├── frontend/                        # Frontend (React 19 + Vite + Tailwind)
+├── frontend/                        # Frontend (Svelte 5 + Vite + Tailwind)
 │   ├── package.json
 │   ├── vite.config.ts
 │   ├── index.html
-│   ├── index.tsx                    # Entry point (React 19 createRoot)
+│   ├── index.tsx                    # Entry point (Svelte 5 mount)
 │   └── src/
-│       ├── ws.ts                    # Low-level WebSocket helpers
+│       ├── App.svelte               # Pure viewer shell (JetBrains Islands dark theme)
+│       ├── KpmMeter.svelte          # Vertical VU-style KPM meter (peak hold + decay)
 │       ├── api.ts                   # fetch() wrapper for /api/streams
-│       ├── app.tsx                  # Pure viewer shell (JetBrains Islands dark theme)
-│       ├── streams.ts               # useStreamStatus() hook (polls stream availability)
-│       ├── strings.svelte.ts       # `strings` rune singleton (WS-backed snapshot)
-│       ├── strings-loop.ts         # /api/strings/ws auto-reconnect loop
-│       ├── kpm.tsx                  # useKpm() hook (WS push) + <KpmMeter> VU bar
-│       ├── audio/                   # Audio stream module
-│       │   ├── index.tsx            # <AudioStream> (WS push, live-protocol parser, AudioContext)
+│       ├── ws.ts                    # `runReconnectingWS` helper + `wsMessages` async iterator
+│       ├── events.svelte.ts         # `strings` + `kpm` runes — singleton WS to /api/events
+│       ├── streams.svelte.ts        # `streamStatus` rune (polls /api/streams every 2s)
+│       ├── audio/
+│       │   ├── AudioStream.svelte   # <AudioStream> (WS push, live-protocol parser, AudioContext)
 │       │   ├── worklet.ts           # AudioWorklet PCM ring buffer processor
 │       │   └── worklet-env.d.ts     # Ambient types for AudioWorklet context
-│       ├── widgets/                 # SidePanel widgets (Clock, Mode, Microphone, Capture, About)
-│       └── video/                   # Video stream module
-│           ├── index.tsx            # <StreamRenderer> (WS push, live-protocol parser)
-│           ├── decoder.ts           # H264Decoder (thin WebCodecs wrapper)
-│           └── color-key.ts         # WebGL2 color-key renderer
+│       ├── components/              # Reusable presentational primitives (Grid, Icon, Marquee)
+│       ├── widgets/                 # Left-column widgets (Clock, LiveMode, Capture, About)
+│       └── video/
+│           ├── StreamRenderer.svelte  # <StreamRenderer> (canvas + color-key)
+│           ├── stream-loop.ts         # WS reader → live-protocol parser → decoder
+│           ├── decoder.ts             # H264Decoder (thin WebCodecs wrapper)
+│           └── color-key.ts           # WebGL2 color-key renderer
 ```
 
 ---
