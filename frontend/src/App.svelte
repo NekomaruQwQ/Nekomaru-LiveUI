@@ -47,8 +47,8 @@
                 <div class="flex-1 rounded-md items-center justify-center">
                     <StreamRenderer
                         streamId="main"
-                        chromaKey={["#1d1d1d"]}
-                        chromaKeyThreshold={60}/>
+                        colorKey={["#1d2129", "#282e3a"]}
+                        colorKeyKnee={[0.02, 0.38]} />
                 </div>
             </div>
         </Grid>
@@ -62,8 +62,8 @@
         {#if streamStatus.hasYouTubeMusic}
             <StreamRenderer
                 streamId="youtube-music"
-                chromaKey="#212121"
-                chromaKeyThreshold={15} />
+                colorKey="#212121"
+                colorKeyKnee={[0.02, 0.38]} />
         {/if}
     </div>
 </Grid>

@@ -1,11 +1,23 @@
 /**
- * GPU-accelerated chroma-key renderer.
+ * GPU-accelerated color-key renderer.
  *
- * Replaces pixels matching a target color with transparency using a WebGL2
- * fragment shader.  The entire pipeline stays on the GPU — the video frame
- * is uploaded as a texture, the shader computes per-pixel alpha via Chebyshev
- * distance + smoothstep, and the result composites against whatever CSS
- * background is behind the canvas.
+ * Replaces pixels matching one of N target colors with transparency using a
+ * WebGL2 fragment shader.  The entire pipeline stays on the GPU — the video
+ * frame is uploaded as a texture and the shader runs per-pixel.
+ *
+ * Algorithm (per pixel, in linear-light space):
+ *   1. Convert the source pixel sRGB → linear.
+ *   2. For each key, estimate per-channel "foreground signal vs. background"
+ *      ratio and take the max-channel.  Pick the lowest result across keys —
+ *      that's the alpha estimate (transparent if it matches *any* key) and
+ *      identifies the best-matching key for unspill.
+ *   3. Shape with `smoothstep(kneeLow, kneeHigh, alpha)` — clean noise floor,
+ *      snap near-solid to 1, preserve anti-aliased edges in between.
+ *   4. Unspill against the best-matching key, divide out alpha to produce
+ *      straight (non-premultiplied) RGB, re-encode linear → sRGB.
+ *
+ * Working in linear space is what kills the dark fringes you'd otherwise get
+ * doing this naively in sRGB.
  */
 
 // ── Shaders ──────────────────────────────────────────────────────────────────
@@ -29,40 +41,73 @@ void main() {
 /// is baked into the fragment shader and validated by the renderer.
 export const MAX_KEYS = 8
 
-/// Chroma-key fragment shader.  For each pixel we take the minimum Chebyshev
-/// distance across all active key colors, then map that through smoothstep —
-/// pixels close to *any* key get low alpha, everything else stays opaque.
+/// Color-key fragment shader.  Key colors arrive pre-converted to linear
+/// (CPU-side, see {@link ColorKeyRenderer}'s constructor) so the shader
+/// avoids redoing sRGB→linear per-pixel for what are effectively constants.
+/// Output is straight (non-premultiplied) alpha to match the WebGL context's
+/// `premultipliedAlpha: false` attribute — the browser composites correctly
+/// against whatever CSS background is behind the canvas.
 const FRAG_SRC = /* glsl */ `#version 300 es
 precision mediump float;
 in vec2 v_uv;
 out vec4 fragColor;
 uniform sampler2D u_texture;
-uniform vec3 u_keyColors[${MAX_KEYS}];  // target colors in [0,1] RGB
-uniform int u_keyCount;                  // number of active entries in u_keyColors
-uniform float u_threshold;               // distance at which alpha reaches 1.0
+uniform vec3 u_keyColorsL[${MAX_KEYS}];  // pre-linearized key colors in [0,1]
+uniform int u_keyCount;                   // active entries in u_keyColorsL
+uniform float u_kneeLow;                  // smoothstep low edge  (e.g. 0.02)
+uniform float u_kneeHigh;                 // smoothstep high edge (e.g. 0.98)
+
+vec3 srgbToLinear(vec3 c) {
+    return mix(c / 12.92,
+               pow((c + 0.055) / 1.055, vec3(2.4)),
+               step(0.04045, c));
+}
+vec3 linearToSrgb(vec3 c) {
+    return mix(c * 12.92,
+               1.055 * pow(max(c, 0.0), vec3(1.0/2.4)) - 0.055,
+               step(0.0031308, c));
+}
+
 void main() {
-    vec4 color = texture(u_texture, v_uv);
-    // Chebyshev distance to the nearest key color.  Loop bound is the
-    // compile-time MAX_KEYS so the GLSL compiler can unroll; the runtime
-    // count is enforced via early-out.
-    float minDist = 1.0;
+    vec3 srcL = srgbToLinear(texture(u_texture, v_uv).rgb);
+
+    // Best-match across keys: lowest per-key alpha = closest match.  Tracking
+    // the index lets us unspill against the actual contaminating background
+    // rather than picking arbitrarily.  Loop bound is compile-time MAX_KEYS so
+    // the compiler can unroll; runtime count is enforced via early-out.
+    float bestAlpha = 1.0;
+    int   bestKey   = 0;
     for (int i = 0; i < ${MAX_KEYS}; ++i) {
         if (i >= u_keyCount) break;
-        vec3 diff = abs(color.rgb - u_keyColors[i]);
-        float dist = max(max(diff.r, diff.g), diff.b);
-        minDist = min(minDist, dist);
+        vec3  keyL = u_keyColorsL[i];
+        vec3  norm = max(srcL - keyL, 0.0) / max(vec3(1.0) - keyL, vec3(1e-5));
+        float a    = max(norm.r, max(norm.g, norm.b));
+        if (a < bestAlpha) { bestAlpha = a; bestKey = i; }
     }
-    float alpha = smoothstep(0.0, u_threshold, minDist);
-    fragColor = vec4(color.rgb, alpha);
+
+    // Soft knee: clean noise floor, snap near-solid to 1, preserve AA between.
+    float alpha = smoothstep(u_kneeLow, u_kneeHigh, bestAlpha);
+
+    // Unspill against the best-matching key, then divide out alpha to recover
+    // straight RGB.  The 1e-5 floor avoids div-by-zero; when alpha is tiny
+    // the RGB doesn't contribute to compositing anyway.
+    vec3 keyL   = u_keyColorsL[bestKey];
+    vec3 premul = max(srcL - keyL * (1.0 - alpha), 0.0);
+    vec3 rgbL   = premul / max(alpha, 1e-5);
+
+    fragColor = vec4(linearToSrgb(rgbL), alpha);
+    // fragColor = vec4(alpha, alpha, alpha, alpha);  // --- DEBUG: visualize alpha as grayscale ---
 }
 `
 
 // ── Renderer ─────────────────────────────────────────────────────────────────
 
-/// Default threshold in normalised [0,1] space.  ~30/255 ≈ 0.118.
-const DEFAULT_THRESHOLD = 30.0 / 255.0
+/// Default smoothstep knees over the unspill ratio in [0,1].  See the
+/// algorithm overview at the top of this file for what each edge does.
+const DEFAULT_KNEE_LOW = 0.02
+const DEFAULT_KNEE_HIGH = 0.98
 
-export class ChromaKeyRenderer {
+export class ColorKeyRenderer {
     private gl: WebGL2RenderingContext
     private program: WebGLProgram
     private texture: WebGLTexture
@@ -70,16 +115,24 @@ export class ChromaKeyRenderer {
     private canvas: HTMLCanvasElement
 
     /**
-     * @param canvas  Target canvas element (will be bound to a WebGL2 context).
-     * @param keyColors  One or more RGB tuples in [0,255] to key out.  Must be
-     *                   non-empty and contain at most {@link MAX_KEYS} entries.
-     * @param threshold  Distance (normalised) at which alpha reaches 1.0.
+     * @param canvas    Target canvas element (will be bound to a WebGL2 context).
+     * @param keyColors One or more RGB tuples in [0,255] to key out.  Must be
+     *                  non-empty and contain at most {@link MAX_KEYS} entries.
+     * @param kneeLow   Smoothstep low edge — pre-knee alpha ≤ kneeLow becomes
+     *                  0 (noise floor).  Default {@link DEFAULT_KNEE_LOW}.
+     * @param kneeHigh  Smoothstep high edge — pre-knee alpha ≥ kneeHigh becomes
+     *                  1 (snap solid).  Default {@link DEFAULT_KNEE_HIGH}.
      */
-    constructor(canvas: HTMLCanvasElement, keyColors: [number, number, number][], threshold = DEFAULT_THRESHOLD) {
+    constructor(
+        canvas: HTMLCanvasElement,
+        keyColors: [number, number, number][],
+        kneeLow = DEFAULT_KNEE_LOW,
+        kneeHigh = DEFAULT_KNEE_HIGH,
+    ) {
         if (keyColors.length === 0)
-            throw new Error("ChromaKeyRenderer: at least one key color is required")
+            throw new Error("ColorKeyRenderer: at least one key color is required")
         if (keyColors.length > MAX_KEYS)
-            throw new Error(`ChromaKeyRenderer: at most ${MAX_KEYS} key colors supported (got ${keyColors.length})`)
+            throw new Error(`ColorKeyRenderer: at most ${MAX_KEYS} key colors supported (got ${keyColors.length})`)
 
         this.canvas = canvas
 
@@ -87,7 +140,7 @@ export class ChromaKeyRenderer {
             alpha: true,
             premultipliedAlpha: false,
         })
-        if (!gl) throw new Error("ChromaKeyRenderer: WebGL2 not available")
+        if (!gl) throw new Error("ColorKeyRenderer: WebGL2 not available")
         this.gl = gl
 
         // ── Compile & link ───────────────────────────────────────────────
@@ -95,14 +148,14 @@ export class ChromaKeyRenderer {
 
         // ── Empty VAO (vertex positions computed from gl_VertexID) ────────
         const vao = gl.createVertexArray()
-        if (!vao) throw new Error("ChromaKeyRenderer: failed to create VAO")
+        if (!vao) throw new Error("ColorKeyRenderer: failed to create VAO")
         this.vao = vao
         gl.bindVertexArray(this.vao)
         gl.bindVertexArray(null)
 
         // ── Texture for video frames ─────────────────────────────────────
         const texture = gl.createTexture()
-        if (!texture) throw new Error("ChromaKeyRenderer: failed to create texture")
+        if (!texture) throw new Error("ColorKeyRenderer: failed to create texture")
         this.texture = texture
         gl.bindTexture(gl.TEXTURE_2D, this.texture)
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
@@ -111,25 +164,27 @@ export class ChromaKeyRenderer {
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
 
         // ── Upload uniforms ──────────────────────────────────────────────
-        // Flatten keys to a tightly-packed Float32Array in [0,1] space —
-        // gl.uniform3fv expects N*3 components; trailing slots in the shader
-        // array stay zero-initialised but are never read (u_keyCount gates).
+        // Pre-linearize keys on the CPU so the shader doesn't redo sRGB→linear
+        // per-pixel for what are effectively constants.  gl.uniform3fv expects
+        // N*3 components; trailing slots stay zero-initialised but are gated
+        // by u_keyCount.
         const flat = new Float32Array(keyColors.length * 3)
         for (let i = 0; i < keyColors.length; i++) {
             const [r, g, b] = keyColors[i]!
-            flat[i * 3 + 0] = r / 255
-            flat[i * 3 + 1] = g / 255
-            flat[i * 3 + 2] = b / 255
+            flat[i * 3 + 0] = srgbToLinear(r / 255)
+            flat[i * 3 + 1] = srgbToLinear(g / 255)
+            flat[i * 3 + 2] = srgbToLinear(b / 255)
         }
 
         gl.useProgram(this.program)
         gl.uniform1i(gl.getUniformLocation(this.program, "u_texture"), 0)
-        gl.uniform3fv(gl.getUniformLocation(this.program, "u_keyColors"), flat)
+        gl.uniform3fv(gl.getUniformLocation(this.program, "u_keyColorsL"), flat)
         gl.uniform1i(gl.getUniformLocation(this.program, "u_keyCount"), keyColors.length)
-        gl.uniform1f(gl.getUniformLocation(this.program, "u_threshold"), threshold)
+        gl.uniform1f(gl.getUniformLocation(this.program, "u_kneeLow"), kneeLow)
+        gl.uniform1f(gl.getUniformLocation(this.program, "u_kneeHigh"), kneeHigh)
     }
 
-    /** Render a decoded video frame with chroma-key applied. Closes the frame. */
+    /** Render a decoded video frame with color-key applied. Closes the frame. */
     render(frame: VideoFrame): void {
         const gl = this.gl
 
@@ -138,7 +193,7 @@ export class ChromaKeyRenderer {
             this.canvas.width = frame.displayWidth
             this.canvas.height = frame.displayHeight
             gl.viewport(0, 0, frame.displayWidth, frame.displayHeight)
-            console.log("ChromaKeyRenderer: Resized to %dx%d", frame.displayWidth, frame.displayHeight)
+            console.log("ColorKeyRenderer: Resized to %dx%d", frame.displayWidth, frame.displayHeight)
         }
 
         // Upload frame as texture.
@@ -194,6 +249,13 @@ function createProgram(gl: WebGL2RenderingContext, vertSrc: string, fragSrc: str
     gl.deleteShader(vert)
     gl.deleteShader(frag)
     return program
+}
+
+/// sRGB → linear-light conversion for a single component in [0,1].  Mirrors
+/// the GLSL `srgbToLinear` so CPU-pre-converted key colors match what the
+/// shader would compute if it ran the conversion itself.
+function srgbToLinear(c: number): number {
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
 }
 
 /**

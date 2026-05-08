@@ -29,6 +29,7 @@
   - [Capture Modes](#capture-modes)
   - [Distributed Deployment](#distributed-deployment)
   - [Reconnection Strategy](#reconnection-strategy)
+  - [Color-Key Compositing](#color-key-compositing)
   - [Widgets](#widgets)
 - [Performance Metrics](#performance-metrics)
 - [File Structure](#file-structure)
@@ -535,6 +536,21 @@ Two independent caches at different points in the pipeline eliminate this wait:
 
 Neither cache is redundant.  Removing the `live-ws` cache means the server loses codec state on reconnect.  Removing the server cache means every new viewer waits for the next keyframe.
 
+### Color-Key Compositing
+
+The frontend uses a WebGL2 fragment shader (`frontend/src/video/color-key.ts`) to replace one or more target colors with transparency in incoming video frames.  Used by the YouTube Music island (`#212121` background) and the main stream (the dark UI greys), so the page backdrop bleeds through wherever the captured app shows its own background.
+
+**Algorithm (per pixel, in linear-light space):**
+
+1. Convert the source pixel sRGB → linear.
+2. For each key, compute a per-channel "foreground signal vs. background" ratio (`(src − key) / (1 − key)`, clamped at zero) and take the max-channel.  The lowest result across keys is the alpha estimate; the same loop tracks which key matched best (for unspill).
+3. Shape with `smoothstep(kneeLow, kneeHigh, alpha)` — defaults `[0.02, 0.98]`.  `kneeLow` is the noise floor (compression jitter near the background snaps to 0); `kneeHigh` snaps near-solid foreground to 1; the middle preserves anti-aliased edges.
+4. Unspill against the best-matching key (`src − key · (1 − alpha)`), divide out alpha to recover straight RGB, re-encode linear → sRGB.
+
+Working in linear space is what kills dark fringing — without it, the gamma curve makes near-key pixels look halo'd against dark UI backgrounds.
+
+The `<StreamRenderer>` component accepts `colorKey?: string | string[]` (up to 8 hex colors) and `colorKeyKnee?: [number, number]`.  Both fall back to defaults when omitted; omitting `colorKey` entirely bypasses the shader and uses a plain 2D canvas blit.
+
 ### Widgets
 
 The left column of the UI hosts **widgets** — small status indicators built from a shared `LiveWidget` component (`frontend/src/widgets/common.tsx`).
@@ -695,7 +711,7 @@ LiveUI/
 │       └── video/                   # Video stream module
 │           ├── index.tsx            # <StreamRenderer> (WS push, live-protocol parser)
 │           ├── decoder.ts           # H264Decoder (thin WebCodecs wrapper)
-│           └── chroma-key.ts        # WebGL2 chroma-key renderer
+│           └── color-key.ts         # WebGL2 color-key renderer
 ```
 
 ---

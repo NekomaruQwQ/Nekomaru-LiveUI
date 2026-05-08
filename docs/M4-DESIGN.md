@@ -583,7 +583,7 @@ These M3 components are battle-tested and will be refactored in-place for M4:
 
 | M3 File | Purpose | Changes for M4 |
 |---|---|---|
-| `frontend/src/video/` | `StreamRenderer`, H264Decoder, WebGL chroma-key | Minimal — generation logic may simplify |
+| `frontend/src/video/` | `StreamRenderer`, H264Decoder, WebGL color-key | Minimal — generation logic may simplify |
 | `frontend/src/kpm.tsx` | KPM meter + VU bar | None — unchanged |
 | `frontend/src/strings.ts` | `useStrings()` hook (WS push) | None — unchanged |
 | `frontend/src/ws.ts` | WS helpers (connectWs, auto-reconnect) | None — unchanged |

@@ -1,31 +1,32 @@
 <script lang="ts">
     import { DEBUG } from "../../debug";
-    import { ChromaKeyRenderer, parseHexColor } from "./chroma-key";
+    import { ColorKeyRenderer, parseHexColor } from "./color-key";
     import { startStreamLoop } from "./stream-loop";
 
     type Props = {
         streamId: string;
         /// Hex color (e.g. "#212121") or list of hex colors to key out.
         /// When omitted or empty, the stream renders through a plain 2D canvas.
-        chromaKey?: string | string[];
-        /// Per-channel distance (in 0–255 code units) at which alpha reaches 1.0.
-        /// Wider values absorb YUV decode jitter at the cost of also keying
-        /// nearby shades.  Falls back to the renderer's default (30) when unset.
-        chromaKeyThreshold?: number;
+        colorKey?: string | string[];
+        /// Smoothstep knee `[low, high]` over the unspill ratio in [0,1].
+        /// `low` is the noise floor (≤ low → fully transparent); `high` is
+        /// the solid snap (≥ high → fully opaque).  Falls back to the
+        /// renderer's defaults (≈ 0.02 / 0.98) when unset.
+        colorKeyKnee?: [number, number];
     };
 
-    let { streamId, chromaKey, chromaKeyThreshold }: Props = $props();
+    let { streamId, colorKey, colorKeyKnee }: Props = $props();
 
     let canvas: HTMLCanvasElement;
 
     /// Normalise the prop to a plain array so the rest of the component only
     /// has one shape to think about.  Returns `[]` when nothing is keyed out.
     const keyList = $derived(
-        chromaKey === undefined ? []
-            : typeof chromaKey === "string" ? [chromaKey]
-            : chromaKey);
+        colorKey === undefined ? []
+            : typeof colorKey === "string" ? [colorKey]
+            : colorKey);
 
-    /// (Re-)mount the stream loop whenever streamId or chromaKey changes.
+    /// (Re-)mount the stream loop whenever streamId or colorKey changes.
     /// `$effect` automatically tears down the previous loop before setting up
     /// a new one, mirroring the React useEffect cleanup pattern.
     $effect(() => {
@@ -37,20 +38,19 @@
         }
 
         // ── Build the frame renderer ─────────────────────────────────────
-        // When chroma-key is active, use a WebGL2 shader that keys out the
+        // When color-key is active, use a WebGL2 shader that keys out the
         // target colors.  Otherwise, use a plain 2D canvas drawImage path.
         let onFrame: (frame: VideoFrame) => void;
         let cleanup: (() => void) | undefined;
 
         if (keyList.length > 0) {
-            // Convert 0–255 prop to the renderer's normalised [0,1] threshold;
-            // leave it `undefined` so the renderer falls back to its default.
-            const threshold = chromaKeyThreshold !== undefined ? chromaKeyThreshold / 255 : undefined;
-            const renderer = new ChromaKeyRenderer(canvas, keyList.map(parseHexColor), threshold);
+            // Forward knees as-is; `undefined` slots fall back to the renderer's defaults.
+            const renderer = new ColorKeyRenderer(
+                canvas, keyList.map(parseHexColor), colorKeyKnee?.[0], colorKeyKnee?.[1]);
             onFrame = (frame) => renderer.render(frame);
             cleanup = () => renderer.dispose();
-            console.log("StreamRenderer: Using WebGL chroma-key renderer (keys=%s, threshold=%s)",
-                keyList.join(","), chromaKeyThreshold ?? "default");
+            console.log("StreamRenderer: Using WebGL color-key renderer (keys=%s, knee=%s)",
+                keyList.join(","), colorKeyKnee ? `${colorKeyKnee[0]}..${colorKeyKnee[1]}` : "default");
         } else {
             const ctx = canvas.getContext("2d");
             if (!ctx) {

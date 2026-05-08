@@ -7,13 +7,14 @@
       blur.  The inset glow (30px, chroma 0.15) is the main effect — a
       luminous rim lit by --theme-hue.
 
-   2. CHROMA-KEY TRANSPARENCY (YouTube Music island)
+   2. COLOR-KEY TRANSPARENCY (YouTube Music island)
       The YouTube Music stream is captured with a solid #212121 background.
-      A WebGL2 fragment shader (see stream/chroma-key.ts) replaces pixels
-      matching that color with transparency via Chebyshev distance + smoothstep
-      alpha falloff.  The island's translucent background then shows through
-      the keyed-out areas, and the page backdrop peeks through the island's
-      own 35% transparency.  The shader runs entirely on the GPU — video frame
+      A WebGL2 fragment shader (see video/color-key.ts) replaces pixels
+      matching that color with transparency via a per-channel unspill ratio
+      (computed in linear-light space) shaped by a smoothstep knee.  The
+      island's translucent background then shows through the keyed-out
+      areas, and the page backdrop peeks through the island's own 35%
+      transparency.  The shader runs entirely on the GPU — video frame
       uploads as a texture, no CPU readback.
    ───────────────────────────────────────────────────────────────────────────── */
 

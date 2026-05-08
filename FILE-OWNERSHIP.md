@@ -130,7 +130,7 @@ common.tsx                                  human
 index.tsx                                   human
 
 ## frontend/src/video/
-chroma-key.ts                               agent
+color-key.ts                                agent
 decoder.ts                                  agent
 index.tsx                                   agent
 ```
