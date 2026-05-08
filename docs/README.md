@@ -2,7 +2,7 @@
 
 **Nekomaru's livestreaming infrastructure.**
 
-**Last Updated**: 2026-03-26
+**Last Updated**: 2026-05-08
 
 ---
 
@@ -100,7 +100,7 @@ graph LR
     capture_auto -. "HTTP (streamInfo)" .-> strings
 
     relay -- "WS binary" --> viewer
-    strings -- "HTTP poll" --> viewer
+    strings -- "WS push" --> viewer
 ```
 
 ### Component Summary
@@ -115,7 +115,7 @@ graph LR
 | **`live-kpm`** | Rust | Keystroke counter | stdout (live-protocol framed) |
 | **`enumerate-windows`** | Rust | Window discovery (JSON) | stdout JSON |
 | **Server** | Rust (Axum) | WS relay, string store, config | WS ↔ WS, HTTP |
-| **Frontend** | React + Vite | Viewer UI | WS (video, audio, kpm), HTTP (strings) |
+| **Frontend** | Svelte 5 + Vite | Viewer UI | WS (video, audio, kpm, strings) |
 | **`live-app`** | Rust (wry) | Optional webview host | — |
 
 ### Why This Design?
@@ -398,9 +398,11 @@ Server-managed key-value store. Keys prefixed with `$` are **computed strings** 
 | `$microphone` | Audio encoder connect/disconnect | Audio stream status (present when `live-audio` encoder is connected, absent otherwise) |
 | `$timestamp` | Server startup | Revision timestamp via `jj log` |
 
-**`GET /api/strings`** — All key-value pairs (file-backed + computed).
+**`GET /api/strings`** — All key-value pairs (file-backed + computed).  Kept for ad-hoc inspection (curl, Nushell scripts); the frontend uses the WS endpoint below.
 
 **`GET /api/strings/:key`** — Single string value.
+
+**`WS /api/strings/ws`** — Frontend snapshot stream.  Sends the merged `get_all()` JSON object on connect and again after every mutation.  Multiple writes between polls coalesce via a `tokio::sync::watch` channel — viewers only ever see the latest state.
 
 **`PUT /api/strings/:key`** — Set a string value (plain text body). Returns 403 for `$`-prefixed keys.
 
@@ -568,7 +570,7 @@ Each widget has a consistent three-part structure:
 
 #### Dynamic Content
 
-`LiveWidget` is purely presentational. For dynamic values, the parent component calls `useStrings()` to poll the server-managed string store and passes values as `children`.
+`LiveWidget` is purely presentational. For dynamic values, the parent component reads from the `strings` rune singleton (`frontend/src/strings.svelte.ts`) — a WS-backed snapshot of the server's string store — and passes values as `children`.
 
 #### Placement
 
@@ -700,8 +702,8 @@ LiveUI/
 │       ├── api.ts                   # fetch() wrapper for /api/streams
 │       ├── app.tsx                  # Pure viewer shell (JetBrains Islands dark theme)
 │       ├── streams.ts               # useStreamStatus() hook (polls stream availability)
-│       ├── strings-api.ts           # fetch() wrapper for /api/strings
-│       ├── strings.ts               # useStrings() hook (polls string store)
+│       ├── strings.svelte.ts       # `strings` rune singleton (WS-backed snapshot)
+│       ├── strings-loop.ts         # /api/strings/ws auto-reconnect loop
 │       ├── kpm.tsx                  # useKpm() hook (WS push) + <KpmMeter> VU bar
 │       ├── audio/                   # Audio stream module
 │       │   ├── index.tsx            # <AudioStream> (WS push, live-protocol parser, AudioContext)

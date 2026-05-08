@@ -1,12 +1,10 @@
 // String-store singleton.
 //
-// Polls GET /api/strings every 2 seconds and exposes the result as a
+// Subscribes to /api/strings/ws and exposes the latest snapshot as a
 // reactive record.  Consumers read `strings.value.someKey` and Svelte
-// tracks per-keys lookup automatically through `$state`.
+// tracks per-key lookup automatically through `$state`.
 
-import { fetchStrings } from "./strings-api";
-
-const POLL_INTERVAL_MS = 2000;
+import { stringsWsLoop } from "./strings-loop";
 
 class StringsStore {
     /// All server-managed strings as a key-value record.
@@ -17,13 +15,8 @@ class StringsStore {
 
 export const strings = new StringsStore();
 
-async function poll() {
-    try {
-        strings.value = await fetchStrings();
-    } catch (e) {
-        console.error("Failed to poll strings:", e);
-    }
-}
-
-void poll();
-setInterval(poll, POLL_INTERVAL_MS);
+// Module-level singleton — lifetime = page lifetime, no AbortSignal needed.
+// The controller is constructed but never aborted, so the loop runs forever.
+void stringsWsLoop(new AbortController().signal, snapshot => {
+    strings.value = snapshot;
+});

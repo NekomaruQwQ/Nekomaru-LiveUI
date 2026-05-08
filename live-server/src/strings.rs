@@ -11,6 +11,7 @@
 //!
 //! - `GET    /api/strings`           — all key-value pairs (user + computed)
 //! - `GET    /api/strings/:key`      — single entry
+//! - `WS     /api/strings/ws`        — server-push snapshot stream (full snapshot on connect + on each change)
 //! - `PUT    /api/strings/:key`      — set a value (plain text body; 403 for `$`-prefixed keys)
 //! - `DELETE /api/strings/:key`      — delete a value (403 for `$`-prefixed keys)
 //! - `PUT    /internal/strings/:key` — set a computed string (plain text body; key must start with `$`)
@@ -19,10 +20,12 @@
 use crate::state::AppState;
 
 use axum::Router;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Json};
+use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, put};
+use tokio::sync::watch;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -39,6 +42,11 @@ pub struct StringStore {
     json_path: PathBuf,
     /// Path to `data/strings/` directory.
     dir_path: PathBuf,
+    /// Bumped on every mutation; viewers re-read the store on `changed()`.
+    /// Multiple writes between polls coalesce into a single notification.
+    version: u64,
+    /// Notifies WS subscribers that the merged snapshot has changed.
+    tx: watch::Sender<u64>,
 }
 
 impl StringStore {
@@ -49,14 +57,28 @@ impl StringStore {
         // Ensure data directories exist.
         let _ = std::fs::create_dir_all(&dir_path);
 
+        let (tx, _) = watch::channel(0);
         let mut store = Self {
             user: BTreeMap::new(),
             computed: BTreeMap::new(),
             json_path,
             dir_path,
+            version: 0,
+            tx,
         };
         store.load_from_disk();
         store
+    }
+
+    /// Subscribe to change notifications.  Each `changed()` tick means the
+    /// merged snapshot from `get_all()` may have new content.
+    pub fn subscribe(&self) -> watch::Receiver<u64> { self.tx.subscribe() }
+
+    /// Bump the version and notify subscribers.  Send errors (no listeners)
+    /// are ignored — the watch channel is fire-and-forget here.
+    fn notify_changed(&mut self) {
+        self.version = self.version.wrapping_add(1);
+        let _ = self.tx.send(self.version);
     }
 
     /// All entries merged: user store + computed (computed wins on conflict).
@@ -88,6 +110,7 @@ impl StringStore {
             self.save_to_json(key, value);
         }
 
+        self.notify_changed();
         Ok(())
     }
 
@@ -104,6 +127,7 @@ impl StringStore {
         self.remove_from_json(key);
         let _ = std::fs::remove_file(self.dir_path.join(format!("{key}.md")));
 
+        self.notify_changed();
         Ok(())
     }
 
@@ -111,11 +135,13 @@ impl StringStore {
     pub fn set_computed(&mut self, key: &str, value: String) {
         debug_assert!(key.starts_with('$'), "computed key must start with $");
         self.computed.insert(key.to_owned(), value);
+        self.notify_changed();
     }
 
     /// Remove a computed string.
     pub fn clear_computed(&mut self, key: &str) {
         self.computed.remove(key);
+        self.notify_changed();
     }
 
     /// Reload all user strings from disk (called by `POST /refresh`).
@@ -123,6 +149,7 @@ impl StringStore {
         self.user.clear();
         self.load_from_disk();
         log::info!("reloaded {} user string entries", self.user.len());
+        self.notify_changed();
     }
 
     // ── Internal ────────────────────────────────────────────────────────
@@ -200,6 +227,7 @@ fn is_multiline(value: &str) -> bool { value.trim_end().contains('\n') }
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/strings", get(get_all))
+        .route("/api/strings/ws", get(subscribe_ws))
         .route("/api/strings/{key}", get(get_one).put(put_one).delete(delete_one))
         .route("/internal/strings/{key}", put(put_computed).delete(delete_computed))
 }
@@ -208,6 +236,48 @@ pub fn router() -> Router<Arc<AppState>> {
 async fn get_all(State(state): State<Arc<AppState>>) -> Json<BTreeMap<String, String>> {
     let store = state.strings.read().await;
     Json(store.get_all())
+}
+
+/// `WS /api/strings/ws` — push the merged snapshot on connect and on every change.
+///
+/// Late joiners receive the current snapshot immediately; thereafter every
+/// mutation produces a fresh JSON message.  Multiple writes that land between
+/// poll ticks coalesce into a single notification (watch-channel semantics),
+/// which is fine because we always re-serialize the latest state.
+async fn subscribe_ws(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> Response {
+    ws.on_upgrade(move |socket| handle_subscribe_ws(socket, state))
+}
+
+async fn handle_subscribe_ws(mut socket: WebSocket, state: Arc<AppState>) {
+    // Subscribe before reading the initial snapshot so we don't miss
+    // mutations that race between snapshot and subscribe.
+    let mut rx = state.strings.read().await.subscribe();
+
+    log::info!("strings viewer connected");
+
+    // Send current snapshot immediately on connect.
+    if send_snapshot(&mut socket, &state).await.is_err() {
+        return;
+    }
+
+    // Push on every change.
+    while rx.changed().await.is_ok() {
+        if send_snapshot(&mut socket, &state).await.is_err() {
+            break;
+        }
+    }
+
+    log::info!("strings viewer disconnected");
+}
+
+/// Serialize the current merged snapshot and send it as a single WS text frame.
+async fn send_snapshot(socket: &mut WebSocket, state: &Arc<AppState>) -> Result<(), ()> {
+    let snapshot = state.strings.read().await.get_all();
+    let json = serde_json::to_string(&snapshot).unwrap_or_else(|_| "{}".to_owned());
+    socket.send(Message::Text(json.into())).await.map_err(|_| ())
 }
 
 /// `GET /api/strings/:key` — return a single entry.
